@@ -50,6 +50,22 @@ struct CircleDetailView: View {
                 VStack(spacing: 0) {
                     hero
 
+                    // The group story rides at the very top — the
+                    // first thing inside any circle (parallel or
+                    // collective) the moment a member has posted a
+                    // clip today. Hidden when there's nothing to watch.
+                    if hasStoryToday {
+                        CircleStoryStrip(
+                            memberCount: clipAuthorCountToday,
+                            onTap: {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                showGroupStory = true
+                            }
+                        )
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.top, 18)
+                    }
+
                     // Parallel circles surface "The work" — the
                     // shared task list with working checkboxes and
                     // link-status sublines. Collective circles keep
@@ -82,18 +98,6 @@ struct CircleDetailView: View {
                             .padding(.horizontal, Theme.pageHorizontalPadding)
                             .padding(.top, 18)
                             .padding(.bottom, 8)
-
-                        if hasStoryToday {
-                            CircleStoryStrip(
-                                memberCount: clipAuthorCountToday,
-                                onTap: {
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                    showGroupStory = true
-                                }
-                            )
-                            .padding(.horizontal, Theme.pageHorizontalPadding)
-                            .padding(.top, 14)
-                        }
                     } else {
                         Color.clear.frame(height: 32)
                     }
