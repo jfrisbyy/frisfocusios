@@ -1,0 +1,645 @@
+//
+//  CirclesGroupsSection.swift
+//  FrisFocus
+//
+//  The "Your circles" section that sits below the Friends section on
+//  the Circles page. Two distinct card treatments — parallel circles
+//  show per-task segments and a story strip footer; collective
+//  circles show a single wide progress bar against a shared target.
+//  A dashed start/join row closes the section.
+//
+//  Reads `store.circles`, `store.circleTaskCompletions`,
+//  `store.circleContributions`, and `store.storyPosts` so cards stay
+//  in sync with the underlying graph without hand-rolled caching.
+//
+//  C3d wired this section's interactions: the parent owns the expand /
+//  collapse state and supplies callbacks for the header, each card,
+//  the parallel story strip, and the start/join row. The section never
+//  decides where a tap goes — it only reports which thing the user
+//  reached for.
+//
+
+import SwiftUI
+import UIKit
+
+struct CirclesGroupsSection: View {
+    @Environment(Store.self) private var store
+
+    @Binding var isExpanded: Bool
+    let onHeaderTap: () -> Void
+    let onCircleTap: (FFCircle) -> Void
+    let onStoryStripTap: (FFCircle) -> Void
+    let onStartJoinTap: () -> Void
+    /// A pact is a circle of two — surfaced here alongside circles.
+    var onPactTap: ((Pact) -> Void)? = nil
+
+    /// Active + pending pacts the user is in, shown as two-person
+    /// circle cards in this same section.
+    private var activePacts: [Pact] {
+        store.myPacts.filter { $0.status == .active || $0.status == .pending }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            divider
+                .padding(.top, 22)
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+
+            header
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+                .padding(.top, 18)
+
+            if isExpanded {
+                content
+                    .padding(.horizontal, Theme.pageHorizontalPadding)
+                    .padding(.top, 14)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .clipped()
+    }
+
+    // MARK: - Divider + header
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Theme.textPrimary.opacity(0.1))
+            .frame(height: 0.5)
+    }
+
+    private var header: some View {
+        Button(action: onHeaderTap) {
+            HStack(alignment: .firstTextBaseline) {
+                HStack(spacing: 6) {
+                    Text("Your circles")
+                        .font(.serif(20, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+
+                    Image(systemName: "chevron.down")
+                        .font(.sans(11, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                        .animation(.easeInOut(duration: 0.25), value: isExpanded)
+                }
+
+                Spacer()
+
+                Text("\(store.circles.count + activePacts.count) ACTIVE")
+                    .font(.sans(10, weight: .medium))
+                    .tracking(2)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Your circles, \(store.circles.count + activePacts.count) active")
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var content: some View {
+        if store.circles.isEmpty && activePacts.isEmpty {
+            VStack(spacing: 12) {
+                Text("No circles yet — start one with a friend")
+                    .font(.serifItalic(14, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                startJoinRow
+            }
+        } else {
+            VStack(spacing: 12) {
+                ForEach(store.circles) { circle in
+                    Group {
+                        switch circle.type {
+                        case .parallel:
+                            ParallelCircleCard(
+                                circle: circle,
+                                onTap: { onCircleTap(circle) },
+                                onStoryStripTap: { onStoryStripTap(circle) }
+                            )
+                        case .collective:
+                            CollectiveCircleCard(
+                                circle: circle,
+                                onTap: { onCircleTap(circle) }
+                            )
+                        }
+                    }
+                }
+
+                // Pacts — a circle of two, rendered alongside circles.
+                ForEach(activePacts) { pact in
+                    PactCircleCard(pact: pact, onTap: { onPactTap?(pact) })
+                }
+
+                startJoinRow
+                    .padding(.top, 4)
+            }
+        }
+    }
+
+    // MARK: - Start / join
+
+    private var startJoinRow: some View {
+        Button(action: onStartJoinTap) {
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.sans(13, weight: .semibold))
+                Text("Start a circle or join one")
+                    .font(.sans(13, weight: .regular))
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(0.6))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        Theme.textPrimary.opacity(0.25),
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 4])
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Start a circle or join one")
+    }
+}
+
+// MARK: - Shared helpers
+
+private enum CirclesSectionHelpers {
+    /// Days remaining between now and the time-boxed end date. Negative
+    /// values clamp to zero so a just-expired circle reads as "0 days
+    /// left" rather than a negative count while data hasn't archived yet.
+    static func daysLeft(until endDate: Date, from now: Date = Date()) -> Int {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: now)
+        let startOfEnd = cal.startOfDay(for: endDate)
+        let comps = cal.dateComponents([.day], from: startOfToday, to: startOfEnd)
+        return max(0, comps.day ?? 0)
+    }
+
+    /// Renders the eyebrow line above each card name. Time-boxed circles
+    /// surface the countdown; ongoing circles say so explicitly.
+    static func eyebrowText(typeLabel: String, timeframe: CircleTimeframe) -> String {
+        switch timeframe {
+        case .timeBoxed(let endDate):
+            let days = daysLeft(until: endDate)
+            let suffix = days == 1 ? "1 DAY LEFT" : "\(days) DAYS LEFT"
+            return "\(typeLabel) · \(suffix)"
+        case .ongoing:
+            return "\(typeLabel) · ONGOING"
+        }
+    }
+}
+
+// MARK: - Member avatar stack
+
+/// Compact overlapping stack of member discs. The user's avatar gets a
+/// gold ring so it reads as "you" in every group. When `memberIds`
+/// exceed `maxVisible`, a soft grey "+N" pill closes the stack.
+private struct MemberAvatarStack: View {
+    @Environment(Store.self) private var store
+    let memberIds: [UUID]
+    let maxVisible: Int
+    var diameter: CGFloat = 24
+    var overlap: CGFloat = 7
+
+    var body: some View {
+        let visible = Array(memberIds.prefix(maxVisible))
+        let remainder = max(0, memberIds.count - visible.count)
+
+        HStack(spacing: -overlap) {
+            ForEach(Array(visible.enumerated()), id: \.element) { _, id in
+                avatar(for: id)
+            }
+
+            if remainder > 0 {
+                overflowPill(remainder)
+                    .zIndex(Double(visible.count + 1))
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(memberIds.count) members")
+    }
+
+    @ViewBuilder
+    private func avatar(for id: UUID) -> some View {
+        if id == store.currentUserId {
+            ZStack {
+                Circle().fill(Theme.textPrimary)
+                Text("J")
+                    .font(.sans(11, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+            }
+            .frame(width: diameter, height: diameter)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [Theme.sunWarm, Theme.sunOuter],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.6
+                    )
+            )
+            .overlay(Circle().strokeBorder(Theme.warmWheat.opacity(0.6), lineWidth: 0.5).padding(0.8))
+        } else if let friend = store.friend(by: id) {
+            ZStack {
+                Circle().fill(Color(hex: friend.accentColorHex))
+                Text(friend.initials)
+                    .font(.sans(11, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+            }
+            .frame(width: diameter, height: diameter)
+            .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.2))
+        } else {
+            ZStack {
+                Circle().fill(Theme.textTertiary)
+            }
+            .frame(width: diameter, height: diameter)
+            .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.2))
+        }
+    }
+
+    private func overflowPill(_ count: Int) -> some View {
+        ZStack {
+            Circle().fill(Theme.textPrimary.opacity(0.12))
+            Text("+\(count)")
+                .font(.sans(10, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.7))
+        }
+        .frame(width: diameter, height: diameter)
+        .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.2))
+    }
+}
+
+// MARK: - Parallel circle card
+
+private struct ParallelCircleCard: View {
+    @Environment(Store.self) private var store
+    let circle: FFCircle
+    let onTap: () -> Void
+    let onStoryStripTap: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: onTap) {
+                mainBlock
+                    .padding(.horizontal, 14)
+                    .padding(.top, 13)
+                    .padding(.bottom, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if hasStoryToday {
+                storyStrip
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .fill(Color.white.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    private var mainBlock: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(CirclesSectionHelpers.eyebrowText(typeLabel: "PARALLEL", timeframe: circle.timeframe))
+                        .font(.sans(10, weight: .medium))
+                        .tracking(2)
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+
+                    Text(circle.name)
+                        .font(.serif(17, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                }
+
+                Spacer()
+
+                MemberAvatarStack(memberIds: circle.memberIds, maxVisible: 4)
+            }
+
+            youTodayRow
+        }
+    }
+
+    private var youTodayRow: some View {
+        let total = max(circle.tasks.count, 1)
+        let done = userCompletionsToday
+        let segments = circle.tasks.count
+
+        return HStack(spacing: 10) {
+            Text("You today")
+                .font(.sans(12, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.6))
+
+            HStack(spacing: 4) {
+                ForEach(0..<max(segments, 1), id: \.self) { idx in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(idx < done ? Theme.alertGreen : Theme.textPrimary.opacity(0.1))
+                        .frame(height: 7)
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            Text("\(done)/\(total)")
+                .font(.sans(12, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                .monospacedDigit()
+        }
+    }
+
+    private var storyStrip: some View {
+        Button(action: onStoryStripTap) {
+            HStack(spacing: 8) {
+                Image(systemName: "play.fill")
+                    .font(.sans(10, weight: .bold))
+                    .foregroundStyle(Theme.sunShadow)
+
+                Text(storyStripCopy)
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.75))
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255).opacity(0.08)
+            )
+            .overlay(
+                Rectangle()
+                    .fill(Theme.textPrimary.opacity(0.06))
+                    .frame(height: 0.5),
+                alignment: .top
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .clipShape(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: Theme.cardCornerRadius,
+                bottomTrailingRadius: Theme.cardCornerRadius,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+        )
+    }
+
+    // MARK: - Derived
+
+    /// Distinct members (other than the user) with at least one circle
+    /// clip for this circle today. The strip surfaces a count of how
+    /// many people "ran today" — the phrasing is generic but the source
+    /// of truth is whoever posted a clip.
+    private var clipMembersToday: [UUID] {
+        let cal = Calendar.current
+        let today = Date()
+        let ids = store.storyPosts
+            .filter { post in
+                guard post.circleId == circle.id else { return false }
+                return cal.isDate(post.createdAt, inSameDayAs: today)
+            }
+            .map { $0.authorId }
+        return Array(Set(ids))
+    }
+
+    private var hasStoryToday: Bool { !clipMembersToday.isEmpty }
+
+    private var storyStripCopy: String {
+        let count = clipMembersToday.count
+        let verb = count == 1 ? "ran today" : "ran today"
+        return "\(count) \(verb) · watch the story"
+    }
+
+    private var userCompletionsToday: Int {
+        let cal = Calendar.current
+        let today = Date()
+        return store.circleTaskCompletions.filter { completion in
+            completion.circleId == circle.id
+                && completion.memberId == store.currentUserId
+                && cal.isDate(completion.date, inSameDayAs: today)
+        }.count
+    }
+}
+
+// MARK: - Collective circle card
+
+private struct CollectiveCircleCard: View {
+    @Environment(Store.self) private var store
+    let circle: FFCircle
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(CirclesSectionHelpers.eyebrowText(typeLabel: "COLLECTIVE", timeframe: circle.timeframe))
+                            .font(.sans(10, weight: .medium))
+                            .tracking(2)
+                            .foregroundStyle(Theme.textPrimary.opacity(0.55))
+
+                        Text(circle.name)
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+
+                    Spacer()
+
+                    MemberAvatarStack(memberIds: orderedMemberIdsByContribution, maxVisible: 1)
+                }
+
+                togetherRow
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var togetherRow: some View {
+        let progress = circle.collectiveProgress ?? 0
+        let target = circle.collectiveTarget ?? 1
+        let fraction = max(0, min(1, progress / max(target, 0.0001)))
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Together")
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+
+                Spacer()
+
+                Text(progressLabel)
+                    .font(.sans(12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                    .monospacedDigit()
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Theme.textPrimary.opacity(0.1))
+
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Theme.alertGreen)
+                        .frame(width: proxy.size.width * fraction)
+                }
+            }
+            .frame(height: 8)
+        }
+    }
+
+    private var progressLabel: String {
+        let progress = circle.collectiveProgress ?? 0
+        let target = circle.collectiveTarget ?? 0
+        let unitShort = (circle.collectiveUnit ?? "")
+            .replacingOccurrences(of: "miles", with: "mi")
+        let progressStr = formatted(progress)
+        let targetStr = formatted(target)
+        if unitShort.isEmpty {
+            return "\(progressStr) of \(targetStr)"
+        }
+        return "\(progressStr) of \(targetStr) \(unitShort)"
+    }
+
+    private func formatted(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(format: "%.1f", value)
+    }
+
+    /// For collective circles we'd like the visible avatar to be the
+    /// top contributor today (or all-time) so the stack tells a small
+    /// story about who's carrying the group. Falls back to the original
+    /// `memberIds` order when nobody has contributed yet.
+    private var orderedMemberIdsByContribution: [UUID] {
+        let totals: [UUID: Double] = store.circleContributions
+            .filter { $0.circleId == circle.id }
+            .reduce(into: [:]) { acc, contribution in
+                acc[contribution.memberId, default: 0] += contribution.amount
+            }
+        if totals.isEmpty { return circle.memberIds }
+        return circle.memberIds.sorted { lhs, rhs in
+            (totals[lhs] ?? 0) > (totals[rhs] ?? 0)
+        }
+    }
+}
+
+// MARK: - Pact circle card
+
+/// A pact is a circle of two. It mirrors the circle card's shape with a
+/// distinct "JUST YOU TWO" framing so it reads as a pact while living in
+/// the same section. Taps open the pact's detail.
+private struct PactCircleCard: View {
+    @Environment(Store.self) private var store
+    let pact: Pact
+    let onTap: () -> Void
+
+    private var pactTint: Color { Theme.categorySpiritual }
+
+    private var partnerId: UUID {
+        pact.proposerId == store.currentUserId ? pact.partnerId : pact.proposerId
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(eyebrow)
+                            .font(.sans(10, weight: .medium))
+                            .tracking(2)
+                            .foregroundStyle(pactTint)
+                        Text(pact.title)
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                    Spacer()
+                    MemberAvatarStack(memberIds: [store.currentUserId, partnerId], maxVisible: 2)
+                }
+                Text(statusLine)
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(pactTint.opacity(0.18), lineWidth: 0.5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Pact: \(pact.title)")
+    }
+
+    private var eyebrow: String {
+        if pact.status == .pending { return "PACT · JUST YOU TWO · PENDING" }
+        return "PACT · JUST YOU TWO · DAY \(dayNumber)"
+    }
+
+    private var dayNumber: Int {
+        guard let start = pact.startDate else { return 1 }
+        let cal = Calendar.current
+        let days = cal.dateComponents([.day], from: cal.startOfDay(for: start), to: cal.startOfDay(for: Date())).day ?? 0
+        return max(1, days)
+    }
+
+    private var statusLine: String {
+        if pact.status == .pending { return "Waiting on \(store.friend(by: partnerId)?.displayName ?? "them")" }
+        let cal = Calendar.current
+        let today = Date()
+        let youToday = store.pactCompletions.contains { $0.pactId == pact.id && $0.userId == store.currentUserId && cal.isDate($0.date, inSameDayAs: today) }
+        let themToday = store.pactCompletions.contains { $0.pactId == pact.id && $0.userId == partnerId && cal.isDate($0.date, inSameDayAs: today) }
+        if youToday && themToday { return "You both showed up today ✓" }
+        let kept = max(store.pactDaysKept(pact: pact, userId: store.currentUserId),
+                       store.pactDaysKept(pact: pact, userId: partnerId))
+        return "\(kept) days kept so far"
+    }
+}
+
+#Preview {
+    ScrollView {
+        CirclesGroupsSection(
+            isExpanded: .constant(true),
+            onHeaderTap: {},
+            onCircleTap: { _ in },
+            onStoryStripTap: { _ in },
+            onStartJoinTap: {},
+            onPactTap: { _ in }
+        )
+        .environment(Store())
+    }
+    .background(Theme.warmWheat)
+}

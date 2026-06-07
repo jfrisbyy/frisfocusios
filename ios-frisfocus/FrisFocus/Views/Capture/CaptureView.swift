@@ -1,0 +1,861 @@
+//
+//  CaptureView.swift
+//  FrisFocus
+//
+//  Snapchat / Instagram-style story capture.
+//
+//   - Tap the shutter → photo (quick flash-of-white + soft haptic).
+//   - Press and hold the shutter → video, up to 30 s, with a glowing
+//     red progress ring and a live timer.
+//   - Double-tap anywhere to flip the camera.
+//   - Pinch to zoom.
+//   - Tap to set focus (yellow square pulse).
+//
+//  On real hardware this drives an `AVCaptureSession` with both
+//  `AVCapturePhotoOutput` and `AVCaptureMovieFileOutput`. In the cloud
+//  simulator there is no physical camera; `CameraProxyView` falls back
+//  to a calm placeholder and the shutter is disabled so nothing
+//  crashes.
+//
+
+import AVFoundation
+import Combine
+import SwiftUI
+import UIKit
+
+// MARK: - Mode
+
+enum CaptureMode {
+    case generalPost
+    case circleClip(circle: FFCircle, task: CircleTask)
+
+    var contextChip: (task: String, circle: String)? {
+        switch self {
+        case .generalPost:
+            return nil
+        case .circleClip(let circle, let task):
+            return (task.title, circle.name)
+        }
+    }
+}
+
+// MARK: - Capture result
+
+/// What a successful capture produces. The editor branches on this to
+/// either show the still + filters or the first-frame thumbnail of the
+/// recorded video + a tinted overlay.
+enum CaptureResult: Equatable, Identifiable {
+    case photo(UIImage)
+    case video(url: URL, thumbnail: UIImage?, duration: Double)
+
+    /// Stable per-instance id so `.fullScreenCover(item:)` treats each
+    /// new capture as a fresh presentation. We don't want SwiftUI to
+    /// reuse the old cover body for a different photo.
+    var id: String {
+        switch self {
+        case .photo(let image):
+            return "photo-\(ObjectIdentifier(image).hashValue)"
+        case .video(let url, _, _):
+            return "video-\(url.absoluteString)"
+        }
+    }
+}
+
+// MARK: - CaptureView
+
+struct CaptureView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(Store.self) private var store
+
+    let mode: CaptureMode
+    /// When the camera is launched from a task / to-do card, this is the
+    /// sticker that should already be placed on the shot — seeded into
+    /// the review editor's canvas the moment a capture lands. `nil` for a
+    /// blank capture (the user can still add stickers via "Add task").
+    var initialTaskSticker: TaskStickerBlock? = nil
+    /// When launched from a friend's hub via "Send a proof," this
+    /// friend is preselected as the private recipient in the review's
+    /// destination picker.
+    var initialDirectFriendId: UUID? = nil
+
+    @State private var camera = CameraService()
+    @State private var captureResult: CaptureResult?
+    @State private var showPermissionDenied: Bool = false
+
+    // Shutter / gesture state
+    @State private var isRecording: Bool = false
+    @State private var recordStart: Date?
+    @State private var recordElapsed: Double = 0
+    @State private var pressTimerTask: Task<Void, Never>?
+    @State private var showHint: Bool = true
+
+    // Visual effects
+    @State private var flashOpacity: Double = 0
+    @State private var focusPoint: CGPoint?
+    @State private var focusVisible: Bool = false
+    @State private var pinchBase: CGFloat = 1.0
+
+    private let maxRecordSeconds: Double = 30
+    private let recordTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                CameraProxyView(camera: camera)
+                    .ignoresSafeArea()
+                    .gesture(pinchGesture)
+                    .simultaneousGesture(tapToFocusGesture(in: geo.size))
+                    .simultaneousGesture(doubleTapGesture)
+
+                // Yellow focus reticle.
+                if let pt = focusPoint, focusVisible {
+                    focusReticle
+                        .position(pt)
+                        .allowsHitTesting(false)
+                }
+
+                // Vignette behind chrome.
+                LinearGradient(
+                    colors: [Color.black.opacity(0.55), .clear, .clear, Color.black.opacity(0.65)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
+                // Photo flash.
+                Color.white.opacity(flashOpacity)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+
+                VStack(spacing: 0) {
+                    topBar
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+
+                    if let chip = mode.contextChip {
+                        contextChip(task: chip.task, circle: chip.circle)
+                            .padding(.top, 16)
+                    }
+
+                    Spacer()
+
+                    if isRecording {
+                        recordingTimer
+                            .padding(.bottom, 12)
+                    } else if showHint && camera.hasCamera {
+                        hint
+                            .padding(.bottom, 12)
+                    }
+
+                    shutterRow
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 38)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .statusBarHidden(true)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .task {
+            await camera.requestAccessAndStart()
+            if camera.authorization == .denied {
+                showPermissionDenied = true
+            }
+            // Fade the gesture hint after a beat.
+            try? await Task.sleep(for: .seconds(2.4))
+            withAnimation(.easeOut(duration: 0.5)) { showHint = false }
+        }
+        .onReceive(recordTimer) { _ in
+            guard isRecording, let start = recordStart else { return }
+            let elapsed = Date().timeIntervalSince(start)
+            recordElapsed = min(elapsed, maxRecordSeconds)
+            if elapsed >= maxRecordSeconds {
+                stopRecording()
+            }
+        }
+        .onDisappear {
+            pressTimerTask?.cancel()
+            camera.stop()
+        }
+        .alert("Camera access needed", isPresented: $showPermissionDenied) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Not now", role: .cancel) { dismiss() }
+        } message: {
+            Text("FrisFocus uses the camera to share a moment from your day. You can turn it on in Settings.")
+        }
+        .fullScreenCover(item: $captureResult) { result in
+            CaptureReviewView(
+                result: result,
+                mode: mode,
+                onPosted: {
+                    captureResult = nil
+                    dismiss()
+                },
+                onRetake: {
+                    captureResult = nil
+                },
+                initialTaskSticker: initialTaskSticker,
+                initialDirectFriendId: initialDirectFriendId
+            )
+            .environment(store)
+        }
+    }
+
+    // MARK: - Top bar
+
+    private var topBar: some View {
+        HStack {
+            chromeButton(systemName: "xmark") {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismiss()
+            }
+            .accessibilityLabel("Close capture")
+
+            Spacer()
+
+            HStack(spacing: 10) {
+                chromeButton(systemName: camera.isFlashOn ? "bolt.fill" : "bolt.slash") {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    camera.toggleFlash()
+                }
+                .accessibilityLabel(camera.isFlashOn ? "Flash on" : "Flash off")
+
+                chromeButton(systemName: "camera.rotate") {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    camera.flipCamera()
+                }
+                .accessibilityLabel("Flip camera")
+            }
+        }
+    }
+
+    private func chromeButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color.black.opacity(0.35)))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Context chip
+
+    private func contextChip(task: String, circle: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.alertGreen)
+            Text(task)
+                .font(.sans(13, weight: .semibold))
+                .foregroundStyle(Color.white)
+            Text("·")
+                .font(.sans(13, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.55))
+            Text(circle)
+                .font(.sans(13, weight: .regular))
+                .foregroundStyle(Color.white.opacity(0.78))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(Capsule(style: .continuous).fill(Color.black.opacity(0.45)))
+        .overlay(Capsule(style: .continuous).strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Earned \(task) in \(circle)")
+    }
+
+    // MARK: - Hint / timer
+
+    private var hint: some View {
+        Text("hold to record · tap for photo")
+            .font(.sans(12, weight: .regular))
+            .tracking(0.6)
+            .foregroundStyle(Color.white.opacity(0.78))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(Color.black.opacity(0.35)))
+            .transition(.opacity)
+    }
+
+    private var recordingTimer: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color(hex: 0xE0454C))
+                .frame(width: 7, height: 7)
+            Text(formatTime(recordElapsed) + " / " + formatTime(maxRecordSeconds))
+                .font(.sans(13, weight: .semibold).monospacedDigit())
+                .foregroundStyle(Color.white)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(Color.black.opacity(0.5)))
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "0:%02d", total)
+    }
+
+    // MARK: - Shutter row
+
+    private var shutterRow: some View {
+        HStack {
+            Color.clear.frame(width: 54, height: 54)
+            Spacer()
+            shutterButton
+            Spacer()
+            Color.clear.frame(width: 54, height: 54)
+        }
+    }
+
+    private var shutterButton: some View {
+        ZStack {
+            // Progress ring while recording.
+            Circle()
+                .stroke(Color.white.opacity(0.25), lineWidth: 4)
+                .frame(width: 86, height: 86)
+
+            Circle()
+                .trim(from: 0, to: isRecording ? recordElapsed / maxRecordSeconds : 0)
+                .stroke(
+                    Color(hex: 0xE0454C),
+                    style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .frame(width: 86, height: 86)
+                .animation(.linear(duration: 0.05), value: recordElapsed)
+
+            // Outer ring (cream)
+            Circle()
+                .strokeBorder(Color.white.opacity(0.95), lineWidth: 4)
+                .frame(width: 78, height: 78)
+                .scaleEffect(isRecording ? 1.10 : 1.0)
+                .animation(.easeInOut(duration: 0.18), value: isRecording)
+
+            // Inner disc (turns red while recording).
+            Circle()
+                .fill(isRecording ? Color(hex: 0xE0454C) : Color.white)
+                .frame(width: isRecording ? 36 : 64, height: isRecording ? 36 : 64)
+                .clipShape(isRecording ? AnyShape(RoundedRectangle(cornerRadius: 8)) : AnyShape(Circle()))
+                .animation(.easeInOut(duration: 0.18), value: isRecording)
+        }
+        .contentShape(Circle())
+        .gesture(shutterGesture)
+        .accessibilityLabel(isRecording ? "Recording. Release to stop." : "Tap to photograph, hold to record")
+        .opacity(camera.isReady ? 1.0 : 0.45)
+    }
+
+    private var shutterGesture: some Gesture {
+        // Use a DragGesture with minimumDistance 0 so we get reliable
+        // onChanged-on-press and onEnded-on-release without UIKit-level
+        // long-press timing quirks. We arm the recording start after a
+        // 220 ms hold so a quick tap fires a photo instead.
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard pressTimerTask == nil, !isRecording, camera.isReady else { return }
+                pressTimerTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(220))
+                    if !Task.isCancelled {
+                        startRecording()
+                    }
+                }
+            }
+            .onEnded { _ in
+                if isRecording {
+                    stopRecording()
+                } else {
+                    pressTimerTask?.cancel()
+                    pressTimerTask = nil
+                    takePhoto()
+                }
+                pressTimerTask = nil
+            }
+    }
+
+    // MARK: - Gestures (canvas)
+
+    private var pinchGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let next = pinchBase * value.magnification
+                camera.setZoom(next)
+            }
+            .onEnded { _ in
+                pinchBase = camera.currentZoom
+            }
+    }
+
+    private var doubleTapGesture: some Gesture {
+        TapGesture(count: 2)
+            .onEnded {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                camera.flipCamera()
+            }
+    }
+
+    private func tapToFocusGesture(in size: CGSize) -> some Gesture {
+        SpatialTapGesture(count: 1)
+            .onEnded { value in
+                let pt = value.location
+                focusPoint = pt
+                focusVisible = true
+                let normalized = CGPoint(
+                    x: max(0, min(1, pt.x / size.width)),
+                    y: max(0, min(1, pt.y / size.height))
+                )
+                camera.focus(at: normalized)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(700))
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        focusVisible = false
+                    }
+                }
+            }
+    }
+
+    private var focusReticle: some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .stroke(Color.yellow.opacity(0.9), lineWidth: 1.2)
+            .frame(width: 64, height: 64)
+            .scaleEffect(focusVisible ? 1.0 : 1.4)
+            .opacity(focusVisible ? 1.0 : 0.0)
+            .animation(.easeOut(duration: 0.22), value: focusVisible)
+    }
+
+    // MARK: - Actions
+
+    private func takePhoto() {
+        guard camera.isReady else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        withAnimation(.easeOut(duration: 0.06)) { flashOpacity = 0.85 }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(70))
+            withAnimation(.easeIn(duration: 0.18)) { flashOpacity = 0 }
+        }
+
+        Task { @MainActor in
+            if let image = await camera.capturePhoto() {
+                captureResult = .photo(image)
+            }
+        }
+    }
+
+    private func startRecording() {
+        guard camera.isReady, !isRecording else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        recordElapsed = 0
+        recordStart = Date()
+        isRecording = true
+        camera.startRecording()
+    }
+
+    private func stopRecording() {
+        guard isRecording else { return }
+        isRecording = false
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let duration = recordElapsed
+        camera.stopRecording { url in
+            guard let url else { return }
+            Task { @MainActor in
+                let thumb = await Self.generateThumbnail(for: url)
+                captureResult = .video(url: url, thumbnail: thumb, duration: duration)
+            }
+        }
+    }
+
+    private static func generateThumbnail(for url: URL) async -> UIImage? {
+        await Task.detached {
+            let asset = AVURLAsset(url: url)
+            let gen = AVAssetImageGenerator(asset: asset)
+            gen.appliesPreferredTrackTransform = true
+            do {
+                let cg = try gen.copyCGImage(at: CMTime(seconds: 0.0, preferredTimescale: 600), actualTime: nil)
+                return UIImage(cgImage: cg)
+            } catch {
+                return nil
+            }
+        }.value
+    }
+}
+
+// MARK: - AnyShape (small helper)
+
+private struct AnyShape: Shape {
+    private let pathBuilder: (CGRect) -> Path
+    init<S: Shape>(_ shape: S) {
+        self.pathBuilder = { rect in shape.path(in: rect) }
+    }
+    func path(in rect: CGRect) -> Path { pathBuilder(rect) }
+}
+
+// MARK: - Camera proxy
+
+struct CameraProxyView: View {
+    @Bindable var camera: CameraService
+
+    var body: some View {
+        if camera.hasCamera {
+            ActualCameraView(camera: camera)
+        } else {
+            placeholder
+        }
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(hex: 0x1A1830),
+                    Color(hex: 0x2A2438),
+                    Color(hex: 0x3A2F48)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            VStack(spacing: 14) {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 32, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.6))
+                Text("Camera preview")
+                    .font(.sans(13, weight: .semibold))
+                    .tracking(2)
+                    .foregroundStyle(Color.white.opacity(0.7))
+                Text("Install this app on your device via the Rork App to use the camera.")
+                    .font(.serif(15, weight: .regular))
+                    .italic()
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Color.white.opacity(0.78))
+                    .padding(.horizontal, 36)
+            }
+        }
+    }
+}
+
+// MARK: - Actual camera view
+
+struct ActualCameraView: UIViewRepresentable {
+    @Bindable var camera: CameraService
+
+    func makeUIView(context: Context) -> PreviewContainerView {
+        let view = PreviewContainerView()
+        view.backgroundColor = .black
+        view.previewLayer.session = camera.session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        return view
+    }
+
+    func updateUIView(_ uiView: PreviewContainerView, context: Context) {
+        if uiView.previewLayer.session !== camera.session {
+            uiView.previewLayer.session = camera.session
+        }
+    }
+
+    final class PreviewContainerView: UIView {
+        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+    }
+}
+
+// MARK: - Camera service
+
+@MainActor
+@Observable
+final class CameraService: NSObject {
+    enum AuthState: Equatable {
+        case unknown, granted, denied, restricted
+    }
+
+    let session = AVCaptureSession()
+    private(set) var authorization: AuthState = .unknown
+    private(set) var isReady: Bool = false
+    private(set) var hasCamera: Bool = false
+    private(set) var isFlashOn: Bool = false
+    private(set) var position: AVCaptureDevice.Position = .back
+    private(set) var currentZoom: CGFloat = 1.0
+
+    private let sessionQueue = DispatchQueue(label: "frisfocus.camera.session")
+    private let photoOutput = AVCapturePhotoOutput()
+    private let movieOutput = AVCaptureMovieFileOutput()
+    private var currentInput: AVCaptureDeviceInput?
+    private var audioInput: AVCaptureDeviceInput?
+    private var pendingCapture: CheckedContinuation<UIImage?, Never>?
+    private var pendingRecording: ((URL?) -> Void)?
+    private var pendingRecordingURL: URL?
+
+    func requestAccessAndStart() async {
+        // Idempotent: if we've already set the session up successfully,
+        // just ensure it's running so re-entries (post-capture retake)
+        // don't get stuck on a frozen frame.
+        if hasCamera {
+            sessionQueue.async { [session] in
+                if !session.isRunning { session.startRunning() }
+            }
+            return
+        }
+
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized: authorization = .granted
+        case .notDetermined:
+            let ok = await AVCaptureDevice.requestAccess(for: .video)
+            authorization = ok ? .granted : .denied
+        case .denied: authorization = .denied
+        case .restricted: authorization = .restricted
+        @unknown default: authorization = .denied
+        }
+
+        // Best-effort microphone access for video recording. We don't
+        // gate the whole flow on this — photos still work without it.
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            _ = await AVCaptureDevice.requestAccess(for: .audio)
+        }
+
+        guard authorization == .granted else {
+            hasCamera = false
+            return
+        }
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            sessionQueue.async { [weak self] in
+                self?.configureSession()
+                continuation.resume()
+            }
+        }
+    }
+
+    func stop() {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if self.movieOutput.isRecording {
+                self.movieOutput.stopRecording()
+            }
+            if self.session.isRunning { self.session.stopRunning() }
+        }
+    }
+
+    func toggleFlash() { isFlashOn.toggle() }
+
+    func flipCamera() {
+        let next: AVCaptureDevice.Position = (position == .back) ? .front : .back
+        sessionQueue.async { [weak self] in
+            self?.switchCamera(to: next)
+        }
+    }
+
+    func setZoom(_ factor: CGFloat) {
+        guard let device = currentInput?.device else { return }
+        let clamped = max(1.0, min(factor, min(device.activeFormat.videoMaxZoomFactor, 6.0)))
+        currentZoom = clamped
+        sessionQueue.async {
+            do {
+                try device.lockForConfiguration()
+                device.videoZoomFactor = clamped
+                device.unlockForConfiguration()
+            } catch {
+                // Non-fatal — zoom just won't change this frame.
+            }
+        }
+    }
+
+    func focus(at normalized: CGPoint) {
+        guard let device = currentInput?.device else { return }
+        sessionQueue.async {
+            do {
+                try device.lockForConfiguration()
+                if device.isFocusPointOfInterestSupported {
+                    device.focusPointOfInterest = normalized
+                }
+                if device.isFocusModeSupported(.autoFocus) {
+                    device.focusMode = .autoFocus
+                }
+                if device.isExposurePointOfInterestSupported {
+                    device.exposurePointOfInterest = normalized
+                }
+                if device.isExposureModeSupported(.autoExpose) {
+                    device.exposureMode = .autoExpose
+                }
+                device.unlockForConfiguration()
+            } catch {
+                // Best-effort focus.
+            }
+        }
+    }
+
+    func capturePhoto() async -> UIImage? {
+        guard hasCamera, isReady else { return nil }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<UIImage?, Never>) in
+            self.pendingCapture = continuation
+            sessionQueue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let settings = AVCapturePhotoSettings()
+                if let device = self.currentInput?.device,
+                   device.hasFlash,
+                   self.photoOutput.supportedFlashModes.contains(.on) {
+                    settings.flashMode = self.isFlashOn ? .on : .off
+                }
+                self.photoOutput.capturePhoto(with: settings, delegate: self)
+            }
+        }
+    }
+
+    func startRecording() {
+        guard hasCamera, isReady, !movieOutput.isRecording else { return }
+        let dir = FileManager.default.temporaryDirectory
+        let url = dir.appendingPathComponent("frisfocus-clip-\(UUID().uuidString).mov")
+        pendingRecordingURL = url
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if let connection = self.movieOutput.connection(with: .video) {
+                if connection.isVideoOrientationSupported {
+                    connection.videoOrientation = .portrait
+                }
+                if self.position == .front, connection.isVideoMirroringSupported {
+                    connection.automaticallyAdjustsVideoMirroring = false
+                    connection.isVideoMirrored = true
+                }
+            }
+            self.movieOutput.startRecording(to: url, recordingDelegate: self)
+        }
+    }
+
+    func stopRecording(completion: @escaping (URL?) -> Void) {
+        guard movieOutput.isRecording else {
+            completion(nil)
+            return
+        }
+        pendingRecording = completion
+        sessionQueue.async { [weak self] in
+            self?.movieOutput.stopRecording()
+        }
+    }
+
+    // MARK: - Session config (off-main)
+
+    nonisolated private func configureSession() {
+        session.beginConfiguration()
+        session.sessionPreset = .high
+
+        guard let device = Self.defaultDevice(position: .back),
+              let input = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(input) else {
+            session.commitConfiguration()
+            Task { @MainActor in
+                self.hasCamera = false
+                self.isReady = false
+            }
+            return
+        }
+        session.addInput(input)
+
+        // Audio (best effort; video without audio is still fine).
+        var addedAudio: AVCaptureDeviceInput?
+        if let audioDevice = AVCaptureDevice.default(for: .audio),
+           let aIn = try? AVCaptureDeviceInput(device: audioDevice),
+           session.canAddInput(aIn) {
+            session.addInput(aIn)
+            addedAudio = aIn
+        }
+
+        if session.canAddOutput(photoOutput) {
+            session.addOutput(photoOutput)
+        }
+        if session.canAddOutput(movieOutput) {
+            session.addOutput(movieOutput)
+        }
+        session.commitConfiguration()
+        session.startRunning()
+
+        Task { @MainActor in
+            self.currentInput = input
+            self.audioInput = addedAudio
+            self.position = .back
+            self.hasCamera = true
+            self.isReady = true
+        }
+    }
+
+    nonisolated private func switchCamera(to next: AVCaptureDevice.Position) {
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+
+        let videoInputs = session.inputs
+            .compactMap { $0 as? AVCaptureDeviceInput }
+            .filter { $0.device.hasMediaType(.video) }
+        for input in videoInputs {
+            session.removeInput(input)
+        }
+
+        guard let device = Self.defaultDevice(position: next),
+              let input = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(input) else {
+            for input in videoInputs where session.canAddInput(input) {
+                session.addInput(input)
+            }
+            return
+        }
+
+        session.addInput(input)
+        Task { @MainActor in
+            self.currentInput = input
+            self.position = next
+            self.currentZoom = 1.0
+        }
+    }
+
+    nonisolated private static func defaultDevice(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+    }
+}
+
+// MARK: - Photo capture delegate
+
+extension CameraService: @preconcurrency AVCapturePhotoCaptureDelegate {
+    nonisolated func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        let image: UIImage? = {
+            guard error == nil,
+                  let data = photo.fileDataRepresentation(),
+                  let img = UIImage(data: data) else { return nil }
+            return img
+        }()
+        Task { @MainActor in
+            self.pendingCapture?.resume(returning: image)
+            self.pendingCapture = nil
+        }
+    }
+}
+
+// MARK: - Movie file output delegate
+
+extension CameraService: @preconcurrency AVCaptureFileOutputRecordingDelegate {
+    nonisolated func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didFinishRecordingTo outputFileURL: URL,
+        from connections: [AVCaptureConnection],
+        error: Error?
+    ) {
+        Task { @MainActor in
+            let finalURL: URL? = (error == nil) ? outputFileURL : nil
+            let completion = self.pendingRecording
+            self.pendingRecording = nil
+            self.pendingRecordingURL = nil
+            completion?(finalURL)
+        }
+    }
+}

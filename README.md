@@ -1,2 +1,0 @@
-# frisfocusios
-Created by Rork

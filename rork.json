@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "FrisFocus",
+      "path": "ios-frisfocus",
+      "framework": "swift"
+    }
+  ],
+  "$schema": "https://rork.com/schema/rork.json"
+}
