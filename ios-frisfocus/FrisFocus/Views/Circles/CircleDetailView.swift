@@ -36,7 +36,7 @@ struct CircleDetailView: View {
     @State private var showSettings: Bool = false
     @State private var linkPickerTarget: LinkPickerTarget?
     @State private var showGroupStory: Bool = false
-    @State private var storyCaptureTask: CircleTask?
+    @State private var storyCaptureTarget: CircleStoryCaptureTarget?
 
     /// Which time slice the parallel body renders. Drives both "The
     /// work" (the user's own progress) and "The circle today" (every
@@ -66,6 +66,17 @@ struct CircleDetailView: View {
                         .padding(.top, 18)
                     }
 
+                    // The always-available "Add to story" entry sits
+                    // directly beneath the story module so adding a
+                    // moment is the first thing the user reaches — in
+                    // every circle, whether or not anyone has posted
+                    // yet. It auto-tags the user's latest finished task
+                    // when there is one, otherwise opens a general
+                    // circle moment.
+                    addToStoryCTA
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.top, hasStoryToday ? 12 : 18)
+
                     // Parallel circles surface "The work" — the
                     // shared task list with working checkboxes and
                     // link-status sublines. Collective circles keep
@@ -82,17 +93,15 @@ struct CircleDetailView: View {
                             onLinkTap: { task in
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 linkPickerTarget = LinkPickerTarget(circleTaskId: task.id)
+                            },
+                            onAddToStory: { task in
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                storyCaptureTarget = CircleStoryCaptureTarget(task: task)
                             }
                         )
                         .padding(.horizontal, Theme.pageHorizontalPadding)
                         .padding(.top, 14)
                         .padding(.bottom, 8)
-
-                        if let earned = firstCompletedTaskToday {
-                            addToStoryCTA(task: earned)
-                                .padding(.horizontal, Theme.pageHorizontalPadding)
-                                .padding(.top, 14)
-                        }
 
                         CircleMemberProgressSection(circle: circle, scope: scope)
                             .padding(.horizontal, Theme.pageHorizontalPadding)
@@ -144,8 +153,8 @@ struct CircleDetailView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
-        .fullScreenCover(item: $storyCaptureTask) { task in
-            CaptureView(mode: .circleClip(circle: circle, task: task))
+        .fullScreenCover(item: $storyCaptureTarget) { target in
+            CaptureView(mode: .circleClip(circle: circle, task: target.task))
         }
         .fullScreenCover(isPresented: $showGroupStory) {
             StoryPlayerView(mode: .circle(circle))
@@ -219,20 +228,25 @@ struct CircleDetailView: View {
     // MARK: - Circle clip capture CTA
 
     /// The first circle task the current user has completed today, if
-    /// any. Drives the visibility of the `Add your mile to the story`
-    /// affordance and rides into `CaptureView` as the `.circleClip`
-    /// mode's earned task.
+    /// any. When present, the always-visible "Add to story" button
+    /// auto-tags it as the earned badge ("Add your mile"); otherwise the
+    /// button posts a general circle moment with no task attached.
     private var firstCompletedTaskToday: CircleTask? {
         circle.tasks.first { task in
             store.hasUserCompletedCircleTaskToday(circleId: circle.id, circleTaskId: task.id)
         }
     }
 
+    /// Always-available entry into the circle's story, parked right
+    /// under the story module. Smart about the day: tags the user's
+    /// latest finished task when there is one, otherwise opens a general
+    /// circle moment (`task == nil`).
     @ViewBuilder
-    private func addToStoryCTA(task: CircleTask) -> some View {
+    private var addToStoryCTA: some View {
+        let earned = firstCompletedTaskToday
         Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            storyCaptureTask = task
+            storyCaptureTarget = CircleStoryCaptureTarget(task: earned)
         } label: {
             HStack(spacing: 12) {
                 ZStack {
@@ -245,10 +259,10 @@ struct CircleDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Add your mile to the story")
+                    Text(earned == nil ? "Add to story" : "Add your mile to the story")
                         .font(.sans(14, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
-                    Text("Earned \u{201C}\(task.title)\u{201D} today")
+                    Text(earned.map { "Earned \u{201C}\($0.title)\u{201D} today" } ?? "Share a moment from this circle")
                         .font(.sans(12, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 }
@@ -272,7 +286,7 @@ struct CircleDetailView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Add your mile to the story")
+        .accessibilityLabel(earned == nil ? "Add to story" : "Add your mile to the story")
     }
 
     // MARK: - Story strip presence
@@ -486,6 +500,18 @@ struct CircleDetailView: View {
 private struct LinkPickerTarget: Identifiable, Equatable {
     let circleTaskId: UUID
     var id: UUID { circleTaskId }
+}
+
+// MARK: - Circle story capture target
+
+/// Drives the circle-clip capture cover. Wraps an optional task so the
+/// always-available "Add to story" button can post a general circle
+/// moment (`task == nil`) while a finished or held task rides along as
+/// the earned badge. A fresh `id` per launch makes `fullScreenCover(item:)`
+/// treat each capture as a new presentation.
+private struct CircleStoryCaptureTarget: Identifiable {
+    let id = UUID()
+    let task: CircleTask?
 }
 
 // MARK: - Hero gradient (shared by C4 / C4b)

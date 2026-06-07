@@ -27,14 +27,18 @@ import UIKit
 
 enum CaptureMode {
     case generalPost
-    case circleClip(circle: FFCircle, task: CircleTask)
+    /// A moment posted into a circle's story. `task` is the optional
+    /// "earned" badge — set when launched from a finished task (or a
+    /// held task), `nil` for a general circle moment opened from the
+    /// always-available "Add to story" button.
+    case circleClip(circle: FFCircle, task: CircleTask?)
 
-    var contextChip: (task: String, circle: String)? {
+    var contextChip: (task: String?, circle: String)? {
         switch self {
         case .generalPost:
             return nil
         case .circleClip(let circle, let task):
-            return (task.title, circle.name)
+            return (task?.title, circle.name)
         }
     }
 }
@@ -251,27 +255,36 @@ struct CaptureView: View {
 
     // MARK: - Context chip
 
-    private func contextChip(task: String, circle: String) -> some View {
+    private func contextChip(task: String?, circle: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.alertGreen)
-            Text(task)
-                .font(.sans(13, weight: .semibold))
-                .foregroundStyle(Color.white)
-            Text("·")
-                .font(.sans(13, weight: .regular))
-                .foregroundStyle(Color.white.opacity(0.55))
-            Text(circle)
-                .font(.sans(13, weight: .regular))
-                .foregroundStyle(Color.white.opacity(0.78))
+            if let task {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.alertGreen)
+                Text(task)
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                Text("·")
+                    .font(.sans(13, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.55))
+                Text(circle)
+                    .font(.sans(13, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.78))
+            } else {
+                Image(systemName: "circle.hexagongrid.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(hex: 0xC59A5C))
+                Text(circle)
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(Color.white)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(Capsule(style: .continuous).fill(Color.black.opacity(0.45)))
         .overlay(Capsule(style: .continuous).strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Earned \(task) in \(circle)")
+        .accessibilityLabel(task.map { "Earned \($0) in \(circle)" } ?? "Adding to \(circle)")
     }
 
     // MARK: - Hint / timer

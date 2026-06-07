@@ -24,15 +24,20 @@ struct CircleSharedTasksSection: View {
     let circle: FFCircle
     let scope: CircleScope
     let onLinkTap: (CircleTask) -> Void
+    /// Press-and-hold a task to add a photo/video to the circle's story
+    /// for that specific task — mirrors the home "Today's Plan" cards.
+    let onAddToStory: (CircleTask) -> Void
 
     init(
         circle: FFCircle,
         scope: CircleScope = .today,
-        onLinkTap: @escaping (CircleTask) -> Void
+        onLinkTap: @escaping (CircleTask) -> Void,
+        onAddToStory: @escaping (CircleTask) -> Void
     ) {
         self.circle = circle
         self.scope = scope
         self.onLinkTap = onLinkTap
+        self.onAddToStory = onAddToStory
     }
 
     var body: some View {
@@ -51,7 +56,8 @@ struct CircleSharedTasksSection: View {
                         circleId: circle.id,
                         task: task,
                         scope: scope,
-                        onLinkTap: { onLinkTap(task) }
+                        onLinkTap: { onLinkTap(task) },
+                        onAddToStory: { onAddToStory(task) }
                     )
                 }
             }
@@ -89,6 +95,7 @@ private struct SharedTaskRow: View {
     let task: CircleTask
     let scope: CircleScope
     let onLinkTap: () -> Void
+    let onAddToStory: () -> Void
 
     /// Today's completion state — the only thing the checkbox can
     /// ever mutate, regardless of scope (you can't unwind history).
@@ -142,6 +149,14 @@ private struct SharedTaskRow: View {
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                 .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
         )
+        .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+        .contextMenu {
+            Button {
+                onAddToStory()
+            } label: {
+                Label("Add to story", systemImage: "camera")
+            }
+        }
     }
 
     private var checkbox: some View {
@@ -239,7 +254,7 @@ private struct SharedTaskRow: View {
     let store = Store()
     return ScrollView {
         if let parallel = store.circles.first(where: { $0.type == .parallel }) {
-            CircleSharedTasksSection(circle: parallel, scope: .today, onLinkTap: { _ in })
+            CircleSharedTasksSection(circle: parallel, scope: .today, onLinkTap: { _ in }, onAddToStory: { _ in })
                 .padding(.horizontal, Theme.pageHorizontalPadding)
                 .padding(.top, 24)
         }

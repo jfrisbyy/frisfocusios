@@ -834,7 +834,7 @@ struct CaptureReviewView: View {
 
             Spacer()
 
-            if case .circleClip(_, let task) = mode {
+            if case .circleClip(_, let task) = mode, let task {
                 earnedBadge(taskTitle: task.title)
             }
 
@@ -2025,7 +2025,7 @@ struct CaptureReviewView: View {
                     type: mediaType,
                     caption: captionToSend,
                     circleId: circle.id,
-                    attachedCircleTaskId: task.id,
+                    attachedCircleTaskId: task?.id,
                     durationSeconds: duration
                 )
             case .generalPost:
