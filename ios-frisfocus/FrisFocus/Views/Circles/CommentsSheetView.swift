@@ -26,6 +26,8 @@ struct CommentsSheetView: View {
 
     @State private var draft: String = ""
     @FocusState private var inputFocused: Bool
+    /// The comment author whose profile is open, if any.
+    @State private var profileTarget: ProfileTarget?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -64,6 +66,7 @@ struct CommentsSheetView: View {
         .background(Theme.warmWheat)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .profileDestination($profileTarget, store: store)
     }
 
     private var header: some View {
@@ -84,30 +87,46 @@ struct CommentsSheetView: View {
         let isMine = comment.fromFriendId == store.currentUserId
         let friend = store.friend(by: comment.fromFriendId)
         let colorHex = friend?.accentColorHex ?? "2C2C2A"
+        let target: ProfileTarget? = isMine ? .me : friend.map { ProfileTarget.friend($0) }
 
-        return HStack(alignment: .top, spacing: 10) {
-            ZStack {
-                Circle().fill(isMine ? Theme.textPrimary : Color(hex: colorHex))
-                Text(comment.fromInitials)
-                    .font(.sans(11, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: 28, height: 28)
+        return Button {
+            guard let target else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            profileTarget = target
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                ZStack {
+                    Circle().fill(isMine ? Theme.textPrimary : Color(hex: colorHex))
+                    Text(comment.fromInitials)
+                        .font(.sans(11, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                }
+                .frame(width: 28, height: 28)
 
-            VStack(alignment: .leading, spacing: 2) {
-                (
-                    Text(comment.fromName)
-                        .font(.sans(13, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                    + Text("  ")
-                    + Text(comment.text)
-                        .font(.sans(13, weight: .regular))
-                        .foregroundColor(Theme.textPrimary.opacity(0.85))
-                )
-                .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    (
+                        Text(comment.fromName)
+                            .font(.sans(13, weight: .semibold))
+                            .foregroundColor(Theme.textPrimary)
+                        + Text("  ")
+                        + Text(comment.text)
+                            .font(.sans(13, weight: .regular))
+                            .foregroundColor(Theme.textPrimary.opacity(0.85))
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(target == nil)
+        .accessibilityLabel(
+            isMine
+                ? "Your comment: \(comment.text)"
+                : (target != nil ? "\(comment.fromName), tap to open profile. \(comment.text)" : "\(comment.fromName): \(comment.text)")
+        )
     }
 
     private var composer: some View {

@@ -22,6 +22,8 @@ struct PactDetailView: View {
     @State private var showCheerComposer: Bool = false
     @State private var showSettings: Bool = false
     @State private var showLeaveConfirm: Bool = false
+    /// You or your partner, whichever's profile is open.
+    @State private var profileTarget: ProfileTarget?
 
     /// The live pact from the store so completion toggles re-render the
     /// progress cards without a manual reload.
@@ -76,6 +78,7 @@ struct PactDetailView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .profileDestination($profileTarget, store: store)
         .sheet(isPresented: $showCheerComposer) {
             if let partner {
                 CheerComposerView(friend: partner)
@@ -200,7 +203,15 @@ struct PactDetailView: View {
     /// cue that this is together, not versus.
     private var pairLine: some View {
         HStack(spacing: 8) {
-            youDisc
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                profileTarget = .me
+            } label: {
+                youDisc
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open your profile")
+
             Text("you")
                 .font(.sans(12, weight: .regular))
                 .foregroundStyle(Theme.textCream.opacity(0.85))
@@ -211,7 +222,14 @@ struct PactDetailView: View {
                 Text(partner.displayName.lowercased())
                     .font(.sans(12, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.85))
-                partnerDisc(partner)
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    profileTarget = .friend(partner)
+                } label: {
+                    partnerDisc(partner)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open \(partner.displayName)'s profile")
             }
         }
         .frame(maxWidth: .infinity)

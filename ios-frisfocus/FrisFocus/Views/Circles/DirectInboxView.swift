@@ -39,6 +39,8 @@ struct DirectInboxView: View {
     /// The friend a press-and-hold targeted — drives the camera cover
     /// so holding a card fires straight into a proof to that person.
     @State private var proofFriend: Friend?
+    /// The friend whose profile is open, if any (tapping their photo).
+    @State private var profileTarget: ProfileTarget?
 
     private var conversations: [DirectConversation] { store.directConversations }
 
@@ -68,7 +70,8 @@ struct DirectInboxView: View {
                                 ConversationRow(
                                     conversation: convo,
                                     onTap: { open(convo.friend) },
-                                    onLongPress: { sendProof(convo.friend) }
+                                    onLongPress: { sendProof(convo.friend) },
+                                    onOpenProfile: { openProfile(convo.friend) }
                                 )
                             }
                         }
@@ -87,6 +90,7 @@ struct DirectInboxView: View {
             CaptureView(mode: .generalPost, initialDirectFriendId: friend.id)
                 .environment(store)
         }
+        .profileDestination($profileTarget, store: store)
         .sheet(isPresented: $showPicker, onDismiss: {
             // Open the chosen thread only after the picker has closed,
             // so the full-screen cover doesn't collide with the sheet's
@@ -121,6 +125,13 @@ struct DirectInboxView: View {
     private func sendProof(_ friend: Friend) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         proofFriend = friend
+    }
+
+    /// Tapping a person's photo opens their profile; the rest of the
+    /// row still opens the conversation.
+    private func openProfile(_ friend: Friend) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        profileTarget = .friend(friend)
     }
 
     // MARK: - Header
@@ -219,6 +230,7 @@ private struct ConversationRow: View {
     let conversation: DirectConversation
     let onTap: () -> Void
     let onLongPress: () -> Void
+    let onOpenProfile: () -> Void
 
     @State private var pressed: Bool = false
 
@@ -229,7 +241,13 @@ private struct ConversationRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            avatar
+            Button {
+                onOpenProfile()
+            } label: {
+                avatar
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(friend.displayName)'s profile")
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {

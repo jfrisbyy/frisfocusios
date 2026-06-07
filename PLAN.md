@@ -1,24 +1,35 @@
-# Add a Save-to-camera-roll button in the photo/video editor
+# Make every person tappable to open their profile
 
-## What you'll get
+Right now people show up in lots of places as just a photo + name, but most of them do nothing when tapped. This makes a person tappable **everywhere** they appear — tapping opens that person's full profile (their day, your shared circles and pacts, your messages). Tapping your own photo opens your profile/settings.
 
-A **Save** button in the photo/video editor that drops the moment straight into your phone's camera roll — exactly as you've edited it.
+## What you'll be able to do
 
-### Features
-- A **download arrow button** appears in the top bar of the editor, right next to the close (X) — just like Instagram and Snapchat.
-- Tapping it saves the **edited version** to your camera roll: the chosen filter, any text captions, task stickers, and freehand drawings are all baked in, matching exactly what you see on screen.
-- Works for both **photos and videos**.
-- Saving is independent of sharing — you can save and still post, save and send privately, or just save and back out.
-- The first time you save, your phone asks permission to add to your photos. If that permission is off, a calm prompt offers to open Settings.
+- Tap anyone's photo or name, anywhere in the app, to jump straight to their profile.
+- Tap your own photo to open your profile/settings.
+- A gentle tap feedback (haptic) fires every time, so it feels intentional and responsive.
 
-### Design & feel
-- A small circular button with a download-arrow symbol, styled to match the existing top-bar buttons (retake / close) — same dark translucent circle, same size.
-- While it's working, the button shows a brief spinner (videos take a beat longer because the edits are rendered into the clip).
-- On success, a soft confirmation appears in the center ("Saved to your camera roll"), reusing the same gentle toast already used when sending a proof. A light haptic taps on success.
-- If something goes wrong or permission is denied, a quiet, friendly message explains why — never an alarming error.
+## How it behaves
 
-### Where it appears
-- Only on the **capture editor** — the screen you land on right after taking a photo or recording a video. The top bar keeps the retake arrow on the left and any earned-task badge centered; the new Save button sits just left of the close (X) on the right.
+- **Where a tap already does something** (the Proofs inbox row opens the conversation; a circle or pact card opens that circle): the person's photo becomes its own tap target that opens their profile, while the rest of the row or card keeps doing what it does today.
+- **Where photos overlap in a little cluster** (the stacked member photos in the corner of circle and pact cards): each fully‑visible photo opens that person directly, and the small "+N" badge opens a tidy members list where every person is tappable — so even people hidden behind the stack are reachable.
+- **Returning back**: the profile opens over whatever you were doing, and closing it returns you exactly where you were.
 
-### Behind the scenes (no visible change)
-- Adds the system permission needed to add items to your photo library, with a friendly description ("Save a photo or video from your day to your camera roll").
+## Where it will now work
+
+- **Story "Seen by" list** — tap any viewer to open their profile (the one you specifically called out).
+- **Comments** — tap a commenter's photo or name to open their profile.
+- **"The circle today" member rows** — tap a member to open their profile.
+- **Member photo clusters** on circle and pact cards (and the circle detail header).
+- **Story screen header** — while watching, tap the person's photo/name at the top to open their profile (works for friends' stories and for the author of a circle clip).
+- **Message/proof thread header** — tap the person at the top of the conversation.
+- **Proofs inbox** — tap a person's photo to open their profile (the row still opens the conversation).
+- **Pact detail** — tap your partner (or yourself) on the pact's header.
+
+## Design & feel
+
+- One consistent behavior everywhere: a person's photo/name is always a doorway to their profile, never a dead end.
+- The profile that opens is the same rich profile hub you already see from the Circles list, so it feels familiar.
+- Your own photo opens your existing profile/settings screen.
+- Touch targets stay comfortable; for the tiny overlapping photo stacks, the members list keeps everything easy to hit instead of forcing a tap on a half‑hidden photo.
+- Calm, witness‑model tone preserved — this only adds navigation, it changes none of the existing copy, counts, or sharing rules.
+

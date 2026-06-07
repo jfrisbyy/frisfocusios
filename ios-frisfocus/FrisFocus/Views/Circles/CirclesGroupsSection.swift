@@ -207,22 +207,70 @@ private struct MemberAvatarStack: View {
     var diameter: CGFloat = 24
     var overlap: CGFloat = 7
 
+    /// The member whose profile is open, if any.
+    @State private var profileTarget: ProfileTarget?
+    /// Drives the "+N" overflow members list.
+    @State private var showMembers: Bool = false
+    /// Person chosen in the members list, opened once it dismisses so
+    /// the profile cover doesn't fight the sheet's animation.
+    @State private var pendingTarget: ProfileTarget?
+
     var body: some View {
         let visible = Array(memberIds.prefix(maxVisible))
         let remainder = max(0, memberIds.count - visible.count)
 
         HStack(spacing: -overlap) {
             ForEach(Array(visible.enumerated()), id: \.element) { _, id in
-                avatar(for: id)
+                memberAvatar(for: id)
             }
 
             if remainder > 0 {
-                overflowPill(remainder)
+                overflowButton(remainder)
                     .zIndex(Double(visible.count + 1))
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(memberIds.count) members")
+        .sheet(isPresented: $showMembers, onDismiss: {
+            if let pendingTarget {
+                self.pendingTarget = nil
+                profileTarget = pendingTarget
+            }
+        }) {
+            MemberListSheet(memberIds: memberIds) { target in
+                pendingTarget = target
+                showMembers = false
+            }
+            .environment(store)
+        }
+        .profileDestination($profileTarget, store: store)
+    }
+
+    /// Wraps a member disc in a tap target that opens their profile.
+    /// Circle-only members not in the friend graph stay non-interactive.
+    @ViewBuilder
+    private func memberAvatar(for id: UUID) -> some View {
+        if let target = store.profileTarget(forMemberId: id) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                profileTarget = target
+            } label: {
+                avatar(for: id)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(id == store.currentUserId ? "Open your profile" : "Open \(store.friend(by: id)?.displayName ?? "member")'s profile")
+        } else {
+            avatar(for: id)
+        }
+    }
+
+    private func overflowButton(_ count: Int) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showMembers = true
+        } label: {
+            overflowPill(count)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(count) more members")
     }
 
     @ViewBuilder

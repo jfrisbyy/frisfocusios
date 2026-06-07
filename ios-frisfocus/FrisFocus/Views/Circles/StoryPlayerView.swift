@@ -59,6 +59,11 @@ struct StoryPlayerView: View {
 
     // MARK: - Playback state
 
+    /// The person whose profile is open, if any. Tapping the header
+    /// identity (a friend's story, or a circle clip's author) opens
+    /// their profile over the player; playback pauses while it's up.
+    @State private var profileTarget: ProfileTarget?
+
     @State private var currentIndex: Int = 0
     /// Fill fraction of the segment currently playing, 0...1.
     @State private var segmentProgress: Double = 0
@@ -274,6 +279,13 @@ struct StoryPlayerView: View {
             StorySeenByView(post: post)
                 .environment(store)
         }
+        .profileDestination($profileTarget, store: store)
+        .onChange(of: profileTarget != nil) { _, profileOpen in
+            // Pause the tape while a profile is open over the player,
+            // resume the moment it closes so the segment doesn't run on
+            // underneath it.
+            isPaused = profileOpen
+        }
         .onReceive(timer) { _ in
             tickProgress()
         }
@@ -353,8 +365,7 @@ struct StoryPlayerView: View {
             case .friend:
                 if let friend = currentFriend {
                     Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        onShowFriendProfile?(friend)
+                        showFriendProfile(friend)
                     } label: {
                         HStack(alignment: .center, spacing: 10) {
                             friendAvatar(friend)
@@ -375,7 +386,18 @@ struct StoryPlayerView: View {
                     .accessibilityLabel("Open \(friend.displayName)'s profile")
                 }
             case .circle(let circle):
-                circleHeaderAvatar(for: circle)
+                if let authorId = currentPost?.authorId,
+                   store.profileTarget(forMemberId: authorId) != nil {
+                    Button {
+                        showAuthorProfile(authorId)
+                    } label: {
+                        circleHeaderAvatar(for: circle)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open profile")
+                } else {
+                    circleHeaderAvatar(for: circle)
+                }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(circle.name)
                         .font(.sans(14, weight: .semibold))
@@ -386,7 +408,13 @@ struct StoryPlayerView: View {
                         .foregroundStyle(Theme.textCream.opacity(0.75))
                 }
             case .mine:
-                myAvatar
+                Button {
+                    showSelfProfile()
+                } label: {
+                    myAvatar
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open your profile")
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Your story")
                         .font(.sans(14, weight: .semibold))
@@ -915,6 +943,34 @@ struct StoryPlayerView: View {
 
     private func goNext() {
         advance()
+    }
+
+    // MARK: - Profile routing
+
+    /// Open a friend's profile from the header. When a host provided
+    /// `onShowFriendProfile` (the Circles page pops the player and
+    /// pushes the hub onto its nav stack), defer to it; otherwise
+    /// present the hub over the player and pause playback.
+    private func showFriendProfile(_ friend: Friend) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if let onShowFriendProfile {
+            onShowFriendProfile(friend)
+        } else {
+            profileTarget = .friend(friend)
+        }
+    }
+
+    /// Open the profile of a circle clip's author (a friend, or you).
+    private func showAuthorProfile(_ authorId: UUID) {
+        guard let target = store.profileTarget(forMemberId: authorId) else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        profileTarget = target
+    }
+
+    /// Open the user's own profile from the `.mine` header.
+    private func showSelfProfile() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        profileTarget = .me
     }
 
     // MARK: - Unified press / tap / drag gesture

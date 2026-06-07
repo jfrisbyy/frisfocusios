@@ -22,6 +22,9 @@ struct StorySeenByView: View {
 
     let post: StoryPost
 
+    /// The viewer whose profile is open, if any.
+    @State private var profileTarget: ProfileTarget?
+
     private var viewers: [StoryViewer] { store.storyViewers(forPost: post.id) }
     private var reactionCount: Int { viewers.filter { $0.didReact }.count }
 
@@ -55,6 +58,7 @@ struct StorySeenByView: View {
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(28)
         .presentationContentInteraction(.scrolls)
+        .profileDestination($profileTarget, store: store)
     }
 
     // MARK: - Header
@@ -103,40 +107,48 @@ struct StorySeenByView: View {
     // MARK: - Viewer row
 
     private func viewerRow(_ viewer: StoryViewer) -> some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Color(hex: viewer.friend.accentColorHex))
-                Text(viewer.friend.initials)
-                    .font(.sans(16, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            profileTarget = .friend(viewer.friend)
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Color(hex: viewer.friend.accentColorHex))
+                    Text(viewer.friend.initials)
+                        .font(.sans(16, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                }
+                .frame(width: 46, height: 46)
+
+                Text(viewer.friend.displayName)
+                    .font(.sans(15, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if viewer.didReact {
+                    Image(systemName: "heart.fill")
+                        .font(.sans(15, weight: .regular))
+                        .foregroundStyle(Color(hex: 0xED93B1))
+                        .accessibilityLabel("Reacted")
+                }
             }
-            .frame(width: 46, height: 46)
-
-            Text(viewer.friend.displayName)
-                .font(.sans(15, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-
-            Spacer(minLength: 4)
-
-            if viewer.didReact {
-                Image(systemName: "heart.fill")
-                    .font(.sans(15, weight: .regular))
-                    .foregroundStyle(Color(hex: 0xED93B1))
-                    .accessibilityLabel("Reacted")
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .fill(Color.white.opacity(0.6))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-        )
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("Open \(viewer.friend.displayName)'s profile")
     }
 
     // MARK: - Empty state

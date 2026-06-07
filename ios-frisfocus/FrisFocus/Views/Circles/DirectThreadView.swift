@@ -27,6 +27,8 @@ struct DirectThreadView: View {
     @FocusState private var composerFocused: Bool
     @State private var showCapture: Bool = false
     @State private var proofPlayback: ProofPlayback?
+    /// The friend whose profile is open, if any.
+    @State private var profileTarget: ProfileTarget?
 
     private var thread: [DirectShare] { store.thread(withFriendId: friend.id) }
 
@@ -59,6 +61,7 @@ struct DirectThreadView: View {
             DirectShareViewerView(shares: playback.shares)
                 .environment(store)
         }
+        .profileDestination($profileTarget, store: store)
         .onAppear { store.markThreadRead(withFriendId: friend.id) }
     }
 
@@ -66,23 +69,33 @@ struct DirectThreadView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Color(hex: friend.accentColorHex))
-                Text(friend.initials)
-                    .font(.sans(15, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: 40, height: 40)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                profileTarget = .friend(friend)
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(Color(hex: friend.accentColorHex))
+                        Text(friend.initials)
+                            .font(.sans(15, weight: .semibold))
+                            .foregroundStyle(Theme.textCream)
+                    }
+                    .frame(width: 40, height: 40)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text("PRIVATELY")
-                    .font(.sans(9, weight: .medium))
-                    .tracking(2)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                Text(friend.displayName)
-                    .font(.serif(20, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("PRIVATELY")
+                            .font(.sans(9, weight: .medium))
+                            .tracking(2)
+                            .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                        Text(friend.displayName)
+                            .font(.serif(20, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(friend.displayName)'s profile")
 
             Spacer()
 

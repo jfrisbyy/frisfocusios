@@ -34,6 +34,9 @@ struct CircleMemberProgressSection: View {
     let circle: FFCircle
     let scope: CircleScope
 
+    /// The member whose profile is open, if any.
+    @State private var profileTarget: ProfileTarget?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -49,11 +52,17 @@ struct CircleMemberProgressSection: View {
                     MemberProgressRow(
                         circle: circle,
                         memberId: memberId,
-                        scope: scope
+                        scope: scope,
+                        onOpenProfile: { id in
+                            if let target = store.profileTarget(forMemberId: id) {
+                                profileTarget = target
+                            }
+                        }
                     )
                 }
             }
         }
+        .profileDestination($profileTarget, store: store)
     }
 
     private var header: some View {
@@ -86,8 +95,14 @@ private struct MemberProgressRow: View {
     let circle: FFCircle
     let memberId: UUID
     let scope: CircleScope
+    let onOpenProfile: (UUID) -> Void
 
     private var isUser: Bool { memberId == store.currentUserId }
+
+    /// Whether this member resolves to an openable profile (you, or a
+    /// known friend). Circle-only members not in the friend graph have
+    /// nothing to open, so the row stays inert for them.
+    private var canOpenProfile: Bool { store.profileTarget(forMemberId: memberId) != nil }
 
     private var displayName: String {
         if isUser { return "You" }
@@ -135,32 +150,41 @@ private struct MemberProgressRow: View {
     private var isQuiet: Bool { done == 0 }
 
     var body: some View {
-        HStack(spacing: 12) {
-            avatar
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onOpenProfile(memberId)
+        } label: {
+            HStack(spacing: 12) {
+                avatar
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text(displayName)
-                    .font(.sans(14, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary)
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(displayName)
+                        .font(.sans(14, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary)
 
-                segmentedBar
+                    segmentedBar
+                }
+
+                Spacer(minLength: 8)
+
+                countLabel
             }
-
-            Spacer(minLength: 8)
-
-            countLabel
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .opacity(isQuiet ? 0.72 : 1)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .fill(Color.white.opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-        )
-        .opacity(isQuiet ? 0.72 : 1)
+        .buttonStyle(.plain)
+        .disabled(!canOpenProfile)
+        .accessibilityLabel(canOpenProfile ? "\(displayName), \(done) of \(total). Open profile." : "\(displayName), \(done) of \(total)")
     }
 
     @ViewBuilder
