@@ -1,29 +1,24 @@
-# Make adding to a circle's story easy: top button + hold-a-task
+# Add a Save-to-camera-roll button in the photo/video editor
 
-## What you'll be able to do
+## What you'll get
 
-Inside any circle, adding to the group story becomes effortless:
+A **Save** button in the photo/video editor that drops the moment straight into your phone's camera roll — exactly as you've edited it.
 
-**Features**
+### Features
+- A **download arrow button** appears in the top bar of the editor, right next to the close (X) — just like Instagram and Snapchat.
+- Tapping it saves the **edited version** to your camera roll: the chosen filter, any text captions, task stickers, and freehand drawings are all baked in, matching exactly what you see on screen.
+- Works for both **photos and videos**.
+- Saving is independent of sharing — you can save and still post, save and send privately, or just save and back out.
+- The first time you save, your phone asks permission to add to your photos. If that permission is off, a calm prompt offers to open Settings.
 
-- An **"Add to story" button is always present**, placed right underneath the "watch the story" module at the top of the circle — so it's the first thing you reach, whether or not anyone has posted yet.
-- The button is **smart about your day**: if you've already finished one of the circle's tasks today, it reads **"Add your mile to the story"** and automatically tags that finished task. If you haven't finished anything yet, it's a simple **"Add to story"** for a general moment from the circle.
-- This easy button shows up in **every circle** — both the checklist kind and the shared-goal kind that has no checklist.
-- You can **press and hold any task** in a circle's checklist to add a photo or video to the story for that specific task — exactly like holding an item in your home "Today's Plan." A gentle press brings up a small **"Add to story"** option with a camera icon.
-- In every case, the camera/editor opens just like it does today (photo or video, captions, filters), and the finished moment lands in **that circle's story**.
+### Design & feel
+- A small circular button with a download-arrow symbol, styled to match the existing top-bar buttons (retake / close) — same dark translucent circle, same size.
+- While it's working, the button shows a brief spinner (videos take a beat longer because the edits are rendered into the clip).
+- On success, a soft confirmation appears in the center ("Saved to your camera roll"), reusing the same gentle toast already used when sending a proof. A light haptic taps on success.
+- If something goes wrong or permission is denied, a quiet, friendly message explains why — never an alarming error.
 
-**Design & feel**
+### Where it appears
+- Only on the **capture editor** — the screen you land on right after taking a photo or recording a video. The top bar keeps the retake arrow on the left and any earned-task badge centered; the new Save button sits just left of the close (X) on the right.
 
-- The "Add to story" button keeps the established warm amber card look with a camera glyph and a soft outline, sitting calmly beneath the story module.
-- When tagged to a finished task, the card shows the task name ("Earned 'Run a mile' today"); otherwise it shows a quiet invitation ("Share a moment from this circle").
-- Holding a task gives a light haptic and a clean context menu, consistent with the home screen — no clutter added to the row itself.
-
-**Where this appears**
-
-- The single circle page (reached by tapping a circle from the Circles room). The top-of-page story area gains the always-available button; the task checklist below gains the hold-to-add gesture.
-
-**Behind the scenes (kept tidy)**
-
-- The circle camera is taught that a moment can be posted with **or without** a specific task attached, so the "Add to story" button works even before you've checked anything off. When no task is attached, the editor simply omits the little "earned" badge and the moment still files into the circle's story.
-- No change to how stories are watched, counted, or how the existing capture/editor works.
-
+### Behind the scenes (no visible change)
+- Adds the system permission needed to add items to your photo library, with a friendly description ("Save a photo or video from your day to your camera roll").

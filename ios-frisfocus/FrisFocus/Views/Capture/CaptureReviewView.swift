@@ -420,6 +420,12 @@ struct CaptureReviewView: View {
 
     @State private var showDiscardConfirm: Bool = false
 
+    // Save-to-camera-roll state. `isSaving` swaps the top-bar download glyph
+    // for a spinner; `showSaveDenied` raises the Settings prompt when
+    // add-only photo access is off.
+    @State private var isSaving: Bool = false
+    @State private var showSaveDenied: Bool = false
+
     // Share destination (general posts only). Circle clips keep their
     // fixed destination and never show the chooser.
     @State private var audience: ShareAudience = .initial
@@ -490,6 +496,16 @@ struct CaptureReviewView: View {
         ) {
             Button("Discard", role: .destructive) { onRetake() }
             Button("Keep editing", role: .cancel) {}
+        }
+        .alert("Photos access needed", isPresented: $showSaveDenied) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("FrisFocus needs permission to add to your photos. You can turn it on in Settings.")
         }
         .sheet(isPresented: $showTaskPicker) {
             TaskStickerPickerView { block in
@@ -840,12 +856,44 @@ struct CaptureReviewView: View {
 
             Spacer()
 
-            chromeButton(systemName: "xmark") {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showDiscardConfirm = true
+            HStack(spacing: 10) {
+                saveButton
+
+                chromeButton(systemName: "xmark") {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showDiscardConfirm = true
+                }
+                .accessibilityLabel("Discard")
             }
-            .accessibilityLabel("Discard")
         }
+    }
+
+    /// Download-arrow button that saves the composed (edited) photo/video to
+    /// the camera roll. Swaps to a spinner while the save runs so the user
+    /// gets feedback on the slower video path.
+    private var saveButton: some View {
+        Button {
+            saveToCameraRoll()
+        } label: {
+            Group {
+                if isSaving {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(Color.white)
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                }
+            }
+            .frame(width: 38, height: 38)
+            .background(Circle().fill(Color.black.opacity(0.40)))
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .disabled(isSaving)
+        .accessibilityLabel("Save to camera roll")
     }
 
     private func chromeButton(systemName: String, action: @escaping () -> Void) -> some View {
@@ -2064,6 +2112,85 @@ struct CaptureReviewView: View {
             isPosting = false
             onPosted()
         }
+    }
+
+    // MARK: - Save to camera roll
+
+    /// The composed photo bytes for the current edit — flattened with
+    /// captions / stickers / drawing when present, otherwise the filtered
+    /// still on its own. A touch higher quality than the shared copy since
+    /// it's the keepsake landing in the user's library.
+    @MainActor
+    private func composedPhotoData() -> Data? {
+        let untouched = captions.isEmpty && taskStickers.isEmpty && pkCanvas.drawing.strokes.isEmpty
+        return untouched
+            ? filteredImage.jpegData(compressionQuality: 0.9)
+            : flattenedPhoto()
+    }
+
+    /// Resolves the edited video to a file URL for saving — burns the
+    /// overlays / tint into a fresh clip when present, otherwise hands back
+    /// the original recording untouched.
+    private func resolveVideoURL(url: URL) async -> URL? {
+        let hasOverlays = !captions.isEmpty || !taskStickers.isEmpty || !pkCanvas.drawing.strokes.isEmpty
+        let tint = videoTintColor()
+        guard hasOverlays || tint != nil else { return url }
+        let burned = await VideoOverlayExporter.export(sourceURL: url, tint: tint) { renderSize in
+            hasOverlays ? overlayImage(at: renderSize) : nil
+        }
+        return burned ?? url
+    }
+
+    /// Saves the composed photo / video to the device camera roll. Surfaces a
+    /// calm confirmation toast on success and a gentle Settings prompt when
+    /// access is off. Independent of sharing — the editor stays open after.
+    private func saveToCameraRoll() {
+        guard !isSaving else { return }
+        isSaving = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if showAudiencePanel { closeAudiencePanel() }
+        if isDrawing { withAnimation(.easeInOut(duration: 0.2)) { isDrawing = false } }
+
+        Task { @MainActor in
+            let outcome: PhotoLibrarySaver.SaveOutcome
+            switch result {
+            case .photo:
+                if let data = composedPhotoData() {
+                    outcome = await PhotoLibrarySaver.saveImage(data)
+                } else {
+                    outcome = .failed
+                }
+            case .video(let url, _, _):
+                if let fileURL = await resolveVideoURL(url: url) {
+                    outcome = await PhotoLibrarySaver.saveVideo(at: fileURL)
+                } else {
+                    outcome = .failed
+                }
+            }
+
+            isSaving = false
+
+            switch outcome {
+            case .saved:
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                await flashToast(isVideo ? "Video saved to your camera roll" : "Saved to your camera roll")
+            case .denied:
+                showSaveDenied = true
+            case .failed:
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                await flashToast("Couldn’t save — please try again")
+            }
+        }
+    }
+
+    /// Shows the shared confirmation toast for a beat, then fades it out. The
+    /// post flow sets `sentToast` and then dismisses; here we self-clear so
+    /// the editor stays put after a save.
+    @MainActor
+    private func flashToast(_ text: String) async {
+        withAnimation(.easeOut(duration: 0.2)) { sentToast = text }
+        try? await Task.sleep(for: .milliseconds(1500))
+        withAnimation(.easeIn(duration: 0.25)) { sentToast = nil }
     }
 }
 

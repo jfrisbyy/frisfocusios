@@ -502,6 +502,7 @@
 				INFOPLIST_KEY_NSCameraUsageDescription = "Capture a photo to share a moment from your day with friends or your circle.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Used to position the sun based on your local sunrise and sunset times.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice memos to attach to your notes.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save a photo or video from your day to your camera roll.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Pick a photo from your library to share with friends or your circle.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -540,6 +541,7 @@
 				INFOPLIST_KEY_NSCameraUsageDescription = "Capture a photo to share a moment from your day with friends or your circle.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Used to position the sun based on your local sunrise and sunset times.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice memos to attach to your notes.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save a photo or video from your day to your camera roll.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Pick a photo from your library to share with friends or your circle.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
