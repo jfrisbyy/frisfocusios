@@ -157,12 +157,29 @@ struct ProfileSheetView: View {
             syncedBadge
                 .padding(.top, 18)
 
-            NavigationLink {
-                FriendsView()
-            } label: {
-                friendsRow
+            VStack(spacing: 10) {
+                NavigationLink {
+                    FriendsView()
+                } label: {
+                    hubRow(
+                        icon: "person.2.fill",
+                        title: "Friends",
+                        subtitle: "Add real friends and accept requests"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                NavigationLink {
+                    SharedCirclesListView()
+                } label: {
+                    hubRow(
+                        icon: "circle.hexagongrid.fill",
+                        title: "Circles",
+                        subtitle: "Shared goals you run with friends"
+                    )
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             .padding(.top, 24)
 
             Text("Settings, season management, and history will live here.")
@@ -209,21 +226,21 @@ struct ProfileSheetView: View {
         .clipShape(Capsule())
     }
 
-    private var friendsRow: some View {
+    private func hubRow(icon: String, title: String, subtitle: String) -> some View {
         HStack(spacing: 14) {
             ZStack {
                 Circle().fill(Theme.textPrimary.opacity(0.06))
-                Image(systemName: "person.2.fill")
+                Image(systemName: icon)
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
             }
             .frame(width: 44, height: 44)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Friends")
+                Text(title)
                     .font(.sans(16, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
-                Text("Add real friends and accept requests")
+                Text(subtitle)
                     .font(.sans(12, weight: .regular))
                     .foregroundStyle(Theme.textSecondary)
             }
