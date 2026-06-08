@@ -18,6 +18,215 @@ export type Database = {
   }
   public: {
     Tables: {
+      circle_contributions: {
+        Row: {
+          amount: number
+          circle_id: string
+          created_at: string
+          id: string
+          note: string | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          circle_id: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          circle_id?: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_contributions_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_contributions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_members: {
+        Row: {
+          circle_id: string
+          id: string
+          joined_at: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          circle_id: string
+          id?: string
+          joined_at?: string
+          role?: string
+          user_id: string
+        }
+        Update: {
+          circle_id?: string
+          id?: string
+          joined_at?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_members_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_task_completions: {
+        Row: {
+          circle_id: string
+          completed_on: string
+          created_at: string
+          id: string
+          task_id: string
+          user_id: string
+        }
+        Insert: {
+          circle_id: string
+          completed_on?: string
+          created_at?: string
+          id?: string
+          task_id: string
+          user_id: string
+        }
+        Update: {
+          circle_id?: string
+          completed_on?: string
+          created_at?: string
+          id?: string
+          task_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_task_completions_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_task_completions_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "circle_tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_task_completions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_tasks: {
+        Row: {
+          circle_id: string
+          created_at: string
+          id: string
+          point_value: number | null
+          position: number
+          title: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          id?: string
+          point_value?: number | null
+          position?: number
+          title: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          id?: string
+          point_value?: number | null
+          position?: number
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_tasks_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circles: {
+        Row: {
+          collective_target: number | null
+          collective_unit: string | null
+          created_at: string
+          end_date: string | null
+          id: string
+          name: string
+          owner_id: string
+          timeframe_kind: string
+          type: string
+        }
+        Insert: {
+          collective_target?: number | null
+          collective_unit?: string | null
+          created_at?: string
+          end_date?: string | null
+          id?: string
+          name: string
+          owner_id: string
+          timeframe_kind?: string
+          type?: string
+        }
+        Update: {
+          collective_target?: number | null
+          collective_unit?: string | null
+          created_at?: string
+          end_date?: string | null
+          id?: string
+          name?: string
+          owner_id?: string
+          timeframe_kind?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circles_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       friend_requests: {
         Row: {
           addressee_id: string
@@ -128,6 +337,9 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      is_circle_member: { Args: { p_circle_id: string }; Returns: boolean }
+      my_circle_role: { Args: { p_circle_id: string }; Returns: string }
+      owns_circle: { Args: { p_circle_id: string }; Returns: boolean }
       user_id: { Args: never; Returns: string }
     }
     Enums: {
