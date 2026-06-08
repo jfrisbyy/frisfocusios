@@ -157,11 +157,19 @@ struct ProfileSheetView: View {
             syncedBadge
                 .padding(.top, 18)
 
-            Text("Profile, settings, season management, and history will live here.")
+            NavigationLink {
+                FriendsView()
+            } label: {
+                friendsRow
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 24)
+
+            Text("Settings, season management, and history will live here.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.55))
                 .multilineTextAlignment(.center)
-                .padding(.top, 20)
+                .padding(.top, 18)
                 .padding(.horizontal, 24)
 
             Spacer()
@@ -201,6 +209,36 @@ struct ProfileSheetView: View {
         .clipShape(Capsule())
     }
 
+    private var friendsRow: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle().fill(Theme.textPrimary.opacity(0.06))
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            .frame(width: 44, height: 44)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Friends")
+                    .font(.sans(16, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("Add real friends and accept requests")
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .padding(14)
+        .background(Theme.paperCream)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
     // MARK: - Pieces
 
     private func emblem(systemName: String) -> some View {
@@ -221,7 +259,7 @@ struct ProfileSheetView: View {
     @ViewBuilder
     private func avatar(for user: AuthManager.User) -> some View {
         ZStack {
-            if let picture = user.picture, let url = URL(string: picture) {
+            if let url = user.photoURL {
                 AsyncImage(url: url) { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
@@ -240,24 +278,10 @@ struct ProfileSheetView: View {
     private func initialDisc(for user: AuthManager.User) -> some View {
         ZStack {
             Theme.textPrimary
-            Text(initials(for: user))
+            Text(user.initials.isEmpty ? "?" : user.initials)
                 .font(.serif(30, weight: .medium))
                 .foregroundStyle(Theme.textCream)
         }
-    }
-
-    private func initials(for user: AuthManager.User) -> String {
-        if let name = user.name?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
-            let parts = name.split(separator: " ")
-            let letters = parts.prefix(2).compactMap { $0.first }
-            if !letters.isEmpty {
-                return String(letters).uppercased()
-            }
-        }
-        if let first = user.email.first {
-            return String(first).uppercased()
-        }
-        return "?"
     }
 }
 

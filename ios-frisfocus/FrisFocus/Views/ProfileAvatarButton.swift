@@ -53,9 +53,17 @@ struct ProfileAvatarButton: View {
     private var placeholderDisc: some View {
         ZStack {
             Theme.textPrimary
-            Text(initials)
-                .font(.sans(12, weight: .medium))
-                .foregroundStyle(Theme.textCream)
+            if initials.isEmpty {
+                // Signed out — a quiet person glyph that reads as
+                // "tap to sign in" rather than a stale initial.
+                Image(systemName: "person.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textCream)
+            } else {
+                Text(initials)
+                    .font(.sans(12, weight: .medium))
+                    .foregroundStyle(Theme.textCream)
+            }
         }
     }
 }

@@ -45,6 +45,24 @@ class AuthManager {
         let email: String
         let name: String?
         let picture: String?
+
+        /// Up to two uppercase initials drawn from the user's name,
+        /// falling back to the first letter of their email. Empty only
+        /// when we have neither — callers treat that as "show a glyph".
+        var initials: String {
+            if let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+                let letters = name.split(separator: " ").prefix(2).compactMap { $0.first }
+                if !letters.isEmpty { return String(letters).uppercased() }
+            }
+            if let first = email.first { return String(first).uppercased() }
+            return ""
+        }
+
+        /// The avatar image URL the identity provider supplied, if any.
+        var photoURL: URL? {
+            guard let picture, let url = URL(string: picture) else { return nil }
+            return url
+        }
     }
 
     init() {

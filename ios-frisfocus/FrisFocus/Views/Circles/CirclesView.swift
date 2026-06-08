@@ -30,6 +30,7 @@ import UIKit
 
 struct CirclesView: View {
     @Environment(Store.self) private var store
+    @Environment(AuthManager.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Section + rail state
@@ -488,7 +489,10 @@ struct CirclesView: View {
             VStack {
                 HStack {
                     Spacer()
-                    ProfileAvatarButton(initials: "J") {
+                    ProfileAvatarButton(
+                        initials: auth.user?.initials ?? "",
+                        photoURL: auth.user?.photoURL
+                    ) {
                         showProfileSheet = true
                     }
                 }
@@ -569,5 +573,6 @@ struct CirclesSectionTopsPreferenceKey: PreferenceKey {
     NavigationStack {
         CirclesView()
             .environment(Store())
+            .environment(AuthManager())
     }
 }

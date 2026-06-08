@@ -95,6 +95,7 @@ extension View {
 /// as a quiet, non-tappable row.
 struct MemberListSheet: View {
     @Environment(Store.self) private var store
+    @Environment(AuthManager.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
     var title: String = "Members"
@@ -166,7 +167,7 @@ struct MemberListSheet: View {
         let friend = store.friend(by: id)
         let target: ProfileTarget? = isUser ? .me : friend.map { ProfileTarget.friend($0) }
         let name = isUser ? "You" : (friend?.displayName ?? "Member")
-        let initials = isUser ? "J" : (friend?.initials ?? "?")
+        let initials = isUser ? (auth.user?.initials ?? "?") : (friend?.initials ?? "?")
         let color: Color = isUser
             ? Theme.textPrimary
             : (friend.map { Color(hex: $0.accentColorHex) } ?? Theme.textTertiary)
