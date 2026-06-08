@@ -10,6 +10,7 @@
 import SwiftUI
 import AuthenticationServices
 import CryptoKit
+import Supabase
 
 @Observable
 class AuthManager {
@@ -125,6 +126,7 @@ class AuthManager {
         if let accessToken = KeychainHelper.get("access_token"),
            let user = userFromToken(accessToken) {
             self.user = user
+            syncProfile(user)
             return
         }
 
@@ -314,6 +316,7 @@ class AuthManager {
             KeychainHelper.set("refresh_token", value: tokenResponse.refresh_token)
 
             user = tokenResponse.user
+            syncProfile(tokenResponse.user)
         } catch {
             setError("Sign in failed: \(error.localizedDescription)")
         }
@@ -346,7 +349,11 @@ class AuthManager {
             let refreshResponse = try JSONDecoder().decode(RefreshResponse.self, from: data)
             KeychainHelper.set("access_token", value: refreshResponse.access_token)
 
-            user = userFromToken(refreshResponse.access_token)
+            let refreshedUser = userFromToken(refreshResponse.access_token)
+            user = refreshedUser
+            if let refreshedUser {
+                syncProfile(refreshedUser)
+            }
         } catch {
             await signOut()
         }
@@ -363,6 +370,47 @@ class AuthManager {
     private func setError(_ message: String) {
         errorMessage = message
         showError = true
+    }
+
+    /// Mirror the signed-in user's identity into the `profiles` table so
+    /// RLS-protected rows in other tables can safely reference a real
+    /// profile row via `user_id()`. Fire-and-forget: a sync failure is
+    /// logged but never blocks the UI or the sign-in flow. The Supabase
+    /// client reads the freshly-stored access token from the Keychain, so
+    /// the upsert runs as the authenticated user.
+    private func syncProfile(_ user: User) {
+        Task {
+            do {
+                try await supabase
+                    .from("profiles")
+                    .upsert(ProfileUpsert(
+                        id: user.id,
+                        email: user.email,
+                        name: user.name,
+                        avatarUrl: user.picture
+                    ))
+                    .execute()
+            } catch {
+                print("[AuthManager] Profile sync failed: \(error)")
+            }
+        }
+    }
+}
+
+// MARK: - Profile sync
+
+/// Encodable payload for upserting the current user's `profiles` row.
+nonisolated struct ProfileUpsert: Encodable, Sendable {
+    let id: String
+    let email: String
+    let name: String?
+    let avatarUrl: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case email
+        case name
+        case avatarUrl = "avatar_url"
     }
 }
 
