@@ -227,6 +227,63 @@ export type Database = {
           },
         ]
       }
+      direct_messages: {
+        Row: {
+          body: string | null
+          created_at: string
+          id: string
+          kind: string
+          media_duration: number | null
+          media_kind: string | null
+          media_path: string | null
+          read_at: string | null
+          recipient_id: string
+          sender_id: string
+          watched_at: string | null
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          media_duration?: number | null
+          media_kind?: string | null
+          media_path?: string | null
+          read_at?: string | null
+          recipient_id: string
+          sender_id: string
+          watched_at?: string | null
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          media_duration?: number | null
+          media_kind?: string | null
+          media_path?: string | null
+          read_at?: string | null
+          recipient_id?: string
+          sender_id?: string
+          watched_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "direct_messages_recipient_id_fkey"
+            columns: ["recipient_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "direct_messages_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       friend_requests: {
         Row: {
           addressee_id: string
