@@ -81,6 +81,12 @@ struct CaptureView: View {
     /// friend is preselected as the private recipient in the review's
     /// destination picker.
     var initialDirectFriendId: UUID? = nil
+    /// Live Proofs path: when set, the finished proof is sent to exactly
+    /// one real account through this async closure (and the audience
+    /// chooser is hidden) instead of writing to the local store.
+    /// `liveProofRecipientName` labels the fixed destination chip.
+    var liveProofRecipientName: String? = nil
+    var onSendLiveProof: ((_ data: Data, _ isVideo: Bool, _ duration: Double?, _ caption: String?) async -> Void)? = nil
 
     @State private var camera = CameraService()
     @State private var captureResult: CaptureResult?
@@ -207,7 +213,9 @@ struct CaptureView: View {
                     captureResult = nil
                 },
                 initialTaskSticker: initialTaskSticker,
-                initialDirectFriendId: initialDirectFriendId
+                initialDirectFriendId: initialDirectFriendId,
+                liveProofRecipientName: liveProofRecipientName,
+                onSendLiveProof: onSendLiveProof
             )
             .environment(store)
         }

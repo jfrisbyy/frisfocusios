@@ -50,8 +50,12 @@ struct CirclesView: View {
     @State private var showStoryCapture: Bool = false
     @State private var showMyStory: Bool = false
     @State private var showDirect: Bool = false
-    @State private var threadFriend: Friend?
     @State private var route: CirclesRoute?
+
+    /// The real messaging backend — drives the paper-plane's unread dot.
+    /// The inbox itself owns the live realtime instance; this lightweight
+    /// one just keeps the count fresh on the page.
+    @State private var messageGraph = MessageGraphService()
 
     /// Anchor ids for the section headers; the rail scrolls to these.
     private let friendsAnchor = "circles.friends"
@@ -67,6 +71,7 @@ struct CirclesView: View {
 
                         CirclesFriendsSection(
                             isExpanded: $friendsExpanded,
+                            directUnreadCount: directUnread,
                             onHeaderTap: { toggleFriends() },
                             onFriendTap: { friend, isFresh in
                                 handleFriendTap(friend: friend, isFresh: isFresh)
@@ -144,15 +149,13 @@ struct CirclesView: View {
                 StoryPlayerView(mode: .mine)
                     .environment(store)
             }
-            .sheet(isPresented: $showDirect) {
-                DirectInboxView()
+            .sheet(isPresented: $showDirect, onDismiss: {
+                // Refresh the unread dot the moment the inbox closes.
+                Task { await loadMessages() }
+            }) {
+                ProofsInboxView()
                     .environment(store)
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
-            }
-            .sheet(item: $threadFriend) { friend in
-                DirectThreadView(friend: friend)
-                    .environment(store)
+                    .environment(auth)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
@@ -197,7 +200,26 @@ struct CirclesView: View {
             .navigationDestination(item: $route) { route in
                 destination(for: route)
             }
+            .task { await loadMessages() }
         }
+    }
+
+    // MARK: - Live messaging (unread dot)
+
+    /// A lightweight load for the paper-plane's unread dot. The inbox
+    /// owns the live realtime subscription; here we just refresh on
+    /// appear and whenever the inbox closes, so the dot stays accurate
+    /// without a second channel on the same topic.
+    private func loadMessages() async {
+        guard let myId = auth.user?.id else { return }
+        await messageGraph.load(myUserId: myId)
+    }
+
+    /// Total unread proofs/notes across every real conversation — drives
+    /// the paper-plane dot on the Friends section.
+    private var directUnread: Int {
+        guard let myId = auth.user?.id else { return 0 }
+        return messageGraph.conversations(myUserId: myId).reduce(0) { $0 + $1.unreadCount }
     }
 
     // MARK: - Section toggling
@@ -249,11 +271,12 @@ struct CirclesView: View {
         showDirect = true
     }
 
-    /// Jump straight to a friend's private proof/message thread — no
-    /// detour through a global list.
+    /// The seeded "Friends today" people are a visual demo; their
+    /// message buttons lead into the one real inbox so there's a single,
+    /// coherent messaging system.
     private func handleMessageTap(_ friend: Friend) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        threadFriend = friend
+        showDirect = true
     }
 
     private func handlePactTap(_ pact: Pact) {

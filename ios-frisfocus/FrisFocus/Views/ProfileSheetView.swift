@@ -16,6 +16,10 @@ struct ProfileSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AuthManager.self) private var auth
 
+    /// Presents the real Proofs inbox over the hub (a self-contained
+    /// surface with its own header), reached from the "Proofs" row.
+    @State private var showProofs: Bool = false
+
     var body: some View {
         @Bindable var auth = auth
 
@@ -47,6 +51,10 @@ struct ProfileSheetView: View {
                 Button("OK") { }
             } message: {
                 Text(auth.errorMessage)
+            }
+            .sheet(isPresented: $showProofs) {
+                ProofsInboxView()
+                    .environment(auth)
             }
         }
     }
@@ -176,6 +184,18 @@ struct ProfileSheetView: View {
                         icon: "circle.hexagongrid.fill",
                         title: "Circles",
                         subtitle: "Shared goals you run with friends"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showProofs = true
+                } label: {
+                    hubRow(
+                        icon: "paperplane.fill",
+                        title: "Proofs",
+                        subtitle: "Private notes and proofs with friends"
                     )
                 }
                 .buttonStyle(.plain)

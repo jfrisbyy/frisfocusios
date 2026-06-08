@@ -390,6 +390,12 @@ struct CaptureReviewView: View {
     /// When the review opens from a friend's hub via "Send a proof,"
     /// this friend starts preselected as the private recipient.
     var initialDirectFriendId: UUID? = nil
+    /// Live Proofs path: when set, the editor sends the finished proof to
+    /// exactly one real account through this async closure (skipping the
+    /// local store) and hides the audience chooser. `liveProofRecipientName`
+    /// labels the fixed destination chip.
+    var liveProofRecipientName: String? = nil
+    var onSendLiveProof: ((_ data: Data, _ isVideo: Bool, _ duration: Double?, _ caption: String?) async -> Void)? = nil
 
     // Caption state
     @State private var captions: [CaptionBlock] = []
@@ -1139,9 +1145,15 @@ struct CaptureReviewView: View {
         }
     }
 
+    /// True when this editor is wired to send to one real account (the
+    /// live Proofs thread) rather than the local store.
+    private var isLiveProof: Bool { onSendLiveProof != nil }
+
     /// Only general posts can pick a destination; a circle clip is
-    /// pinned to the circle it documents.
+    /// pinned to the circle it documents, and a live proof is pinned to
+    /// its one real recipient.
     private var canChooseAudience: Bool {
+        if isLiveProof { return false }
         if case .generalPost = mode { return true }
         return false
     }
@@ -1182,6 +1194,7 @@ struct CaptureReviewView: View {
     }
 
     private var audienceIcon: String {
+        if isLiveProof { return "person.fill" }
         switch mode {
         case .circleClip:
             return "circle.hexagongrid.fill"
@@ -1198,6 +1211,7 @@ struct CaptureReviewView: View {
     }
 
     private var destinationTint: Color {
+        if isLiveProof { return Color(hex: 0x8FB339) }
         switch mode {
         case .circleClip:
             return Color(hex: 0xC59A5C)
@@ -1207,6 +1221,7 @@ struct CaptureReviewView: View {
     }
 
     private var audienceTitle: String {
+        if isLiveProof { return "To \(liveProofRecipientName ?? "your friend")" }
         switch mode {
         case .circleClip(let circle, _):
             return circle.name
@@ -1217,6 +1232,7 @@ struct CaptureReviewView: View {
     }
 
     private var audienceSubtitle: String {
+        if isLiveProof { return "A private proof \u{00B7} just them" }
         switch mode {
         case .circleClip:
             return "Archived in the circle's story"
@@ -1268,6 +1284,7 @@ struct CaptureReviewView: View {
     /// True when the current selection includes any private recipient
     /// (friends and/or circles) — drives the "Send" vs "Share" label.
     private var isPrivateSend: Bool {
+        if isLiveProof { return true }
         guard canChooseAudience else { return false }
         return audience.hasPrivateRecipients
     }
@@ -2062,6 +2079,25 @@ struct CaptureReviewView: View {
                 mediaData = await resolveVideoData(url: url)
                 mediaType = .video
                 duration = dur
+            }
+
+            // Live Proofs: send to exactly one real account and skip the
+            // local store entirely. Requires real media bytes.
+            if let onSendLiveProof {
+                guard let mediaData else { isPosting = false; return }
+                await onSendLiveProof(
+                    mediaData,
+                    mediaType == .video,
+                    duration,
+                    captionToSend.isEmpty ? nil : captionToSend
+                )
+                withAnimation(.easeOut(duration: 0.2)) {
+                    sentToast = "Proof sent to \(liveProofRecipientName ?? "your friend")"
+                }
+                try? await Task.sleep(for: .milliseconds(950))
+                isPosting = false
+                onPosted()
+                return
             }
 
             var toast: String? = nil

@@ -35,6 +35,10 @@ struct CirclesFriendsSection: View {
     @Environment(Store.self) private var store
 
     @Binding var isExpanded: Bool
+    /// Real unread proofs/notes across every live conversation — drives
+    /// the paper-plane dot. Supplied by the parent (which owns the
+    /// messaging service); 0 when signed out or nothing is waiting.
+    var directUnreadCount: Int = 0
     let onHeaderTap: () -> Void
     let onFriendTap: (Friend, Bool) -> Void
     let onYouTap: () -> Void
@@ -144,7 +148,7 @@ struct CirclesFriendsSection: View {
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(Theme.textPrimary.opacity(0.06)))
 
-                if store.unreadDirectCount > 0 {
+                if directUnreadCount > 0 {
                     Circle()
                         .fill(Theme.alertRed)
                         .frame(width: 8, height: 8)
@@ -155,7 +159,7 @@ struct CirclesFriendsSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(store.unreadDirectCount > 0 ? "Direct, \(store.unreadDirectCount) new" : "Direct")
+        .accessibilityLabel(directUnreadCount > 0 ? "Direct, \(directUnreadCount) new" : "Direct")
     }
 
     // MARK: - Stories row
