@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		XX50D61ED0BAE05FA2F8E9XX /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = XX1C9FF110ABBCE8BF456CXX /* Supabase */; };
 		XX63C04CA17CDA3E852083XX /* FrisFocusWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = XXCCA1329CFD7A799240BCXX /* FrisFocusWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -66,13 +67,20 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		XXA57E82DCAD162E246165XX /* FrisFocusWidget */ = {
+		105FC57C2E9EAD3100EA8BCF /* FrisFocus */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FrisFocusWidget;
+			path = FrisFocus;
 			sourceTree = "<group>";
-			exceptions = (
-				XX7F4A9931E3843F7AC701XX /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
-			);
+		};
+		105FC58C2E9EAD3200EA8BCF /* FrisFocusTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FrisFocusTests;
+			sourceTree = "<group>";
+		};
+		105FC5962E9EAD3200EA8BCF /* FrisFocusUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FrisFocusUITests;
+			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
@@ -81,6 +89,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				XX50D61ED0BAE05FA2F8E9XX /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -108,20 +117,13 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		105FC57C2E9EAD3100EA8BCF /* FrisFocus */ = {
+		XXA57E82DCAD162E246165XX /* FrisFocusWidget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FrisFocus;
+			path = FrisFocusWidget;
 			sourceTree = "<group>";
-		};
-		105FC58C2E9EAD3200EA8BCF /* FrisFocusTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FrisFocusTests;
-			sourceTree = "<group>";
-		};
-		105FC5962E9EAD3200EA8BCF /* FrisFocusUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FrisFocusUITests;
-			sourceTree = "<group>";
+			exceptions = (
+				XX7F4A9931E3843F7AC701XX /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
@@ -170,6 +172,7 @@
 			);
 			name = FrisFocus;
 			packageProductDependencies = (
+				XX1C9FF110ABBCE8BF456CXX /* Supabase */,
 			);
 			productName = FrisFocus;
 			productReference = 105FC57A2E9EAD3100EA8BCF /* FrisFocus.app */;
@@ -282,6 +285,9 @@
 				105FC5882E9EAD3200EA8BCF /* FrisFocusTests */,
 				105FC5922E9EAD3200EA8BCF /* FrisFocusUITests */,
 				XX1E1960C9C00F9CC06FCBXX /* FrisFocusWidget */,
+			);
+			packageReferences = (
+				XX20EB7F6EA71E9F2E096CXX /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 		};
 /* End PBXProject section */
@@ -743,6 +749,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		XX20EB7F6EA71E9F2E096CXX /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.44.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		XX1C9FF110ABBCE8BF456CXX /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = XX20EB7F6EA71E9F2E096CXX /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 105FC5722E9EAD3100EA8BCF /* Project object */;
 }
