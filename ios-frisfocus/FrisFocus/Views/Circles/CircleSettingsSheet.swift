@@ -27,6 +27,12 @@ struct CircleSettingsSheet: View {
     @State private var transientBanner: String?
     @State private var bannerTask: Task<Void, Never>?
 
+    // Shared-goals (mode switching) state.
+    @State private var showNumberForm: Bool = false
+    @State private var numberUnit: String = ""
+    @State private var numberTarget: String = ""
+    @State private var showOurStory: Bool = false
+
     private var circle: FFCircle? {
         store.circles.first { $0.id == circleId }
     }
@@ -63,6 +69,12 @@ struct CircleSettingsSheet: View {
                     bannerView(text: banner)
                 }
 
+                ourStoryRow(for: circle)
+
+                if store.canManageTasks(in: circle) {
+                    sharedGoalsSection(for: circle)
+                }
+
                 if store.isOwner(of: circle) {
                     governanceSection(for: circle)
                 }
@@ -71,7 +83,9 @@ struct CircleSettingsSheet: View {
                     pendingRequestsSection(for: circle)
                 }
 
-                sharedTasksSection(for: circle)
+                if circle.hasSharedList {
+                    sharedTasksSection(for: circle)
+                }
 
                 membersSection(for: circle)
             }
@@ -80,6 +94,315 @@ struct CircleSettingsSheet: View {
             .padding(.bottom, 48)
         }
         .background(Theme.warmWheat)
+        .sheet(isPresented: $showOurStory) {
+            CircleStoryView(circleId: circleId)
+                .environment(store)
+        }
+    }
+
+    // MARK: - Our story entry
+
+    private func ourStoryRow(for circle: FFCircle) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showOurStory = true
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Theme.textPrimary.opacity(0.06)).frame(width: 38, height: 38)
+                    Image(systemName: "book.closed")
+                        .font(.sans(15, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Our story")
+                        .font(.sans(15, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(storySubtitle(for: circle))
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.sans(12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .padding(14)
+            .background(cardBackground)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Our story")
+    }
+
+    private func storySubtitle(for circle: FFCircle) -> String {
+        let n = circle.chapters.count
+        if n <= 1 { return "A lookback on your time together" }
+        return "\(n) chapters of your time together"
+    }
+
+    // MARK: - Shared goals (mode switching)
+
+    private func sharedGoalsSection(for circle: FFCircle) -> some View {
+        sectionContainer(title: "Shared goals", eyebrow: circle.type.shortEyebrow) {
+            VStack(spacing: 10) {
+                sharedListGoalCard(for: circle)
+                sharedNumberGoal(for: circle)
+                goalsFootnote(for: circle)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sharedListGoalCard(for circle: FFCircle) -> some View {
+        if circle.hasSharedList {
+            goalCard(
+                icon: "checklist",
+                tint: CircleType.parallel.tint,
+                tintDark: CircleType.parallel.tintDark,
+                title: "Shared list",
+                detail: circle.tasks.isEmpty ? "Everyone runs the same checklist" : "\(circle.tasks.count) shared task\(circle.tasks.count == 1 ? "" : "s")",
+                active: true,
+                actionLabel: "Set aside",
+                destructive: true,
+                action: {
+                    _ = store.removeCircleLayer(.sharedList, from: circle.id)
+                    showBanner("List set aside — your tasks are kept.")
+                }
+            )
+        } else {
+            goalCard(
+                icon: "checklist",
+                tint: CircleType.parallel.tint,
+                tintDark: CircleType.parallel.tintDark,
+                title: "Shared list",
+                detail: circle.tasks.isEmpty ? "Everyone runs the same checklist each day" : "Resume your \(circle.tasks.count) tasks — they're still here",
+                active: false,
+                actionLabel: "Add",
+                destructive: false,
+                action: {
+                    _ = store.addCircleLayer(.sharedList, to: circle.id)
+                    showBanner("Shared list added.")
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func sharedNumberGoal(for circle: FFCircle) -> some View {
+        if circle.hasSharedNumber {
+            goalCard(
+                icon: "number",
+                tint: CircleType.collective.tint,
+                tintDark: CircleType.collective.tintDark,
+                title: "Shared number",
+                detail: numberDetail(for: circle),
+                active: true,
+                actionLabel: "Set aside",
+                destructive: true,
+                action: {
+                    _ = store.removeCircleLayer(.sharedNumber, from: circle.id)
+                    showBanner("Number set aside — the running total is kept.")
+                }
+            )
+        } else if showNumberForm {
+            numberForm(for: circle)
+        } else {
+            goalCard(
+                icon: "number",
+                tint: CircleType.collective.tint,
+                tintDark: CircleType.collective.tintDark,
+                title: "Shared number",
+                detail: circle.collectiveTarget != nil ? "Resume \(numberDetail(for: circle)) — the total's still there" : "One number you build toward together",
+                active: false,
+                actionLabel: "Add",
+                destructive: false,
+                action: {
+                    numberUnit = circle.collectiveUnit ?? ""
+                    numberTarget = circle.collectiveTarget.map { circleNumber($0) } ?? ""
+                    withAnimation(.easeInOut(duration: 0.18)) { showNumberForm = true }
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func goalsFootnote(for circle: FFCircle) -> some View {
+        if circle.objectives.isEmpty {
+            Text("This is a Witness circle — pure presence. Add a goal anytime, or keep it a calm room.")
+                .font(.serifItalic(12, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
+        } else if circle.objectives.count == 2 {
+            Text("Running two goals at once. Set one aside anytime to keep things simple.")
+                .font(.serifItalic(12, weight: .regular))
+                .foregroundStyle(CircleType.hybrid.tintDark.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
+        }
+    }
+
+    private func numberDetail(for circle: FFCircle) -> String {
+        let unit = circle.collectiveUnit ?? ""
+        if let target = circle.collectiveTarget {
+            return "\(circleNumber(target)) \(unit)".trimmingCharacters(in: .whitespaces)
+        }
+        return unit.isEmpty ? "One number, together" : unit
+    }
+
+    private func goalCard(
+        icon: String,
+        tint: Color,
+        tintDark: Color,
+        title: String,
+        detail: String,
+        active: Bool,
+        actionLabel: String,
+        destructive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(tint.opacity(active ? 0.18 : 0.1)).frame(width: 38, height: 38)
+                Image(systemName: icon)
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(active ? tintDark : tint.opacity(0.7))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.sans(15, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    if active {
+                        Text("ON")
+                            .font(.sans(8, weight: .bold))
+                            .tracking(1)
+                            .foregroundStyle(tintDark)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(tint.opacity(0.18)))
+                    }
+                }
+                Text(detail)
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button {
+                UIImpactFeedbackGenerator(style: destructive ? .light : .medium).impactOccurred()
+                action()
+            } label: {
+                Text(actionLabel)
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(destructive ? Theme.textPrimary.opacity(0.65) : Theme.textCream)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 7)
+                    .background(goalActionBackground(destructive: destructive, tint: tint))
+                    .contentShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .background(cardBackground)
+    }
+
+    @ViewBuilder
+    private func goalActionBackground(destructive: Bool, tint: Color) -> some View {
+        if destructive {
+            Capsule(style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.2), lineWidth: 0.6)
+        } else {
+            Capsule(style: .continuous).fill(tint)
+        }
+    }
+
+    private func numberForm(for circle: FFCircle) -> some View {
+        let target = Double(numberTarget.trimmingCharacters(in: .whitespaces))
+        let unit = numberUnit.trimmingCharacters(in: .whitespaces)
+        let valid = (target ?? 0) > 0 && !unit.isEmpty
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "number")
+                    .font(.sans(14, weight: .semibold))
+                    .foregroundStyle(CircleType.collective.tintDark)
+                Text("Add a shared number")
+                    .font(.sans(14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            HStack(spacing: 10) {
+                TextField("1000", text: $numberTarget)
+                    .keyboardType(.numberPad)
+                    .font(.sans(15, weight: .semibold))
+                    .frame(width: 88)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                    .background(numberFieldBackground)
+                TextField("miles, plunges, pages…", text: $numberUnit)
+                    .font(.sans(15, weight: .regular))
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                    .background(numberFieldBackground)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    cancelNumberForm()
+                } label: {
+                    Text("Cancel")
+                        .font(.sans(13, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Theme.textPrimary.opacity(0.18), lineWidth: 0.6)
+                        )
+                }
+                .buttonStyle(.plain)
+                Button {
+                    commitNumber(for: circle, target: target, unit: unit)
+                } label: {
+                    Text("Add number")
+                        .font(.sans(13, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(valid ? CircleType.collective.tint : Theme.textPrimary.opacity(0.3))
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!valid)
+            }
+        }
+        .padding(14)
+        .background(cardBackground)
+    }
+
+    private var numberFieldBackground: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color.white.opacity(0.7))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 0.5)
+            )
+    }
+
+    private func commitNumber(for circle: FFCircle, target: Double?, unit: String) {
+        guard let target, target > 0, !unit.isEmpty else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        _ = store.addCircleLayer(.sharedNumber, to: circle.id, unit: unit, target: target)
+        showBanner("Shared number added.")
+        cancelNumberForm()
+    }
+
+    private func cancelNumberForm() {
+        withAnimation(.easeInOut(duration: 0.18)) { showNumberForm = false }
+        numberUnit = ""
+        numberTarget = ""
     }
 
     // MARK: - Governance

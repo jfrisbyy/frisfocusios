@@ -18,6 +18,8 @@ import UIKit
 
 struct HomeView: View {
     @Environment(Store.self) private var store
+    @Environment(AuthManager.self) private var auth
+    @Environment(NotificationManager.self) private var notifications
     @State private var locationService = LocationService()
     @State private var activeZone: HomeZone = .sun
     @State private var zoneFrames: [HomeZone: CGRect] = [:]
@@ -34,6 +36,8 @@ struct HomeView: View {
     private let scrollSpace = "frisFocusScroll"
 
     var body: some View {
+        @Bindable var notifications = notifications
+
         NavigationStack {
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 let sky = SunSky.make(now: context.date, coordinate: locationService.coordinate)
@@ -61,6 +65,10 @@ struct HomeView: View {
             haptic.prepare()
             refreshTopSafeInset()
         }
+        .fullScreenCover(item: $notifications.pendingRoute) { route in
+            NotificationRouteHost(route: route, myUserId: auth.user?.id ?? "")
+        }
+        .profileQuickCard(isPresented: $showProfileSheet)
     }
 
     @ViewBuilder
@@ -152,9 +160,6 @@ struct HomeView: View {
                     .presentationDetents([.fraction(0.5)])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(28)
-            }
-            .sheet(isPresented: $showProfileSheet) {
-                ProfileSheetView()
             }
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {

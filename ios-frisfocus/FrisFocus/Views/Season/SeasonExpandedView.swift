@@ -55,6 +55,11 @@ struct SeasonExpandedView: View {
                             )
                         }
 
+                        // Passive Cadence outcomes (sleep / focus /
+                        // wind-down) that fill themselves from verified
+                        // events. Absent unless Cadence is linked.
+                        CadenceEarnedSection()
+
                         libraryActionRow
 
                         seasonFooter

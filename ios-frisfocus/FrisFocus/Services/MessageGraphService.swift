@@ -287,6 +287,7 @@ final class MessageGraphService {
                 .execute()
                 .value
             appendIfNew(created)
+            PushService.send(to: recipientId, kind: .note, preview: trimmed)
         } catch {
             fail("Couldn't send your message.", error)
         }
@@ -331,6 +332,7 @@ final class MessageGraphService {
                 .execute()
                 .value
             appendIfNew(created)
+            PushService.send(to: recipientId, kind: .proof, preview: trimmedCaption)
         } catch {
             fail("Couldn't send your proof.", error)
         }
@@ -448,7 +450,7 @@ final class MessageGraphService {
         guard !ids.isEmpty else { return [:] }
         let rows: [RemoteProfile] = try await supabase
             .from("profiles")
-            .select("id, email, name, avatar_url")
+            .select("id, email, name, username, avatar_url")
             .in("id", values: ids)
             .execute()
             .value

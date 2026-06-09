@@ -15,10 +15,15 @@ import AuthenticationServices
 struct ProfileSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AuthManager.self) private var auth
+    @Environment(ProfileStore.self) private var profileStore
+    @Environment(Store.self) private var store
+    @Environment(CadenceLinkService.self) private var cadence
 
     /// Presents the real Proofs inbox over the hub (a self-contained
     /// surface with its own header), reached from the "Proofs" row.
     @State private var showProofs: Bool = false
+    @State private var showDeleteConfirm: Bool = false
+    @State private var isDeleting: Bool = false
 
     var body: some View {
         @Bindable var auth = auth
@@ -52,9 +57,28 @@ struct ProfileSheetView: View {
             } message: {
                 Text(auth.errorMessage)
             }
+            .alert("Delete your account?", isPresented: $showDeleteConfirm) {
+                Button("Delete account", role: .destructive) {
+                    Task {
+                        isDeleting = true
+                        let ok = await auth.deleteAccount()
+                        isDeleting = false
+                        if ok { dismiss() }
+                    }
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This permanently erases your profile, proofs, messages, circles, and friends. This can't be undone.")
+            }
             .sheet(isPresented: $showProofs) {
                 ProofsInboxView()
                     .environment(auth)
+            }
+            .task {
+                if let myId = auth.user?.id {
+                    await profileStore.load(myUserId: myId)
+                    await cadence.refresh(myUserId: myId)
+                }
             }
         }
     }
@@ -144,17 +168,25 @@ struct ProfileSheetView: View {
     // MARK: - Signed in
 
     private func signedIn(_ user: AuthManager.User) -> some View {
-        VStack(spacing: 0) {
+        let profile = profileStore.myProfile
+        let displayName = profile?.name ?? user.name ?? "You"
+        let handle = profile?.handle
+
+        return VStack(spacing: 0) {
             Spacer().frame(height: 16)
 
             avatar(for: user)
 
             VStack(spacing: 5) {
-                Text(user.name ?? "You")
+                Text(displayName)
                     .font(.serif(26, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
 
-                if !user.email.isEmpty {
+                if let handle {
+                    Text(handle)
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                } else if !user.email.isEmpty {
                     Text(user.email)
                         .font(.sans(14, weight: .regular))
                         .foregroundStyle(Theme.textSecondary)
@@ -165,7 +197,23 @@ struct ProfileSheetView: View {
             syncedBadge
                 .padding(.top, 18)
 
+            if cadence.isEligible && !store.cadenceConnected && !store.cadenceInviteDismissed {
+                cadenceInviteBanner
+                    .padding(.top, 18)
+            }
+
             VStack(spacing: 10) {
+                NavigationLink {
+                    EditProfileView()
+                } label: {
+                    hubRow(
+                        icon: "person.crop.circle",
+                        title: "Edit profile",
+                        subtitle: "Name, photo, and @username"
+                    )
+                }
+                .buttonStyle(.plain)
+
                 NavigationLink {
                     FriendsView()
                 } label: {
@@ -188,6 +236,21 @@ struct ProfileSheetView: View {
                 }
                 .buttonStyle(.plain)
 
+                if cadence.isEligible {
+                    NavigationLink {
+                        CadenceConnectView()
+                    } label: {
+                        hubRow(
+                            icon: "moon.stars.fill",
+                            title: "Cadence",
+                            subtitle: store.cadenceConnected
+                                ? "Linked routines & sleep outcomes"
+                                : "Connect your routines & sleep"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     showProofs = true
@@ -196,6 +259,17 @@ struct ProfileSheetView: View {
                         icon: "paperplane.fill",
                         title: "Proofs",
                         subtitle: "Private notes and proofs with friends"
+                    )
+                }
+                .buttonStyle(.plain)
+
+                NavigationLink {
+                    BlockedAccountsView()
+                } label: {
+                    hubRow(
+                        icon: "hand.raised.fill",
+                        title: "Blocked",
+                        subtitle: "People you've blocked"
                     )
                 }
                 .buttonStyle(.plain)
@@ -211,24 +285,104 @@ struct ProfileSheetView: View {
 
             Spacer()
 
-            Button {
-                Task { await auth.signOut() }
-            } label: {
-                Text("Sign out")
-                    .font(.sans(16, weight: .medium))
-                    .foregroundStyle(Theme.alertRed)
+            VStack(spacing: 12) {
+                Button {
+                    Task { await auth.signOut() }
+                } label: {
+                    Text("Sign out")
+                        .font(.sans(16, weight: .medium))
+                        .foregroundStyle(Theme.alertRed)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(Theme.paperCream)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(Theme.alertRed.opacity(0.2), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    showDeleteConfirm = true
+                } label: {
+                    Group {
+                        if isDeleting {
+                            ProgressView().tint(Theme.alertRed)
+                        } else {
+                            Text("Delete account")
+                                .font(.sans(14, weight: .regular))
+                                .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                        }
+                    }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(Theme.paperCream)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Theme.alertRed.opacity(0.2), lineWidth: 1)
-                    )
+                    .frame(height: 32)
+                }
+                .buttonStyle(.plain)
+                .disabled(isDeleting)
             }
-            .buttonStyle(.plain)
             .padding(.bottom, 28)
         }
+    }
+
+    private var cadenceInviteBanner: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Theme.cadenceLavender)
+                    Image(systemName: "moon.stars.fill")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Cadence detected")
+                        .font(.sans(15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Link your routines to earn points automatically.")
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 4)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation { store.dismissCadenceInvite() }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.textTertiary)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
+            }
+
+            NavigationLink {
+                CadenceConnectView()
+            } label: {
+                Text("Connect Cadence")
+                    .font(.sans(14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(Theme.cadenceLavender)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .background(Theme.cadenceLavenderWash)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Theme.cadenceLavender.opacity(0.25), lineWidth: 0.5)
+        )
     }
 
     private var syncedBadge: some View {
@@ -295,8 +449,9 @@ struct ProfileSheetView: View {
 
     @ViewBuilder
     private func avatar(for user: AuthManager.User) -> some View {
+        let url = profileStore.myProfile?.photoURL ?? user.photoURL
         ZStack {
-            if let url = user.photoURL {
+            if let url {
                 AsyncImage(url: url) { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
@@ -313,9 +468,10 @@ struct ProfileSheetView: View {
     }
 
     private func initialDisc(for user: AuthManager.User) -> some View {
-        ZStack {
+        let initials = profileStore.myProfile?.initials ?? user.initials
+        return ZStack {
             Theme.textPrimary
-            Text(user.initials.isEmpty ? "?" : user.initials)
+            Text(initials.isEmpty ? "?" : initials)
                 .font(.serif(30, weight: .medium))
                 .foregroundStyle(Theme.textCream)
         }
@@ -327,5 +483,7 @@ struct ProfileSheetView: View {
         .sheet(isPresented: .constant(true)) {
             ProfileSheetView()
                 .environment(AuthManager())
+                .environment(Store())
+                .environment(CadenceLinkService())
         }
 }

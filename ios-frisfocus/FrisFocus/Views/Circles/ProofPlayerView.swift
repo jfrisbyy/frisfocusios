@@ -20,6 +20,8 @@ import UIKit
 
 struct ProofPlayerView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AuthManager.self) private var auth
+    @Environment(ModerationService.self) private var moderation
 
     let proof: DirectMessage
     let friend: RemoteProfile
@@ -37,6 +39,7 @@ struct ProofPlayerView: View {
     @State private var isPaused: Bool = false
     @State private var dragOffset: CGFloat = 0
     @State private var pressStart: Date?
+    @State private var reportTarget: ReportTarget?
 
     private let tick: TimeInterval = 0.04
     private let timer = Timer.publish(every: 0.04, on: .main, in: .common).autoconnect()
@@ -89,6 +92,15 @@ struct ProofPlayerView: View {
         .onDisappear {
             player?.pause()
             player = nil
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: target.messageId,
+                subjectName: target.subjectName
+            )
+            .environment(auth)
+            .environment(moderation)
         }
     }
 
@@ -170,6 +182,23 @@ struct ProofPlayerView: View {
 
             Spacer()
 
+            Menu {
+                Button(role: .destructive) {
+                    isPaused = true
+                    player?.pause()
+                    reportTarget = ReportTarget(reportedUserId: friend.id, messageId: proof.id, subjectName: friend.displayName)
+                } label: {
+                    Label("Report this proof", systemImage: "flag")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("More options")
+
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismiss()
@@ -240,7 +269,7 @@ struct ProofPlayerView: View {
     // MARK: - Playback timing
 
     private func tickProgress() {
-        guard !isPaused, !isLoading, !failed else { return }
+        guard !isPaused, !isLoading, !failed, reportTarget == nil else { return }
         segmentProgress += tick / max(0.1, currentDuration)
         if segmentProgress >= 1 {
             segmentProgress = 1

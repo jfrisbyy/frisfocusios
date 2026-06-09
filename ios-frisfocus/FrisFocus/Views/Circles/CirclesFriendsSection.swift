@@ -46,6 +46,9 @@ struct CirclesFriendsSection: View {
     var onDirectTap: (() -> Void)? = nil
     /// Jump straight to a friend's 1:1 proof/message thread.
     var onMessageTap: ((Friend) -> Void)? = nil
+    /// Open the full Find & Add Friends screen. When provided, renders a
+    /// trailing "+ Add" tile at the end of the stories row.
+    var onAddFriendTap: (() -> Void)? = nil
 
     /// The default-collapsed visible count before the "View N more"
     /// row expands the list. Two reads as editorially balanced on
@@ -182,6 +185,10 @@ struct CirclesFriendsSection: View {
                     ) {
                         onFriendTap(friend, illumination(for: friend) == .fresh)
                     }
+                }
+
+                if let onAddFriendTap {
+                    AddFriendStoryTile(action: onAddFriendTap)
                 }
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
@@ -424,6 +431,45 @@ private struct FriendStoryAvatar: View {
     }
 }
 
+// MARK: - Add friend tile
+
+/// A trailing tile in the stories row that opens the full Find & Add
+/// Friends screen. Sized to match the 50 pt story avatars with a 60 pt
+/// caption column, but styled as a dashed warm ring around a centered
+/// "+" so it reads as "add someone" — clearly distinct from the small
+/// gold story "+" badge on the You avatar.
+private struct AddFriendStoryTile: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle().fill(Theme.sunWarm.opacity(0.14))
+                    Circle().strokeBorder(
+                        Theme.textPrimary.opacity(0.3),
+                        style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
+                    )
+                    Image(systemName: "plus")
+                        .font(.sans(18, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                }
+                .frame(width: 50, height: 50)
+
+                Text("Add")
+                    .font(.sans(11, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                    .lineLimit(1)
+            }
+            .frame(width: 60)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add friend")
+        .accessibilityHint("Find and add friends")
+    }
+}
+
 // MARK: - One-line friend card
 
 private struct FriendCardRow: View {
@@ -459,7 +505,7 @@ private struct FriendCardRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(friend.displayName), \(store.headlineFromFriend(friend))")
+            .accessibilityLabel("\(friend.displayName), \(taskSummary)")
 
             messageAffordance
         }
@@ -470,57 +516,41 @@ private struct FriendCardRow: View {
 
     // MARK: Avatar
 
+    /// Avatar wrapped in a subtle progress ring in the friend's
+    /// signature color, rendered at the tier they share with you (full =
+    /// today's completion, open = momentum, quiet = faint track). The
+    /// fresh-story play badge still rides the corner.
     private var cardAvatar: some View {
-        ZStack(alignment: .bottomTrailing) {
-            ZStack {
-                Circle().fill(Color(hex: friend.accentColorHex))
-                Text(friend.initials)
-                    .font(.sans(15, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: 38, height: 38)
-            .overlay { avatarRing }
-
-            if hasFreshStory {
+        DayProgressRing(
+            fraction: store.dayRingFraction(for: friend),
+            tint: Color(hex: friend.accentColorHex),
+            lineWidth: 2.5,
+            trackOpacity: 0.16
+        ) {
+            ZStack(alignment: .bottomTrailing) {
                 ZStack {
-                    Circle()
-                        .fill(Theme.alertRed)
-                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.5))
-                    Image(systemName: "play.fill")
-                        .font(.sans(7, weight: .black))
-                        .foregroundStyle(Color.white)
+                    Circle().fill(Color(hex: friend.accentColorHex))
+                    Text(friend.initials)
+                        .font(.sans(15, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
                 }
-                .frame(width: 13, height: 13)
-                .offset(x: 1, y: 1)
+                .frame(width: 38, height: 38)
+
+                if hasFreshStory {
+                    ZStack {
+                        Circle()
+                            .fill(Theme.alertRed)
+                            .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.5))
+                        Image(systemName: "play.fill")
+                            .font(.sans(7, weight: .black))
+                            .foregroundStyle(Color.white)
+                    }
+                    .frame(width: 13, height: 13)
+                    .offset(x: 1, y: 1)
+                }
             }
         }
-    }
-
-    @ViewBuilder
-    private var avatarRing: some View {
-        switch illumination {
-        case .fresh:
-            Circle()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [Theme.sunWarm, Theme.sunOuter],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1.8
-                )
-        case .seen:
-            Circle()
-                .strokeBorder(Theme.textPrimary.opacity(0.28), lineWidth: 1.1)
-        case .none:
-            EmptyView()
-        }
-    }
-
-    private var illumination: AvatarIllumination {
-        if store.hasUnviewedStories(forFriendId: friend.id) { return .fresh }
-        if store.hasAnyActiveStories(forFriendId: friend.id) { return .seen }
-        return .none
+        .frame(width: 48, height: 48)
     }
 
     // MARK: Title line
@@ -557,7 +587,23 @@ private struct FriendCardRow: View {
         if hasProofUnread, let u = latestUnread {
             return "\u{1F4F7} sent you a proof · \(FriendRowFormat.elapsed(from: u.createdAt))"
         }
-        return store.headlineFromFriend(friend)
+        return taskSummary
+    }
+
+    /// A task-focused one-line summary, tier-aware so it never reveals
+    /// more than the friend shares: full counts today's done tasks, open
+    /// speaks to momentum, quiet stays to season / presence.
+    private var taskSummary: String {
+        let day = store.friendDay(for: friend)
+        switch friend.sharesWithMe.tier {
+        case .full:
+            return "\(day.doneCount) of \(day.totalCount) done today"
+        case .open:
+            return "Showing up · \(day.rhythmSummary)"
+        case .quiet:
+            if let season = friend.currentSeasonName { return "In \(season)" }
+            return "Quietly present"
+        }
     }
 
     private var card: some View {

@@ -25,8 +25,39 @@ import Supabase
 // MARK: - Circle shape
 
 nonisolated enum CircleKind: String, Codable, Sendable {
+    case witness
     case parallel
     case collective
+    case hybrid
+}
+
+extension CircleKind {
+    /// The objective layers this shape carries (0 for witness, 1 for the
+    /// goal-bearing shapes, 2 for hybrid). Symmetric with the local model:
+    /// a circle is a group + presence + 0–2 layers, and the kind is a
+    /// readout of them.
+    var objectives: [CircleObjectiveKind] {
+        switch self {
+        case .witness: return []
+        case .parallel: return [.sharedList]
+        case .collective: return [.sharedNumber]
+        case .hybrid: return [.sharedList, .sharedNumber]
+        }
+    }
+
+    /// Whether a shared checklist layer is active.
+    var hasSharedList: Bool { self == .parallel || self == .hybrid }
+    /// Whether a shared number layer is active.
+    var hasSharedNumber: Bool { self == .collective || self == .hybrid }
+
+    /// Derive the kind from a list/number layer pair — the readout used
+    /// when switching modes by adding or setting aside a layer.
+    static func from(hasList: Bool, hasNumber: Bool) -> CircleKind {
+        if hasList && hasNumber { return .hybrid }
+        if hasList { return .parallel }
+        if hasNumber { return .collective }
+        return .witness
+    }
 }
 
 // MARK: - Wire rows (decoded straight from Supabase)
@@ -43,6 +74,7 @@ private nonisolated struct CircleRow: Codable, Sendable {
     let endDate: String?
     let collectiveUnit: String?
     let collectiveTarget: Double?
+    let createdAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, type
@@ -51,6 +83,7 @@ private nonisolated struct CircleRow: Codable, Sendable {
         case endDate = "end_date"
         case collectiveUnit = "collective_unit"
         case collectiveTarget = "collective_target"
+        case createdAt = "created_at"
     }
 }
 
@@ -173,6 +206,65 @@ private nonisolated struct ContributionInsert: Encodable, Sendable {
     }
 }
 
+private nonisolated struct CircleInvitationRow: Codable, Sendable {
+    let id: UUID
+    let circleId: UUID
+    let inviterId: String
+    let inviteeId: String
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, status
+        case circleId = "circle_id"
+        case inviterId = "inviter_id"
+        case inviteeId = "invitee_id"
+    }
+}
+
+private nonisolated struct CircleInvitationInsert: Encodable, Sendable {
+    let circleId: String
+    let inviterId: String
+    let inviteeId: String
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case circleId = "circle_id"
+        case inviterId = "inviter_id"
+        case inviteeId = "invitee_id"
+    }
+}
+
+/// A type-only mode switch — changes the circle's shape readout without
+/// touching any goal data (suspend-not-delete).
+private nonisolated struct CircleTypeUpdate: Encodable, Sendable {
+    let type: String
+}
+
+/// A mode switch that also (re)sets the shared number's unit + target,
+/// used when a shared-number layer is added.
+private nonisolated struct CircleTypeNumberUpdate: Encodable, Sendable {
+    let type: String
+    let collectiveUnit: String?
+    let collectiveTarget: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case collectiveUnit = "collective_unit"
+        case collectiveTarget = "collective_target"
+    }
+}
+
+private nonisolated struct InvitationStatusUpdate: Encodable, Sendable {
+    let status: String
+    let respondedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case respondedAt = "responded_at"
+    }
+}
+
 // MARK: - Assembled view model
 
 /// One circle plus everything needed to render it: resolved member
@@ -186,6 +278,7 @@ struct SharedCircle: Identifiable {
     let ownerId: String
     let isOngoing: Bool
     let endDate: Date?
+    let createdAt: Date?
     let collectiveUnit: String?
     let collectiveTarget: Double?
     let members: [RemoteProfile]
@@ -233,16 +326,32 @@ struct SharedCircle: Identifiable {
     }
 }
 
+/// A pending invitation to join a circle, with the circle's headline
+/// details and the inviter's profile resolved for display.
+struct CircleInvitation: Identifiable {
+    let id: UUID
+    let circleId: UUID
+    let circleName: String
+    let kind: CircleKind
+    let collectiveUnit: String?
+    let collectiveTarget: Double?
+    let inviter: RemoteProfile
+}
+
 // MARK: - Service
 
 @Observable
 @MainActor
 final class CircleGraphService {
     var circles: [SharedCircle] = []
+    var invitations: [CircleInvitation] = []
     var isLoading = false
     var isWorking = false
     var errorMessage: String?
     var showError = false
+
+    @ObservationIgnored private var channel: RealtimeChannelV2?
+    @ObservationIgnored private var realtimeTask: Task<Void, Never>?
 
     /// Local-day key (yyyy-MM-dd in the device's calendar) used as the
     /// completion bucket so "today" lines up with the user's clock.
@@ -278,6 +387,7 @@ final class CircleGraphService {
         isLoading = true
         defer { isLoading = false }
         do {
+            await loadInvitations(myUserId: myUserId)
             let memberships: [CircleMemberRow] = try await supabase
                 .from("circle_members")
                 .select("circle_id, user_id, role")
@@ -290,7 +400,7 @@ final class CircleGraphService {
 
             async let circleRowsReq: [CircleRow] = supabase
                 .from("circles")
-                .select("id, owner_id, name, type, timeframe_kind, end_date, collective_unit, collective_target")
+                .select("id, owner_id, name, type, timeframe_kind, end_date, collective_unit, collective_target, created_at")
                 .in("id", values: circleIds)
                 .execute().value
             async let memberRowsReq: [CircleMemberRow] = supabase
@@ -337,6 +447,7 @@ final class CircleGraphService {
                     ownerId: row.ownerId,
                     isOngoing: row.timeframeKind != "time_boxed",
                     endDate: Self.parseDate(row.endDate),
+                    createdAt: Self.parseDate(row.createdAt),
                     collectiveUnit: row.collectiveUnit,
                     collectiveTarget: row.collectiveTarget,
                     members: memberProfiles.sorted {
@@ -397,10 +508,16 @@ final class CircleGraphService {
                 .insert(CircleMemberInsert(circleId: cid, userId: myUserId, role: "owner"))
                 .execute()
 
+            // Friends are invited, not silently enrolled — they opt in.
             let others = memberIds.filter { $0 != myUserId }
             if !others.isEmpty {
-                let rows = others.map { CircleMemberInsert(circleId: cid, userId: $0, role: "member") }
-                try await supabase.from("circle_members").insert(rows).execute()
+                let rows = others.map {
+                    CircleInvitationInsert(circleId: cid, inviterId: myUserId, inviteeId: $0, status: "pending")
+                }
+                try await supabase.from("circle_invitations").insert(rows).execute()
+                for inviteeId in others {
+                    PushService.send(to: inviteeId, kind: .circleInvite, circleId: cid)
+                }
             }
 
             if kind == .parallel {
@@ -452,6 +569,8 @@ final class CircleGraphService {
                     .from("circle_task_completions")
                     .insert(CompletionInsert(circleId: circleId.uuidString, taskId: taskId.uuidString, userId: myUserId, completedOn: dayKey))
                     .execute()
+                let taskTitle = circles.first(where: { $0.id == circleId })?.tasks.first(where: { $0.id == taskId })?.title
+                notifyCircleMembers(circleId: circleId, kind: .circleTask, preview: taskTitle, myUserId: myUserId)
             } else {
                 try await supabase
                     .from("circle_task_completions")
@@ -494,9 +613,53 @@ final class CircleGraphService {
                 .from("circle_contributions")
                 .insert(ContributionInsert(circleId: circleId.uuidString, userId: myUserId, amount: amount))
                 .execute()
+            notifyCircleMembers(circleId: circleId, kind: .circleProgress, preview: nil, myUserId: myUserId)
         } catch {
             fail("Couldn't log your contribution.", error)
             await load(myUserId: myUserId)
+        }
+    }
+
+    // MARK: Mode switching (CR2)
+
+    /// Switch a circle's mode by changing which objective layers are
+    /// active — owner/admin only (RLS enforces it server-side). Crucially
+    /// this is suspend-not-delete: only the circle's `type` readout (and,
+    /// when a number is being added, its unit + target) is written. Tasks,
+    /// completions, and contributions are never touched, so a layer set
+    /// aside goes dormant and resumes intact when re-added. Every member
+    /// is notified of the switch.
+    func setCircleKind(
+        circleId: UUID,
+        kind: CircleKind,
+        unit: String? = nil,
+        target: Double? = nil,
+        myUserId: String
+    ) async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            if kind.hasSharedNumber, let target, target > 0 {
+                try await supabase
+                    .from("circles")
+                    .update(CircleTypeNumberUpdate(
+                        type: kind.rawValue,
+                        collectiveUnit: unit?.trimmedNonEmpty,
+                        collectiveTarget: target
+                    ))
+                    .eq("id", value: circleId.uuidString)
+                    .execute()
+            } else {
+                try await supabase
+                    .from("circles")
+                    .update(CircleTypeUpdate(type: kind.rawValue))
+                    .eq("id", value: circleId.uuidString)
+                    .execute()
+            }
+            notifyCircleMembers(circleId: circleId, kind: .circleMode, preview: nil, myUserId: myUserId)
+            await load(myUserId: myUserId)
+        } catch {
+            fail("Couldn't switch the circle's mode.", error)
         }
     }
 
@@ -532,13 +695,169 @@ final class CircleGraphService {
         }
     }
 
+    // MARK: Invitations
+
+    /// Pending invitations addressed to the signed-in user, with each
+    /// circle's headline details and the inviter's profile resolved.
+    func loadInvitations(myUserId: String) async {
+        do {
+            let rows: [CircleInvitationRow] = try await supabase
+                .from("circle_invitations")
+                .select("id, circle_id, inviter_id, invitee_id, status")
+                .eq("invitee_id", value: myUserId)
+                .eq("status", value: "pending")
+                .execute()
+                .value
+            guard !rows.isEmpty else { invitations = []; return }
+
+            let circleIds = Array(Set(rows.map { $0.circleId.uuidString }))
+            async let circleRowsReq: [CircleRow] = supabase
+                .from("circles")
+                .select("id, owner_id, name, type, timeframe_kind, end_date, collective_unit, collective_target")
+                .in("id", values: circleIds)
+                .execute().value
+            let inviterProfiles = try await fetchProfiles(ids: Array(Set(rows.map { $0.inviterId })))
+            let circleRows = try await circleRowsReq
+            let circleById = Dictionary(circleRows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
+            invitations = rows.compactMap { row in
+                guard let circle = circleById[row.circleId],
+                      let inviter = inviterProfiles[row.inviterId] else { return nil }
+                return CircleInvitation(
+                    id: row.id,
+                    circleId: row.circleId,
+                    circleName: circle.name,
+                    kind: CircleKind(rawValue: circle.type) ?? .parallel,
+                    collectiveUnit: circle.collectiveUnit,
+                    collectiveTarget: circle.collectiveTarget,
+                    inviter: inviter
+                )
+            }
+            .sorted { $0.circleName.localizedCaseInsensitiveCompare($1.circleName) == .orderedAscending }
+        } catch {
+            print("[CircleGraph] loadInvitations failed: \(error)")
+        }
+    }
+
+    /// Invite more friends to an existing circle (idempotent — re-inviting
+    /// someone who declined simply resets their invite to pending).
+    func inviteMembers(circleId: UUID, inviteeIds: [String], myUserId: String) async {
+        let others = inviteeIds.filter { $0 != myUserId }
+        guard !others.isEmpty else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let rows = others.map {
+                CircleInvitationInsert(circleId: circleId.uuidString, inviterId: myUserId, inviteeId: $0, status: "pending")
+            }
+            try await supabase
+                .from("circle_invitations")
+                .upsert(rows, onConflict: "circle_id,invitee_id")
+                .execute()
+            for inviteeId in others {
+                PushService.send(to: inviteeId, kind: .circleInvite, circleId: circleId.uuidString)
+            }
+        } catch {
+            fail("Couldn't send the invites.", error)
+        }
+    }
+
+    /// Accept an invitation: join the circle (RLS allows a self-insert
+    /// while the invitation is pending), then stamp it accepted.
+    func acceptInvitation(_ invitation: CircleInvitation, myUserId: String) async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await supabase
+                .from("circle_members")
+                .insert(CircleMemberInsert(circleId: invitation.circleId.uuidString, userId: myUserId, role: "member"))
+                .execute()
+            try await supabase
+                .from("circle_invitations")
+                .update(InvitationStatusUpdate(status: "accepted", respondedAt: Self.isoString(Date())))
+                .eq("id", value: invitation.id.uuidString)
+                .execute()
+            invitations.removeAll { $0.id == invitation.id }
+            await load(myUserId: myUserId)
+        } catch {
+            fail("Couldn't join the circle.", error)
+        }
+    }
+
+    /// Decline an invitation — it leaves your inbox and you never join.
+    func declineInvitation(_ invitation: CircleInvitation, myUserId: String) async {
+        do {
+            try await supabase
+                .from("circle_invitations")
+                .update(InvitationStatusUpdate(status: "declined", respondedAt: Self.isoString(Date())))
+                .eq("id", value: invitation.id.uuidString)
+                .execute()
+            invitations.removeAll { $0.id == invitation.id }
+        } catch {
+            fail("Couldn't decline the invite.", error)
+        }
+    }
+
+    // MARK: Realtime
+
+    /// Subscribe to live changes across every table that shapes a circle
+    /// (members, tasks, completions, contributions, and the circle row
+    /// itself). Any RLS-visible change triggers a reload, so a partner's
+    /// check-off or logged contribution animates in without a manual
+    /// refresh. Idempotent — a second call is a no-op.
+    func startRealtime(myUserId: String) {
+        guard channel == nil else { return }
+        let ch = supabase.channel("circles-\(myUserId)")
+        let tables = ["circles", "circle_members", "circle_tasks", "circle_task_completions", "circle_contributions", "circle_invitations"]
+        let streams = tables.map { ch.postgresChange(AnyAction.self, schema: "public", table: $0) }
+        channel = ch
+        realtimeTask = Task { [weak self] in
+            // Authorize the socket with the Rork Auth JWT so RLS-scoped
+            // changes are delivered to this user.
+            await supabase.realtimeV2.setAuth()
+            await ch.subscribe()
+            await withTaskGroup(of: Void.self) { group in
+                for stream in streams {
+                    group.addTask { [weak self] in
+                        for await _ in stream {
+                            if Task.isCancelled { break }
+                            await self?.load(myUserId: myUserId)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tear down the realtime subscription. Call when the circles surface
+    /// goes away.
+    func stopRealtime() {
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        if let ch = channel {
+            Task { await supabase.removeChannel(ch) }
+        }
+        channel = nil
+    }
+
     // MARK: Helpers
+
+    /// Fan out a push to every member of a circle except the actor — the
+    /// live co-op nudges (a check-off, a logged contribution). Copy is
+    /// built server-side; we supply the kind, the circle, and an optional
+    /// preview (e.g. the task title).
+    private func notifyCircleMembers(circleId: UUID, kind: PushKind, preview: String?, myUserId: String) {
+        guard let circle = circles.first(where: { $0.id == circleId }) else { return }
+        for recipientId in circle.members.map(\.id) where recipientId != myUserId {
+            PushService.send(to: recipientId, kind: kind, circleId: circleId.uuidString, preview: preview)
+        }
+    }
 
     private func fetchProfiles(ids: [String]) async throws -> [String: RemoteProfile] {
         guard !ids.isEmpty else { return [:] }
         let rows: [RemoteProfile] = try await supabase
             .from("profiles")
-            .select("id, email, name, avatar_url")
+            .select("id, email, name, username, avatar_url")
             .in("id", values: ids)
             .execute()
             .value

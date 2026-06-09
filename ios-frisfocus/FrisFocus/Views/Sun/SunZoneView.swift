@@ -37,6 +37,7 @@ struct SunZoneView: View {
     @Environment(\.sunSky) private var sky
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
+    @Environment(ProfileStore.self) private var profileStore
 
     @State private var showDaySheet: Bool = false
     @State private var daySheetDate: Date = Date()
@@ -246,8 +247,8 @@ struct SunZoneView: View {
             // corner, then drops into the week peek one line below.
             VStack(alignment: .trailing, spacing: 0) {
                 ProfileAvatarButton(
-                    initials: auth.user?.initials ?? "",
-                    photoURL: auth.user?.photoURL,
+                    initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
+                    photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL,
                     action: onProfileTap
                 )
                 .padding(.bottom, 12)

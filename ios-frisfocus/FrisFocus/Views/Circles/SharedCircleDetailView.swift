@@ -36,6 +36,12 @@ struct SharedCircleDetailView: View {
     @State private var contributionText = ""
     @State private var showLeaveConfirm = false
     @State private var showDeleteConfirm = false
+    @State private var showInvite = false
+    @State private var showOurStory = false
+    @State private var showNumberForm = false
+    @State private var numberUnit = ""
+    @State private var numberTarget = ""
+    @State private var friendService = FriendGraphService()
     @FocusState private var contributionFocused: Bool
 
     private var circle: SharedCircle? { service.circles.first { $0.id == circleId } }
@@ -55,6 +61,10 @@ struct SharedCircleDetailView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .task {
+            service.startRealtime(myUserId: myUserId)
+            await friendService.load(myUserId: myUserId)
+        }
         .onChange(of: service.circles.map(\.id)) { _, ids in
             if !ids.contains(circleId) { dismiss() }
         }
@@ -86,6 +96,23 @@ struct SharedCircleDetailView: View {
         } message: {
             Text(service.errorMessage ?? "Please try again.")
         }
+        .sheet(isPresented: $showOurStory) {
+            if let circle {
+                SharedCircleStoryView(circle: circle)
+            }
+        }
+        .sheet(isPresented: $showInvite) {
+            if let circle {
+                InviteToCircleSheet(
+                    circleName: circle.name,
+                    friends: friendService.friends,
+                    existingMemberIds: Set(circle.members.map(\.id)),
+                    onInvite: { ids in
+                        Task { await service.inviteMembers(circleId: circleId, inviteeIds: ids, myUserId: myUserId) }
+                    }
+                )
+            }
+        }
     }
 
     // MARK: - Scaffold
@@ -97,8 +124,19 @@ struct SharedCircleDetailView: View {
 
                 VStack(alignment: .leading, spacing: 26) {
                     switch circle.kind {
-                    case .parallel: parallelBody(circle)
-                    case .collective: collectiveBody(circle)
+                    case .witness:
+                        witnessBody(circle)
+                    case .parallel:
+                        parallelBody(circle)
+                    case .collective:
+                        collectiveBody(circle)
+                    case .hybrid:
+                        parallelBody(circle)
+                        hybridDivider
+                        collectiveBody(circle)
+                    }
+                    if canManage {
+                        sharedGoalsSection(circle)
                     }
                     membershipFooter(circle)
                 }
@@ -204,6 +242,24 @@ struct SharedCircleDetailView: View {
             .accessibilityLabel("Back to Circles")
 
             Spacer()
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showOurStory = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "book.closed").font(.sans(10, weight: .semibold))
+                    Text("Our story").font(.sans(12, weight: .medium))
+                }
+                .foregroundStyle(Theme.textCream)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule(style: .continuous).fill(Theme.textCream.opacity(0.16)))
+                .overlay(Capsule(style: .continuous).strokeBorder(Theme.textCream.opacity(0.28), lineWidth: 0.5))
+                .contentShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Our story")
         }
     }
 
@@ -704,14 +760,302 @@ struct SharedCircleDetailView: View {
         }
     }
 
+    // MARK: - Witness body
+
+    @ViewBuilder
+    private func witnessBody(_ circle: SharedCircle) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                sectionEyebrow("IN THE ROOM")
+                Text("Just present")
+                    .font(.serif(20, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+            Text("No shared goal — everyone keeps their own. A calm room you're in together.")
+                .font(.serifItalic(13, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.55))
+            VStack(spacing: 10) {
+                ForEach(orderedMembers(circle)) { member in
+                    HStack(spacing: 12) {
+                        RemoteCircleAvatar(profile: member, size: 34, highlight: member.id == myUserId)
+                        Text(member.id == myUserId ? "You" : member.displayName)
+                            .font(.sans(14, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Circle().fill(CircleKind.witness.tint).frame(width: 8, height: 8)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                            .fill(Color.white.opacity(0.55))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                            .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+                    )
+                }
+            }
+        }
+    }
+
+    /// Labelled hairline separating the two goals in a hybrid.
+    private var hybridDivider: some View {
+        HStack(spacing: 10) {
+            Rectangle().fill(Theme.textPrimary.opacity(0.1)).frame(height: 0.5)
+            Text("AND")
+                .font(.sans(9, weight: .semibold))
+                .tracking(2)
+                .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            Rectangle().fill(Theme.textPrimary.opacity(0.1)).frame(height: 0.5)
+        }
+    }
+
+    // MARK: - Shared goals (mode switching)
+
+    private func sharedGoalsSection(_ circle: SharedCircle) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionEyebrow("SHARED GOALS")
+
+            goalCard(
+                icon: "checklist",
+                tint: CircleKind.parallel.tint,
+                tintDark: CircleKind.parallel.tintDark,
+                title: "Shared list",
+                detail: circle.kind.hasSharedList
+                    ? (circle.tasks.isEmpty ? "Everyone runs the same checklist" : "\(circle.tasks.count) shared task\(circle.tasks.count == 1 ? "" : "s")")
+                    : "Everyone runs the same checklist each day",
+                active: circle.kind.hasSharedList,
+                actionLabel: circle.kind.hasSharedList ? "Set aside" : "Add",
+                destructive: circle.kind.hasSharedList,
+                action: {
+                    let next = CircleKind.from(hasList: !circle.kind.hasSharedList, hasNumber: circle.kind.hasSharedNumber)
+                    Task { await service.setCircleKind(circleId: circle.id, kind: next, myUserId: myUserId) }
+                }
+            )
+
+            if circle.kind.hasSharedNumber {
+                goalCard(
+                    icon: "number",
+                    tint: CircleKind.collective.tint,
+                    tintDark: CircleKind.collective.tintDark,
+                    title: "Shared number",
+                    detail: numberDetail(circle),
+                    active: true,
+                    actionLabel: "Set aside",
+                    destructive: true,
+                    action: {
+                        let next = CircleKind.from(hasList: circle.kind.hasSharedList, hasNumber: false)
+                        Task { await service.setCircleKind(circleId: circle.id, kind: next, myUserId: myUserId) }
+                    }
+                )
+            } else if showNumberForm {
+                numberForm(circle)
+            } else {
+                goalCard(
+                    icon: "number",
+                    tint: CircleKind.collective.tint,
+                    tintDark: CircleKind.collective.tintDark,
+                    title: "Shared number",
+                    detail: circle.collectiveTarget != nil ? "Resume \(numberDetail(circle)) — the total's still there" : "One number you build toward together",
+                    active: false,
+                    actionLabel: "Add",
+                    destructive: false,
+                    action: {
+                        numberUnit = circle.collectiveUnit ?? ""
+                        numberTarget = circle.collectiveTarget.map { circleNumber($0) } ?? ""
+                        withAnimation(.easeInOut(duration: 0.18)) { showNumberForm = true }
+                    }
+                )
+            }
+
+            if circle.kind == .witness {
+                Text("This is a Witness circle — pure presence. Add a goal anytime, or keep it a calm room.")
+                    .font(.serifItalic(12, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
+            } else if circle.kind == .hybrid {
+                Text("Running two goals at once. Set one aside anytime to keep things simple.")
+                    .font(.serifItalic(12, weight: .regular))
+                    .foregroundStyle(CircleKind.hybrid.tintDark.opacity(0.85))
+            }
+        }
+    }
+
+    private func numberDetail(_ circle: SharedCircle) -> String {
+        let unit = circle.collectiveUnit ?? ""
+        if let target = circle.collectiveTarget {
+            return "\(circleNumber(target)) \(unit)".trimmingCharacters(in: .whitespaces)
+        }
+        return unit.isEmpty ? "One number, together" : unit
+    }
+
+    private func goalCard(
+        icon: String,
+        tint: Color,
+        tintDark: Color,
+        title: String,
+        detail: String,
+        active: Bool,
+        actionLabel: String,
+        destructive: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(tint.opacity(active ? 0.18 : 0.1)).frame(width: 38, height: 38)
+                Image(systemName: icon)
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(active ? tintDark : tint.opacity(0.7))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.sans(15, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                Text(detail)
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button {
+                UIImpactFeedbackGenerator(style: destructive ? .light : .medium).impactOccurred()
+                action()
+            } label: {
+                Text(actionLabel)
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(destructive ? Theme.textPrimary.opacity(0.65) : Theme.textCream)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 7)
+                    .background(
+                        Group {
+                            if destructive {
+                                Capsule(style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.2), lineWidth: 0.6)
+                            } else {
+                                Capsule(style: .continuous).fill(tint)
+                            }
+                        }
+                    )
+                    .contentShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(service.isWorking)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .fill(Color.white.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    private func numberForm(_ circle: SharedCircle) -> some View {
+        let target = Double(numberTarget.trimmingCharacters(in: .whitespaces))
+        let unit = numberUnit.trimmingCharacters(in: .whitespaces)
+        let valid = (target ?? 0) > 0 && !unit.isEmpty
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "number").font(.sans(14, weight: .semibold)).foregroundStyle(CircleKind.collective.tintDark)
+                Text("Add a shared number").font(.sans(14, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+            }
+            HStack(spacing: 10) {
+                TextField("1000", text: $numberTarget)
+                    .keyboardType(.numberPad)
+                    .font(.sans(15, weight: .semibold))
+                    .frame(width: 88)
+                    .padding(.vertical, 10).padding(.horizontal, 12)
+                    .background(numberFieldBackground)
+                TextField("miles, plunges, pages…", text: $numberUnit)
+                    .font(.sans(15, weight: .regular))
+                    .padding(.vertical, 10).padding(.horizontal, 12)
+                    .background(numberFieldBackground)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    cancelNumberForm()
+                } label: {
+                    Text("Cancel")
+                        .font(.sans(13, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                        .padding(.vertical, 8).frame(maxWidth: .infinity)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.18), lineWidth: 0.6))
+                }
+                .buttonStyle(.plain)
+                Button {
+                    guard let target, target > 0, !unit.isEmpty else { return }
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    let next = CircleKind.from(hasList: circle.kind.hasSharedList, hasNumber: true)
+                    let circleId = circle.id
+                    Task { await service.setCircleKind(circleId: circleId, kind: next, unit: unit, target: target, myUserId: myUserId) }
+                    cancelNumberForm()
+                } label: {
+                    Text("Add number")
+                        .font(.sans(13, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                        .padding(.vertical, 8).frame(maxWidth: .infinity)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(valid ? CircleKind.collective.tint : Theme.textPrimary.opacity(0.3)))
+                }
+                .buttonStyle(.plain)
+                .disabled(!valid)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .fill(Color.white.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    private var numberFieldBackground: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color.white.opacity(0.75))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 0.5)
+            )
+    }
+
+    private func cancelNumberForm() {
+        withAnimation(.easeInOut(duration: 0.18)) { showNumberForm = false }
+        numberUnit = ""
+        numberTarget = ""
+    }
+
     // MARK: - Footer (leave / delete)
+
+    private func inviteFriendsButton(_ circle: SharedCircle) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showInvite = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "person.badge.plus").font(.sans(14, weight: .semibold))
+                Text("Invite friends").font(.sans(15, weight: .medium))
+            }
+            .foregroundStyle(circle.kind.tintDark)
+            .frame(maxWidth: .infinity)
+            .frame(height: 50)
+            .background(circle.kind.tint.opacity(0.14))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Invite friends to this circle")
+    }
 
     private func membershipFooter(_ circle: SharedCircle) -> some View {
         VStack(spacing: 12) {
+            inviteFriendsButton(circle)
+
             Rectangle()
                 .fill(Theme.textPrimary.opacity(0.08))
                 .frame(height: 1)
-                .padding(.bottom, 2)
+                .padding(.vertical, 2)
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()

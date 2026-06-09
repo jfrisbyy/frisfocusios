@@ -47,6 +47,7 @@ struct FriendDetailView: View {
     @State private var detailCircle: FFCircle?
     @State private var detailPact: Pact?
     @State private var ringPulse: Bool = false
+    @State private var ringFill: Double = 0
 
     // MARK: - Derived
 
@@ -152,9 +153,14 @@ struct FriendDetailView: View {
             PactDetailView(pact: pact).environment(store)
         }
         .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-                ringPulse = true
+            let target = glanceRingFraction
+            if reduceMotion {
+                ringFill = target
+            } else {
+                withAnimation(.easeOut(duration: 0.9)) { ringFill = target }
+                withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+                    ringPulse = true
+                }
             }
         }
     }
@@ -392,19 +398,20 @@ struct FriendDetailView: View {
                 .foregroundStyle(Theme.textPrimary.opacity(0.55))
                 .fixedSize(horizontal: false, vertical: true)
 
-            moodCard
-
-            if tier == .open {
-                openSnapshot
-                recentRhythm
+            if tier == .quiet {
+                quietGlance
+            } else {
+                dayGlanceCard
             }
 
             if tier == .full {
-                snapshotStrip
                 routinesCard
-                whatTheyDidCard
                 focusMilestoneRow
                 reactRow
+            }
+
+            if tier != .quiet {
+                rhythmFooter
             }
         }
     }
@@ -417,85 +424,139 @@ struct FriendDetailView: View {
         }
     }
 
-    private var moodCard: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.sans(15, weight: .regular))
-                .foregroundStyle(accent)
-                .padding(.top, 2)
-            Text(moodText)
-                .font(.serifItalic(16, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.85))
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .fill(accent.opacity(0.10))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .strokeBorder(accent.opacity(0.22), lineWidth: 0.5)
-        )
-    }
+    // MARK: - Day at a glance (the lead)
 
-    // MARK: Open / Full snapshot
-
-    private var openSnapshot: some View {
-        HStack(spacing: 10) {
-            statCard(eyebrow: "TODAY", value: "\(day.todayLogged)", sub: "logged")
-            statCard(eyebrow: "RHYTHM", value: "\(day.rhythmDays)d", sub: "showing up")
-            statCard(eyebrow: "WEEK", value: day.weekHeldBack ? "—" : "\(day.todayLogged * 6)", sub: day.weekHeldBack ? "held back" : "logged")
-        }
-    }
-
-    /// Compact version used inside Full so the page still carries the
-    /// snapshot numbers from the hub reference above the rich detail.
-    private var snapshotStrip: some View { openSnapshot }
-
-    private func statCard(eyebrow: String, value: String, sub: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(eyebrow)
-                .font(.sans(9, weight: .medium))
-                .tracking(1.5)
-                .foregroundStyle(Theme.textPrimary.opacity(0.5))
-            Text(value)
-                .font(.serif(26, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-            Text(sub)
-                .font(.sans(10, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.5))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(card)
-    }
-
-    private var recentRhythm: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("RECENT RHYTHM")
-            VStack(spacing: 10) {
-                HStack(alignment: .bottom, spacing: 6) {
-                    ForEach(Array(day.rhythmBars.enumerated()), id: \.offset) { _, v in
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .fill(v < 0.18 ? Theme.textPrimary.opacity(0.12) : accent.opacity(0.55))
-                            .frame(height: max(8, 46 * v))
-                            .frame(maxWidth: .infinity)
+    /// The warm, task-focused lead for Open / Full: a signature-color
+    /// progress ring beside the mood line, with completed-task chips
+    /// below at Full. Replaces the old row of streak numbers.
+    private var dayGlanceCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 18) {
+                dayRing
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(moodText)
+                        .font(.serifItalic(18, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if tier == .open {
+                        Text("The shape of their day")
+                            .font(.sans(12, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.5))
                     }
                 }
-                .frame(height: 46)
-                HStack {
-                    Text("last 10 days")
-                        .font(.sans(11, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                    Spacer()
-                    Text(day.rhythmSummary)
-                        .font(.sans(11, weight: .medium))
+                Spacer(minLength: 0)
+            }
+
+            if tier == .full {
+                let completed = day.tasks.filter { $0.isDone }
+                if !completed.isEmpty {
+                    FlowLayout(spacing: 8, lineSpacing: 8) {
+                        ForEach(completed) { task in
+                            completedChip(task.title)
+                        }
+                    }
+                }
+                if day.openCount > 0 {
+                    Text("\(day.openCount) still on the list — the day’s not over.")
+                        .font(.serifItalic(13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(glanceBackground)
+    }
+
+    /// Quiet tier: just a warm mood line and their season — calm and
+    /// minimal, matching exactly what they chose to reveal.
+    private var quietGlance: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "moon.stars")
+                    .font(.sans(16, weight: .regular))
+                    .foregroundStyle(accent)
+                    .padding(.top, 2)
+                Text(moodText)
+                    .font(.serifItalic(17, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let season = shortSeasonName {
+                HStack(spacing: 7) {
+                    Circle().fill(accent).frame(width: 6, height: 6)
+                    Text(friend.currentSeasonDay.map { "\(season) · day \($0)" } ?? season)
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(glanceBackground)
+    }
+
+    /// The signature-color progress ring. Full reads the real completion
+    /// with a "done / total" center; Open shows momentum behind a soft
+    /// sun so no specific tasks leak.
+    private var dayRing: some View {
+        DayProgressRing(fraction: ringFill, tint: accent, lineWidth: 10) {
+            Group {
+                if tier == .full {
+                    VStack(spacing: 0) {
+                        Text("\(day.doneCount)")
+                            .font(.serif(32, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("of \(day.totalCount)")
+                            .font(.sans(11, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                    }
+                } else {
+                    Image(systemName: "sun.max.fill")
+                        .font(.system(size: 24, weight: .regular))
                         .foregroundStyle(accent)
                 }
             }
-            .padding(14)
-            .background(card)
+        }
+        .frame(width: 104, height: 104)
+        .accessibilityElement()
+        .accessibilityLabel(tier == .full ? "\(day.doneCount) of \(day.totalCount) done today" : "Showing up")
+    }
+
+    private func completedChip(_ title: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "checkmark")
+                .font(.sans(9, weight: .bold))
+                .foregroundStyle(accent)
+            Text(title)
+                .font(.sans(13, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .background(Capsule(style: .continuous).fill(accent.opacity(0.12)))
+        .overlay(Capsule(style: .continuous).strokeBorder(accent.opacity(0.22), lineWidth: 0.5))
+    }
+
+    /// The warm wash behind the glance card — the person's signature
+    /// color at low opacity so the lead feels theirs.
+    private var glanceBackground: some View {
+        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+            .fill(accent.opacity(0.10))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(accent.opacity(0.20), lineWidth: 0.5)
+            )
+    }
+
+    /// Target fill for the day ring — completion at Full, momentum at
+    /// Open, empty at Quiet.
+    private var glanceRingFraction: Double {
+        switch tier {
+        case .full: return day.completionFraction
+        case .open: return day.momentum
+        case .quiet: return 0
         }
     }
 
@@ -538,54 +599,40 @@ struct FriendDetailView: View {
         .padding(.vertical, 13)
     }
 
-    // MARK: Full — what they did checklist
+    // MARK: - Reframed rhythm footer
 
-    private var whatTheyDidCard: some View {
-        let showOpen = friend.sharesWithMe.showOpenItemsAtFull
-        let items = day.visibleTasks(showOpen: showOpen)
-        return VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("WHAT THEY DID · \(day.doneCount) OF \(day.totalCount)")
-            VStack(alignment: .leading, spacing: 14) {
-                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading),
-                                    GridItem(.flexible(), alignment: .leading)],
-                          alignment: .leading, spacing: 12) {
-                    ForEach(items) { task in
-                        checklistItem(task)
-                    }
-                }
-                if showOpen && day.openCount > 0 {
-                    Text("\(day.openCount) still on the list — the day's not over.")
-                        .font(.serifItalic(13, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                }
+    /// The old three big stat cards, collapsed into one quiet line about
+    /// showing up with a small sparkline beside it. Present for anyone
+    /// who wants it, but it no longer leads or dominates the page.
+    private var rhythmFooter: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text("Showing up \(day.rhythmDays) days · \(day.rhythmSummary)")
+                .font(.sans(12, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 4) {
+                miniSparkline
+                Text("LAST 10 DAYS")
+                    .font(.sans(8, weight: .medium))
+                    .tracking(1)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.35))
             }
-            .padding(14)
-            .background(card)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(card)
     }
 
-    private func checklistItem(_ task: FriendDayTask) -> some View {
-        HStack(spacing: 9) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(task.isDone ? Theme.alertGreen : Color.clear)
-                    .frame(width: 22, height: 22)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(task.isDone ? Color.clear : Theme.textPrimary.opacity(0.25), lineWidth: 1.4)
-                    )
-                if task.isDone {
-                    Image(systemName: "checkmark")
-                        .font(.sans(11, weight: .bold))
-                        .foregroundStyle(Theme.textCream)
-                }
+    private var miniSparkline: some View {
+        HStack(alignment: .bottom, spacing: 3) {
+            ForEach(Array(day.rhythmBars.enumerated()), id: \.offset) { _, v in
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(v < 0.18 ? Theme.textPrimary.opacity(0.14) : accent.opacity(0.5))
+                    .frame(width: 5, height: max(5, 26 * v))
             }
-            Text(task.title)
-                .font(.sans(14, weight: .regular))
-                .foregroundStyle(task.isDone ? Theme.textPrimary : Theme.textPrimary.opacity(0.45))
-                .lineLimit(1)
-            Spacer(minLength: 0)
         }
+        .frame(height: 26)
     }
 
     // MARK: Full — focus + milestone
@@ -950,14 +997,11 @@ struct FriendDetailView: View {
         }
     }
 
-    /// A representative completion fraction for the circle today.
+    /// A representative completion fraction for the circle today. Prefers
+    /// the shared list when present (also covers hybrids); falls back to
+    /// the shared number; a Witness circle has no goal, so it reads as 0.
     private func circleFraction(_ circle: FFCircle) -> Double {
-        switch circle.type {
-        case .collective:
-            let p = circle.collectiveProgress ?? 0
-            let t = circle.collectiveTarget ?? 1
-            return p / max(t, 0.0001)
-        case .parallel:
+        if circle.hasSharedList {
             let cal = Calendar.current
             let today = Date()
             let done = store.circleTaskCompletions.filter {
@@ -966,6 +1010,12 @@ struct FriendDetailView: View {
             let denom = max(1, circle.memberIds.count * max(1, circle.tasks.count))
             return Double(done) / Double(denom)
         }
+        if circle.hasSharedNumber {
+            let p = circle.collectiveProgress ?? 0
+            let t = circle.collectiveTarget ?? 1
+            return p / max(t, 0.0001)
+        }
+        return 0
     }
 
     private func pactDayNumber(_ pact: Pact) -> Int {

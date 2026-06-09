@@ -70,6 +70,20 @@ struct FriendDay: Equatable {
     }
 
     var openCount: Int { tasks.filter { !$0.isDone }.count }
+
+    /// Today's completion as a 0...1 fraction — done tasks over total.
+    /// Drives the full-tier progress ring and the friend-card summary.
+    var completionFraction: Double {
+        totalCount > 0 ? Double(doneCount) / Double(totalCount) : 0
+    }
+
+    /// Recent momentum as a 0...1 value — the average of the rhythm
+    /// bars. Used at the Open tier where the ring shows the *shape* of
+    /// someone's days without ever revealing specific tasks.
+    var momentum: Double {
+        guard !rhythmBars.isEmpty else { return 0 }
+        return rhythmBars.reduce(0, +) / Double(rhythmBars.count)
+    }
 }
 
 extension FriendDay {

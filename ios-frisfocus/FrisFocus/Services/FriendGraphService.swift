@@ -24,17 +24,25 @@ nonisolated struct RemoteProfile: Codable, Identifiable, Sendable, Hashable {
     let id: String
     let email: String?
     let name: String?
+    let username: String?
     let avatarUrl: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, email, name
+        case id, email, name, username
         case avatarUrl = "avatar_url"
     }
 
     var displayName: String {
         if let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty { return name }
+        if let handle { return handle }
         if let email, !email.isEmpty { return email }
         return "Someone"
+    }
+
+    /// The user's claimed handle formatted as "@name", or nil when unset.
+    var handle: String? {
+        guard let username = username?.trimmingCharacters(in: .whitespaces), !username.isEmpty else { return nil }
+        return "@\(username)"
     }
 
     var initials: String {
@@ -111,6 +119,12 @@ nonisolated struct PendingFriendRequest: Identifiable, Sendable {
     let profile: RemoteProfile
 }
 
+/// How the signed-in user relates to another profile — drives the
+/// trailing control on search results and the invite-link preview.
+nonisolated enum FriendRelationship: Sendable {
+    case isMe, friends, requestSent, requestReceived, none
+}
+
 // MARK: - Service
 
 @Observable
@@ -126,6 +140,9 @@ final class FriendGraphService {
 
     var searchResults: [RemoteProfile] = []
     var isSearching = false
+
+    @ObservationIgnored private var channel: RealtimeChannelV2?
+    @ObservationIgnored private var realtimeTask: Task<Void, Never>?
 
     /// Pull the whole graph for the signed-in user: accepted friends plus
     /// pending requests in both directions, with each counterpart's profile
@@ -171,25 +188,59 @@ final class FriendGraphService {
         }
     }
 
-    /// Look up real accounts by the exact email they signed up with
-    /// (case-insensitive). `profiles` is world-readable, so this is a
-    /// plain filtered select.
-    func search(email rawEmail: String, myUserId: String) async {
-        let email = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard email.contains("@") else { searchResults = []; return }
+    /// Find real accounts by @username, name, or email — a single
+    /// case-insensitive search across all three. `profiles` is
+    /// world-readable, so this is a plain filtered select.
+    func searchPeople(query rawQuery: String, myUserId: String) async {
+        let cleaned = rawQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "@", with: "")
+        // Keep only characters safe inside a PostgREST `or(...)` filter —
+        // commas, parens, and wildcards would break the filter grammar.
+        let safe = String(cleaned.filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." || $0 == "-" || $0 == " " })
+        guard safe.count >= 2 else { searchResults = []; return }
         isSearching = true
         defer { isSearching = false }
         do {
             let results: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, avatar_url")
-                .ilike("email", pattern: email)
+                .select("id, email, name, username, avatar_url")
+                .or("username.ilike.*\(safe)*,name.ilike.*\(safe)*,email.ilike.*\(safe)*")
+                .limit(20)
                 .execute()
                 .value
             searchResults = results.filter { $0.id != myUserId }
         } catch {
             fail("Search failed.", error)
         }
+    }
+
+    /// Resolve a single profile by id — used to render an invite link's
+    /// target before any relationship exists.
+    func fetchProfile(id: String) async -> RemoteProfile? {
+        do {
+            let rows: [RemoteProfile] = try await supabase
+                .from("profiles")
+                .select("id, email, name, username, avatar_url")
+                .eq("id", value: id)
+                .limit(1)
+                .execute()
+                .value
+            return rows.first
+        } catch {
+            print("[FriendGraph] fetchProfile failed: \(error)")
+            return nil
+        }
+    }
+
+    /// The current connection state to `profileId`, derived from the
+    /// already-loaded graph.
+    func relationship(to profileId: String, myUserId: String) -> FriendRelationship {
+        if profileId == myUserId { return .isMe }
+        if friends.contains(where: { $0.id == profileId }) { return .friends }
+        if outgoing.contains(where: { $0.profile.id == profileId }) { return .requestSent }
+        if incoming.contains(where: { $0.profile.id == profileId }) { return .requestReceived }
+        return .none
     }
 
     func sendRequest(to profile: RemoteProfile, myUserId: String) async {
@@ -204,6 +255,7 @@ final class FriendGraphService {
                     onConflict: "requester_id,addressee_id"
                 )
                 .execute()
+            PushService.send(to: profile.id, kind: .friendRequest)
             searchResults.removeAll { $0.id == profile.id }
             await load(myUserId: myUserId)
         } catch {
@@ -234,6 +286,7 @@ final class FriendGraphService {
                 .update(StatusUpdate(status: "accepted"))
                 .eq("id", value: request.id.uuidString)
                 .execute()
+            PushService.send(to: request.profile.id, kind: .friendAccept)
             await load(myUserId: myUserId)
         } catch {
             fail("Couldn't accept the request.", error)
@@ -269,11 +322,52 @@ final class FriendGraphService {
         }
     }
 
+    // MARK: - Realtime
+
+    /// Subscribe to live changes on the friend graph (friendships and
+    /// friend requests). Any RLS-visible change triggers a reload, so an
+    /// incoming request or a freshly accepted friend appears without a
+    /// pull-to-refresh. Idempotent.
+    func startRealtime(myUserId: String) {
+        guard channel == nil else { return }
+        let ch = supabase.channel("friends-\(myUserId)")
+        let streams = ["friendships", "friend_requests"].map {
+            ch.postgresChange(AnyAction.self, schema: "public", table: $0)
+        }
+        channel = ch
+        realtimeTask = Task { [weak self] in
+            await supabase.realtimeV2.setAuth()
+            await ch.subscribe()
+            await withTaskGroup(of: Void.self) { group in
+                for stream in streams {
+                    group.addTask { [weak self] in
+                        for await _ in stream {
+                            if Task.isCancelled { break }
+                            await self?.load(myUserId: myUserId)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tear down the realtime subscription.
+    func stopRealtime() {
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        if let ch = channel {
+            Task { await supabase.removeChannel(ch) }
+        }
+        channel = nil
+    }
+
+    // MARK: - Helpers
+
     private func fetchProfiles(ids: [String]) async throws -> [String: RemoteProfile] {
         guard !ids.isEmpty else { return [:] }
         let rows: [RemoteProfile] = try await supabase
             .from("profiles")
-            .select("id, email, name, avatar_url")
+            .select("id, email, name, username, avatar_url")
             .in("id", values: ids)
             .execute()
             .value

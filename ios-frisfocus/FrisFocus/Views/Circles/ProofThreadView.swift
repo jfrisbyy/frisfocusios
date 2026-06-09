@@ -19,6 +19,8 @@ import UIKit
 
 struct ProofThreadView: View {
     @Environment(Store.self) private var store
+    @Environment(AuthManager.self) private var auth
+    @Environment(ModerationService.self) private var moderation
     @Environment(\.dismiss) private var dismiss
 
     let friend: RemoteProfile
@@ -31,6 +33,7 @@ struct ProofThreadView: View {
     @State private var showCapture: Bool = false
     /// The proof open full-screen in the player, if any.
     @State private var playerProof: DirectMessage?
+    @State private var reportTarget: ReportTarget?
 
     private var thread: [DirectMessage] {
         message.thread(withFriendId: friend.id, myUserId: myUserId)
@@ -76,6 +79,17 @@ struct ProofThreadView: View {
         }
         .fullScreenCover(item: $playerProof) { proof in
             ProofPlayerView(proof: proof, friend: friend, message: message, myUserId: myUserId)
+                .environment(auth)
+                .environment(moderation)
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: target.messageId,
+                subjectName: target.subjectName
+            )
+            .environment(auth)
+            .environment(moderation)
         }
         .onAppear {
             Task { await message.markThreadRead(withFriendId: friend.id, myUserId: myUserId) }
@@ -102,6 +116,31 @@ struct ProofThreadView: View {
             }
 
             Spacer()
+
+            Menu {
+                Button {
+                    reportTarget = ReportTarget(reportedUserId: friend.id, messageId: nil, subjectName: friend.displayName)
+                } label: {
+                    Label("Report", systemImage: "flag")
+                }
+                Button(role: .destructive) {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    Task {
+                        await moderation.block(friend.id, myUserId: myUserId)
+                        dismiss()
+                    }
+                } label: {
+                    Label("Block \(friend.displayName)", systemImage: "hand.raised")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.textPrimary.opacity(0.06)))
+                    .contentShape(Circle())
+            }
+            .accessibilityLabel("More options")
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()

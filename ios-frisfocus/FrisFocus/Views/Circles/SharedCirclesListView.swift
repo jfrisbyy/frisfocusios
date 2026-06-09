@@ -36,6 +36,7 @@ struct SharedCirclesListView: View {
         .toolbarBackground(Theme.warmWheat, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .task { await liveRefresh() }
+        .onDisappear { service.stopRealtime() }
         .refreshable { await reloadOnce() }
         .fullScreenCover(isPresented: $showCreate) {
             CreateSharedCircleView(
@@ -59,6 +60,7 @@ struct SharedCirclesListView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 14) {
                     intro
+                    if !service.invitations.isEmpty { invitationsSection }
                     startButton
 
                     if service.isLoading && service.circles.isEmpty {
@@ -87,6 +89,102 @@ struct SharedCirclesListView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 44)
             }
+        }
+    }
+
+    // MARK: - Invitations
+
+    private var invitationsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("INVITATIONS")
+                    .font(.sans(11, weight: .semibold))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                Text("\(service.invitations.count)")
+                    .font(.sans(10, weight: .bold))
+                    .foregroundStyle(Theme.textCream)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Theme.sunWarm))
+            }
+            ForEach(service.invitations) { invite in
+                invitationCard(invite)
+            }
+        }
+    }
+
+    private func invitationCard(_ invite: CircleInvitation) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                RemoteAvatarView(profile: invite.inviter, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(invite.circleName)
+                        .font(.serif(17, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text("\(invite.inviter.displayName) invited you · \(inviteGoalCaption(invite))")
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    guard let myId else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Task { await service.declineInvitation(invite, myUserId: myId) }
+                } label: {
+                    Text("Decline")
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(Theme.textPrimary.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    guard let myId else { return }
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Task { await service.acceptInvitation(invite, myUserId: myId) }
+                } label: {
+                    Text("Join circle")
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(Theme.textPrimary)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .background(Theme.paperCream)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Theme.sunWarm.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func inviteGoalCaption(_ invite: CircleInvitation) -> String {
+        switch invite.kind {
+        case .witness:
+            return "just present"
+        case .parallel:
+            return "shared list"
+        case .collective:
+            if let target = invite.collectiveTarget {
+                let unit = invite.collectiveUnit ?? ""
+                return "\(circleNumber(target)) \(unit)".trimmingCharacters(in: .whitespaces)
+            }
+            return invite.collectiveUnit ?? "shared goal"
+        case .hybrid:
+            return "list + number"
         }
     }
 
@@ -165,20 +263,15 @@ struct SharedCirclesListView: View {
 
     // MARK: - Live refresh
 
-    /// Initial load, then a gentle poll so a friend's check-off or
-    /// contribution shows up without a manual refresh. SwiftUI cancels
-    /// this `.task` when the screen leaves, ending the loop. The detail
-    /// screen reads from this same `service`, so polling here keeps the
-    /// pushed detail live too.
+    /// Initial load, then a live Realtime subscription so a friend's
+    /// check-off or contribution lands without a manual refresh. The
+    /// detail screen reads from this same `service` (and re-arms the
+    /// subscription itself), so the pushed detail stays live too.
     private func liveRefresh() async {
         guard let myId else { return }
         await service.load(myUserId: myId)
         await friendService.load(myUserId: myId)
-        while !Task.isCancelled {
-            do { try await Task.sleep(for: .seconds(5)) } catch { break }
-            if Task.isCancelled { break }
-            await service.load(myUserId: myId)
-        }
+        service.startRealtime(myUserId: myId)
     }
 
     private func reloadOnce() async {
@@ -246,43 +339,64 @@ private struct CircleCard: View {
 
     @ViewBuilder
     private var progressRow: some View {
-        switch circle.kind {
-        case .parallel:
-            let dayKey = CircleGraphService.dayKey()
-            let done = circle.todayCount(userId: myUserId, on: dayKey)
-            let total = circle.tasks.count
+        if circle.kind == .witness {
             HStack(spacing: 8) {
-                Image(systemName: "checklist")
+                Image(systemName: "moon.stars.fill")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(circle.kind.tintDark)
-                Text(total == 0 ? "No tasks yet" : "You \(done)/\(total) today")
+                    .foregroundStyle(CircleKind.witness.tint)
+                Text("Just present together")
                     .font(.sans(13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.75))
-                    .monospacedDigit()
+                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
                 Spacer()
             }
-        case .collective:
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text("\(circleNumber(circle.contributionTotal))")
-                        .font(.sans(13, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                if circle.kind.hasSharedList { listLine }
+                if circle.kind.hasSharedNumber { numberLine }
+            }
+        }
+    }
+
+    private var listLine: some View {
+        let dayKey = CircleGraphService.dayKey()
+        let done = circle.todayCount(userId: myUserId, on: dayKey)
+        let total = circle.tasks.count
+        return HStack(spacing: 8) {
+            Image(systemName: "checklist")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(CircleKind.parallel.tintDark)
+            Text(total == 0 ? "No tasks yet" : "You \(done)/\(total) today")
+                .font(.sans(13, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                .monospacedDigit()
+            Spacer()
+        }
+    }
+
+    private var numberLine: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "number")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CircleKind.collective.tintDark)
+                Text("\(circleNumber(circle.contributionTotal))")
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .monospacedDigit()
+                if let target = circle.collectiveTarget {
+                    Text("/ \(circleNumber(target)) \(circle.collectiveUnit ?? "")")
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
                         .monospacedDigit()
-                    if let target = circle.collectiveTarget {
-                        Text("/ \(circleNumber(target)) \(circle.collectiveUnit ?? "")")
-                            .font(.sans(13, weight: .regular))
-                            .foregroundStyle(Theme.textSecondary)
-                            .monospacedDigit()
-                    } else if let unit = circle.collectiveUnit {
-                        Text(unit)
-                            .font(.sans(13, weight: .regular))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    Spacer()
+                } else if let unit = circle.collectiveUnit {
+                    Text(unit)
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
                 }
-                if circle.collectiveTarget != nil {
-                    CircleProgressBar(fraction: circle.collectiveFraction, tint: circle.kind.tint, height: 8)
-                }
+                Spacer()
+            }
+            if circle.collectiveTarget != nil {
+                CircleProgressBar(fraction: circle.collectiveFraction, tint: CircleKind.collective.tint, height: 8)
             }
         }
     }

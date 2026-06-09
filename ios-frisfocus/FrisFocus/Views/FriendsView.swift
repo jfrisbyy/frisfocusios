@@ -16,15 +16,18 @@ import SwiftUI
 
 struct FriendsView: View {
     @Environment(AuthManager.self) private var auth
+    @Environment(ModerationService.self) private var moderation
     @State private var service = FriendGraphService()
-    @State private var email: String = ""
+    @State private var query: String = ""
     @State private var hasSearched: Bool = false
-    @FocusState private var emailFocused: Bool
+    @State private var reportTarget: ReportTarget?
+    @FocusState private var searchFocused: Bool
 
     private var myId: String? { auth.user?.id }
 
     var body: some View {
         @Bindable var service = service
+        @Bindable var moderation = moderation
 
         ZStack {
             Theme.warmWheat.ignoresSafeArea()
@@ -35,11 +38,26 @@ struct FriendsView: View {
         .toolbarBackground(Theme.warmWheat, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .task { await reload() }
+        .onDisappear { service.stopRealtime() }
         .refreshable { await reload() }
         .alert("Something went wrong", isPresented: $service.showError) {
             Button("OK") { }
         } message: {
             Text(service.errorMessage ?? "Please try again.")
+        }
+        .alert("Something went wrong", isPresented: $moderation.showError) {
+            Button("OK") { }
+        } message: {
+            Text(moderation.errorMessage ?? "Please try again.")
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: target.messageId,
+                subjectName: target.subjectName
+            )
+            .environment(auth)
+            .environment(moderation)
         }
     }
 
@@ -58,6 +76,7 @@ struct FriendsView: View {
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 26) {
+                    inviteRow
                     addSection
                     if !service.incoming.isEmpty { incomingSection }
                     if !service.outgoing.isEmpty { outgoingSection }
@@ -71,21 +90,54 @@ struct FriendsView: View {
         }
     }
 
-    // MARK: - Add by email
+    // MARK: - Invite
+
+    private var inviteRow: some View {
+        NavigationLink {
+            InviteFriendsView()
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Theme.textPrimary)
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Invite friends")
+                        .font(.sans(16, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Share your link or QR code")
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(14)
+            .background(Theme.paperCream)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Add by username, name, or email
 
     private var addSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("ADD A FRIEND", subtitle: "Find someone by the email they signed up with.")
+            sectionHeader("ADD A FRIEND", subtitle: "Find people by @username, name, or email.")
 
             HStack(spacing: 10) {
-                TextField("name@email.com", text: $email)
+                TextField("@username, name, or email", text: $query)
                     .textInputAutocapitalization(.never)
-                    .keyboardType(.emailAddress)
                     .autocorrectionDisabled()
-                    .focused($emailFocused)
+                    .focused($searchFocused)
                     .submitLabel(.search)
                     .onSubmit { Task { await runSearch() } }
-                    .onChange(of: email) { _, _ in hasSearched = false }
+                    .onChange(of: query) { _, _ in hasSearched = false }
                     .font(.sans(15, weight: .regular))
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 14)
@@ -110,15 +162,15 @@ struct FriendsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
-                .disabled(email.trimmingCharacters(in: .whitespaces).isEmpty || service.isSearching)
+                .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || service.isSearching)
             }
 
-            ForEach(service.searchResults) { profile in
+            ForEach(service.searchResults.filter { !moderation.isBlocked($0.id) }) { profile in
                 personRow(profile) { searchResultTrailing(profile) }
             }
 
             if hasSearched, !service.isSearching, service.searchResults.isEmpty {
-                Text("No one found with that email.")
+                Text("No one found. Try a different @username, name, or email.")
                     .font(.sans(13, weight: .regular))
                     .foregroundStyle(Theme.textTertiary)
                     .padding(.top, 2)
@@ -128,14 +180,25 @@ struct FriendsView: View {
 
     @ViewBuilder
     private func searchResultTrailing(_ profile: RemoteProfile) -> some View {
-        if service.friends.contains(where: { $0.id == profile.id }) {
+        switch myId.map({ service.relationship(to: profile.id, myUserId: $0) }) ?? .none {
+        case .friends:
             pill("Friends", filled: false).opacity(0.55)
-        } else if service.outgoing.contains(where: { $0.profile.id == profile.id }) {
+        case .requestSent:
             pill("Pending", filled: false).opacity(0.55)
-        } else {
+        case .requestReceived:
+            Button {
+                guard let myId, let request = service.incoming.first(where: { $0.profile.id == profile.id }) else { return }
+                Task { await service.accept(request, myUserId: myId) }
+            } label: {
+                pill("Accept", filled: true)
+            }
+            .buttonStyle(.plain)
+        case .isMe:
+            EmptyView()
+        case .none:
             Button {
                 guard let myId else { return }
-                emailFocused = false
+                searchFocused = false
                 Task { await service.sendRequest(to: profile, myUserId: myId) }
             } label: {
                 pill("Add", filled: true)
@@ -205,14 +268,26 @@ struct FriendsView: View {
             } else if service.friends.isEmpty {
                 emptyFriends
             } else {
-                ForEach(service.friends) { friend in
+                ForEach(service.friends.filter { !moderation.isBlocked($0.id) }) { friend in
                     personRow(friend) {
                         Menu {
+                            Button {
+                                reportTarget = ReportTarget(reportedUserId: friend.id, messageId: nil, subjectName: friend.displayName)
+                            } label: {
+                                Label("Report", systemImage: "flag")
+                            }
                             Button(role: .destructive) {
                                 guard let myId else { return }
                                 Task { await service.unfriend(friend, myUserId: myId) }
                             } label: {
                                 Label("Remove friend", systemImage: "person.fill.xmark")
+                            }
+                            Button(role: .destructive) {
+                                guard let myId else { return }
+                                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                                Task { await moderation.block(friend.id, myUserId: myId) }
+                            } label: {
+                                Label("Block", systemImage: "hand.raised")
                             }
                         } label: {
                             Image(systemName: "ellipsis")
@@ -234,7 +309,7 @@ struct FriendsView: View {
             Text("No friends yet")
                 .font(.serif(18, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Add someone by email to start sharing circles, pacts, and stories.")
+            Text("Add someone by @username, name, or email to start sharing circles, pacts, and stories.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -273,8 +348,8 @@ struct FriendsView: View {
                     .font(.sans(15, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
-                if let email = profile.email, email != profile.displayName {
-                    Text(email)
+                if let secondary = profile.handle ?? profile.email, secondary != profile.displayName {
+                    Text(secondary)
                         .font(.sans(12, weight: .regular))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -333,13 +408,14 @@ struct FriendsView: View {
     private func reload() async {
         guard let myId else { return }
         await service.load(myUserId: myId)
+        service.startRealtime(myUserId: myId)
     }
 
     private func runSearch() async {
         guard let myId else { return }
-        emailFocused = false
+        searchFocused = false
         hasSearched = true
-        await service.search(email: email, myUserId: myId)
+        await service.searchPeople(query: query, myUserId: myId)
     }
 }
 

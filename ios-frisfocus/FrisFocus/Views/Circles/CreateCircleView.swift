@@ -74,10 +74,16 @@ struct CreateCircleView: View {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !selectedFriendIds.isEmpty else { return false }
         switch type {
+        case .witness:
+            return true
         case .parallel:
             return !cleanedTasks.isEmpty
         case .collective:
             return (targetValue ?? 0) > 0
+                && !unitText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .hybrid:
+            return !cleanedTasks.isEmpty
+                && (targetValue ?? 0) > 0
                 && !unitText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -93,7 +99,7 @@ struct CreateCircleView: View {
                     withSection
                     if type == .parallel {
                         tasksSection
-                    } else {
+                    } else if type == .collective {
                         targetSection
                     }
                     durationSection
@@ -189,6 +195,11 @@ struct CreateCircleView: View {
                     .collective,
                     title: "Everyone adds to one number",
                     blurb: "One shared target you build toward together — miles, plunges, pages."
+                )
+                typeRow(
+                    .witness,
+                    title: "Just be present together",
+                    blurb: "No shared goal — everyone keeps their own. A calm room you're in together. You can add a goal anytime."
                 )
             }
         }

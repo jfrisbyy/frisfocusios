@@ -57,6 +57,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		105FC5C02E9EAD3200EA8BCF /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 105FC5792E9EAD3100EA8BCF /* FrisFocus */;
+		};
 		XX7F4A9931E3843F7AC701XX /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -69,6 +76,9 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		105FC57C2E9EAD3100EA8BCF /* FrisFocus */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				105FC5C02E9EAD3200EA8BCF /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
 			path = FrisFocus;
 			sourceTree = "<group>";
 		};
@@ -503,7 +513,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
+				CODE_SIGN_ENTITLEMENTS = FrisFocus/FrisFocus.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FrisFocus/Info.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Capture a photo to share a moment from your day with friends or your circle.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Used to position the sun based on your local sunrise and sunset times.";
@@ -542,7 +554,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
+				CODE_SIGN_ENTITLEMENTS = FrisFocus/FrisFocus.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FrisFocus/Info.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Capture a photo to share a moment from your day with friends or your circle.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Used to position the sun based on your local sunrise and sunset times.";

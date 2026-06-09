@@ -17,43 +17,68 @@ extension CircleKind {
     /// Short human label used on list cards and the create chooser.
     var shortLabel: String {
         switch self {
+        case .witness: return "Just present"
         case .parallel: return "Same list"
         case .collective: return "One number"
+        case .hybrid: return "List + number"
         }
     }
 
     /// Uppercase eyebrow shown in the detail hero.
     var eyebrow: String {
         switch self {
+        case .witness: return "WITNESS CIRCLE"
         case .parallel: return "PARALLEL CIRCLE"
         case .collective: return "COLLECTIVE CIRCLE"
+        case .hybrid: return "HYBRID CIRCLE"
         }
     }
 
-    /// Accent tint — purple for "same list", green for "one number".
+    /// One-line description of how the shape works, used in the chooser.
+    var blurb: String {
+        switch self {
+        case .witness: return "Just be in the room together — everyone keeps their own goals."
+        case .parallel: return "A shared checklist — each person works their own copy each day."
+        case .collective: return "One shared target you build toward together — miles, plunges, pages."
+        case .hybrid: return "Two goals at once — a shared list and a shared number, side by side."
+        }
+    }
+
+    /// Accent tint — violet for "same list", green for "one number",
+    /// warm amber/gold for the presence-only witness circle, teal for
+    /// the two-goal hybrid.
     var tint: Color {
         switch self {
+        case .witness: return Color(hex: 0xC2922F)
         case .parallel: return Color(hex: 0x7F77DD)
         case .collective: return Color(hex: 0x639922)
+        case .hybrid: return Color(hex: 0x3F8E8E)
         }
     }
 
     /// Darker variant legible on a 15% wash of `tint`.
     var tintDark: Color {
         switch self {
+        case .witness: return Color(hex: 0x6E4E12)
         case .parallel: return Color(hex: 0x4A3F9E)
         case .collective: return Color(hex: 0x3B6D11)
+        case .hybrid: return Color(hex: 0x245A5A)
         }
     }
 
     /// Night-sky hero gradient stops (matches the seeded detail's cue:
-    /// violet night for parallel, forest night for collective).
+    /// violet night for parallel, forest night for collective, warm
+    /// amber night for witness, deep teal night for hybrid).
     var heroColors: [Color] {
         switch self {
+        case .witness:
+            return [Color(hex: 0x241B0C), Color(hex: 0x3E2F12), Color(hex: 0x6B5220)]
         case .parallel:
             return [Color(hex: 0x1A1830), Color(hex: 0x3A2F48), Color(hex: 0x6B4D52)]
         case .collective:
             return [Color(hex: 0x13251A), Color(hex: 0x1F4030), Color(hex: 0x3B6D4A)]
+        case .hybrid:
+            return [Color(hex: 0x0F2228), Color(hex: 0x1C3D43), Color(hex: 0x356E6E)]
         }
     }
 }

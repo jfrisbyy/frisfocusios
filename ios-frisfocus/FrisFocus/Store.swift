@@ -71,6 +71,34 @@ final class Store {
     /// `.trainBonus` LogEntry.
     var habitTrains: [HabitTrain] = []
 
+    // MARK: - Cadence link (Esengo)
+
+    /// FrisFocus-side link records binding a Cadence routine (or an
+    /// outcome rule) to FrisFocus scoring. Surfaced only while
+    /// `cadenceConnected` is true. The link enriches FrisFocus; it is
+    /// never load-bearing.
+    var cadenceLinks: [CadenceLink] = []
+
+    /// Recorded passive-outcome fills (sleep / focus / wind-down) so the
+    /// Season view can show "✓ 6h 40m last night" + the credited points.
+    var cadenceOutcomeFulfillments: [CadenceOutcomeFulfillment] = []
+
+    /// Outcome-event ids already scored. A local idempotency backstop on
+    /// top of the backend `consumed_by_frisfocus` flag so a verified
+    /// event is never double-counted.
+    var consumedCadenceEventIds: Set<UUID> = []
+
+    /// Whether the user opted in to the Cadence link. Gates every link
+    /// surface; false means none of the link UI appears.
+    var cadenceConnected: Bool = false
+
+    /// One-time "Connect Cadence" invite dismissal.
+    var cadenceInviteDismissed: Bool = false
+
+    /// Privacy: sleep/focus-derived points stay hidden from the
+    /// friend-facing layer unless the user opts in here.
+    var cadenceSurfacePointsSocially: Bool = false
+
     // MARK: - Pacts
 
     /// Two-person, time-boxed shared commitments. A pact is the
@@ -183,6 +211,14 @@ final class Store {
         static let sharedFocusBlocks = "sharedFocusBlocks"
         static let directShares = "directShares"
 
+        // Cadence link (Esengo)
+        static let cadenceLinks = "cadenceLinks"
+        static let cadenceOutcomeFulfillments = "cadenceOutcomeFulfillments"
+        static let consumedCadenceEventIds = "consumedCadenceEventIds"
+        static let cadenceConnected = "cadenceConnected"
+        static let cadenceInviteDismissed = "cadenceInviteDismissed"
+        static let cadenceSurfacePointsSocially = "cadenceSurfacePointsSocially"
+
         // Legacy keys cleared by the DEBUG migration below.
         static let legacyOneShots = "oneShots"
     }
@@ -190,7 +226,7 @@ final class Store {
     /// Bumped whenever the on-disk shape changes incompatibly. The
     /// migration block in `init` clears persisted data when an older
     /// `modelVersion` is found.
-    private static let currentModelVersion = 11
+    private static let currentModelVersion = 12
 
     private let userDefaults = UserDefaults.standard
 
@@ -231,6 +267,12 @@ final class Store {
             userDefaults.removeObject(forKey: Keys.pacts)
             userDefaults.removeObject(forKey: Keys.pactCompletions)
             userDefaults.removeObject(forKey: Keys.circleTaskRequests)
+            userDefaults.removeObject(forKey: Keys.cadenceLinks)
+            userDefaults.removeObject(forKey: Keys.cadenceOutcomeFulfillments)
+            userDefaults.removeObject(forKey: Keys.consumedCadenceEventIds)
+            userDefaults.removeObject(forKey: Keys.cadenceConnected)
+            userDefaults.removeObject(forKey: Keys.cadenceInviteDismissed)
+            userDefaults.removeObject(forKey: Keys.cadenceSurfacePointsSocially)
             userDefaults.set(Store.currentModelVersion, forKey: Keys.modelVersion)
         }
         #endif
@@ -278,12 +320,24 @@ final class Store {
             self.circleTaskRequests = Store.loadArray(Keys.circleTaskRequests) ?? []
             self.focusSessions = Store.loadArray(Keys.focusSessions) ?? []
             self.sharedFocusBlocks = Store.loadArray(Keys.sharedFocusBlocks) ?? []
+            self.cadenceLinks = Store.loadArray(Keys.cadenceLinks) ?? []
+            self.cadenceOutcomeFulfillments = Store.loadArray(Keys.cadenceOutcomeFulfillments) ?? []
+            if let ids: [UUID] = Store.loadArray(Keys.consumedCadenceEventIds) {
+                self.consumedCadenceEventIds = Set(ids)
+            }
+            self.cadenceConnected = userDefaults.bool(forKey: Keys.cadenceConnected)
+            self.cadenceInviteDismissed = userDefaults.bool(forKey: Keys.cadenceInviteDismissed)
+            self.cadenceSurfacePointsSocially = userDefaults.bool(forKey: Keys.cadenceSurfacePointsSocially)
             // Back-fill ownerId on any circle persisted before the
             // role layer landed so role lookups never return
             // .member for the actual creator.
             for i in self.circles.indices where self.circles[i].ownerId == nil {
                 self.circles[i].ownerId = self.circles[i].memberIds.first
             }
+            // Back-fill a founding chapter on any circle persisted before
+            // the group-story layer landed so "Our story" always has a
+            // timeline to look back on.
+            self.circles = Store.withChapterTimelines(self.circles)
         } else {
             // First launch — seed and immediately persist. Social
             // seeds run in dependency order: friends → circles →
@@ -309,7 +363,7 @@ final class Store {
             )
 
             self.friends = seededFriends
-            self.circles = seededCircles
+            self.circles = Store.withChapterTimelines(seededCircles)
             self.circleTaskCompletions = Store.seedCircleTaskCompletions(
                 circles: seededCircles,
                 friends: seededFriends,
@@ -440,6 +494,18 @@ final class Store {
         if let data = try? encoder.encode(sharedFocusBlocks) {
             userDefaults.set(data, forKey: Keys.sharedFocusBlocks)
         }
+        if let data = try? encoder.encode(cadenceLinks) {
+            userDefaults.set(data, forKey: Keys.cadenceLinks)
+        }
+        if let data = try? encoder.encode(cadenceOutcomeFulfillments) {
+            userDefaults.set(data, forKey: Keys.cadenceOutcomeFulfillments)
+        }
+        if let data = try? encoder.encode(Array(consumedCadenceEventIds)) {
+            userDefaults.set(data, forKey: Keys.consumedCadenceEventIds)
+        }
+        userDefaults.set(cadenceConnected, forKey: Keys.cadenceConnected)
+        userDefaults.set(cadenceInviteDismissed, forKey: Keys.cadenceInviteDismissed)
+        userDefaults.set(cadenceSurfacePointsSocially, forKey: Keys.cadenceSurfacePointsSocially)
     }
 
     // MARK: - Focus (F1) actions
@@ -733,6 +799,13 @@ extension Store {
             items.append(.task(task))
         }
 
+        // Linked Cadence routines you launch-and-run, scheduled for
+        // today. They sit in the plan like a task but open Cadence to
+        // run; passive outcomes never appear here (they live in Season).
+        for link in todaysCadenceLinks {
+            items.append(.cadenceLink(link))
+        }
+
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         for todo in todos {
@@ -771,9 +844,10 @@ extension Store {
         let todoCount = todaysPlan.reduce(into: 0) { partial, item in
             if case .todo = item { partial += 1 }
         }
+        let cadenceCount = todaysCadenceLinks.count
         let alertCount = alerts.count
 
-        if pinned == 0 && todoCount == 0 {
+        if pinned == 0 && todoCount == 0 && cadenceCount == 0 {
             return "no plan locked in yet"
         }
 
@@ -783,6 +857,9 @@ extension Store {
         }
         if todoCount > 0 {
             parts.append("\(todoCount) to-do\(todoCount == 1 ? "" : "s")")
+        }
+        if cadenceCount > 0 {
+            parts.append("\(cadenceCount) from Cadence")
         }
         if alertCount > 0 {
             parts.append("\(alertCount) need\(alertCount == 1 ? "s" : "") you")
@@ -816,6 +893,23 @@ extension Store {
                 result.append(AlertItem(
                     severity: .red,
                     title: "\(task.title) hasn\u{2019}t been logged today.",
+                    subtitle: subtitle
+                ))
+            }
+
+            // Linked Cadence Must routines not yet run. A reminder only —
+            // the deduction (if any) is the link's opt-in skip penalty.
+            for link in todaysCadenceLinks where link.tier == .must {
+                guard !isCadenceLinkEarnedToday(link) else { continue }
+                let subtitle: String = {
+                    if let penalty = link.skipPenalty, penalty < 0 {
+                        return "Must-Do · skipping it pulls \u{2212}\(abs(penalty)) from the day"
+                    }
+                    return "Must-Do · hasn\u{2019}t been run \(link.runWord)"
+                }()
+                result.append(AlertItem(
+                    severity: .red,
+                    title: "\(link.routineName) hasn\u{2019}t been run \(link.runWord).",
                     subtitle: subtitle
                 ))
             }
@@ -1685,6 +1779,209 @@ extension Store {
         persistAll()
     }
 
+    // MARK: - Circle mode switching + the group's story (CR2)
+
+    /// Add an objective layer (a shared list or a shared number) to a
+    /// circle, switching its mode while keeping the same group, identity,
+    /// and history. Owner/admin only. Re-adding a previously set-aside
+    /// layer resumes its dormant data exactly where it left off. Returns
+    /// `true` when the change applied.
+    @discardableResult
+    func addCircleLayer(
+        _ kind: CircleObjectiveKind,
+        to circleId: UUID,
+        unit: String? = nil,
+        target: Double? = nil
+    ) -> Bool {
+        guard let circle = circle(by: circleId), !circle.objectives.contains(kind) else { return false }
+        return setCircleObjectives(circle.objectives + [kind], in: circleId, unit: unit, target: target)
+    }
+
+    /// Set aside an objective layer — it goes dormant, never deleted.
+    /// The shared list (and its completion history) or the shared number
+    /// (and its running total) sleeps until the layer is re-added. Owner/
+    /// admin only.
+    @discardableResult
+    func removeCircleLayer(_ kind: CircleObjectiveKind, from circleId: UUID) -> Bool {
+        guard let circle = circle(by: circleId), circle.objectives.contains(kind) else { return false }
+        return setCircleObjectives(circle.objectives.filter { $0 != kind }, in: circleId)
+    }
+
+    /// The heart of mode-switching: set a circle's active objective
+    /// layers. Owner/admin only. Closes the current chapter and opens a
+    /// new one so the switch is recorded in the group's story, and never
+    /// destroys the data of a layer being set aside (suspend-not-delete).
+    @discardableResult
+    func setCircleObjectives(
+        _ requested: [CircleObjectiveKind],
+        in circleId: UUID,
+        unit: String? = nil,
+        target: Double? = nil
+    ) -> Bool {
+        guard let i = circles.firstIndex(where: { $0.id == circleId }) else { return false }
+        guard canManageTasks(in: circles[i]) else { return false }
+
+        let old = circles[i].objectives
+        let new = Self.normalizeObjectives(requested)
+        guard new != old else { return false }
+
+        // Adding a shared-number layer: set/refresh its unit + target and
+        // resume any dormant progress (never reset a running total).
+        if new.contains(.sharedNumber) && !old.contains(.sharedNumber) {
+            let trimmedUnit = unit?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmedUnit, !trimmedUnit.isEmpty {
+                circles[i].collectiveUnit = trimmedUnit
+            } else if (circles[i].collectiveUnit ?? "").isEmpty {
+                circles[i].collectiveUnit = "total"
+            }
+            if let target, target > 0 {
+                circles[i].collectiveTarget = target
+            }
+            // Resume dormant progress from any contributions already logged.
+            let logged = circleContributions
+                .filter { $0.circleId == circleId }
+                .reduce(0) { $0 + $1.amount }
+            circles[i].collectiveProgress = max(circles[i].collectiveProgress ?? 0, logged)
+        }
+
+        // Suspend-not-delete: a layer set aside keeps ALL of its data —
+        // tasks + completions for a list, target + contributions for a
+        // number — so re-adding it later resumes everything untouched.
+        // We deliberately mutate nothing on removal.
+
+        circles[i].objectives = new
+        transitionChapter(at: i, from: old, to: new, actorName: "You")
+        persistAll()
+        return true
+    }
+
+    /// Close the open chapter (recording how it ended) and open a fresh
+    /// one for the new mode, so the circle's lifetime story stays whole.
+    private func transitionChapter(
+        at i: Int,
+        from old: [CircleObjectiveKind],
+        to new: [CircleObjectiveKind],
+        actorName: String?
+    ) {
+        let now = Date()
+        if let ci = circles[i].chapters.lastIndex(where: { $0.endedAt == nil }) {
+            circles[i].chapters[ci].endedAt = now
+            circles[i].chapters[ci].outcome = Self.closingOutcome(
+                objectives: old,
+                target: circles[i].collectiveTarget,
+                progress: circles[i].collectiveProgress
+            )
+        }
+        let snap = Self.chapterSnapshot(
+            objectives: new,
+            tasks: circles[i].tasks,
+            unit: circles[i].collectiveUnit,
+            target: circles[i].collectiveTarget
+        )
+        circles[i].chapters.append(
+            CircleChapter(
+                objectives: new,
+                title: snap.title,
+                detail: snap.detail,
+                startedAt: now,
+                endedAt: nil,
+                outcome: .ongoing,
+                actorName: actorName
+            )
+        )
+    }
+
+    /// Stable, de-duplicated layer order — list before number — so the
+    /// derived type and equality checks are deterministic.
+    static func normalizeObjectives(_ objs: [CircleObjectiveKind]) -> [CircleObjectiveKind] {
+        var result: [CircleObjectiveKind] = []
+        if objs.contains(.sharedList) { result.append(.sharedList) }
+        if objs.contains(.sharedNumber) { result.append(.sharedNumber) }
+        return result
+    }
+
+    /// How a closing chapter reads in the lookback: a number that hit its
+    /// target is `completed`; a presence stretch ending is `returned`;
+    /// anything else was `setAside` (dormant, never gone).
+    static func closingOutcome(
+        objectives: [CircleObjectiveKind],
+        target: Double?,
+        progress: Double?
+    ) -> CircleChapterOutcome {
+        if objectives.isEmpty { return .returned }
+        if objectives.contains(.sharedNumber), let target, target > 0, (progress ?? 0) >= target {
+            return .completed
+        }
+        return .setAside
+    }
+
+    /// A warm label + supporting line for a chapter that runs with the
+    /// given layers, using the circle's goal data for context. Pure so
+    /// both seeding and live switching can share it.
+    static func chapterSnapshot(
+        objectives: [CircleObjectiveKind],
+        tasks: [CircleTask],
+        unit: String?,
+        target: Double?
+    ) -> (title: String, detail: String?) {
+        switch CircleType(objectives: objectives) {
+        case .witness:
+            return ("Just present", "Everyone kept their own goals")
+        case .parallel:
+            let titles = tasks.map(\.title).filter { !$0.isEmpty }
+            return ("Shared list", titles.isEmpty ? "A shared checklist" : titles.prefix(3).joined(separator: " · "))
+        case .collective:
+            if let target, target > 0, let unit, !unit.isEmpty {
+                let t = target.rounded() == target ? String(Int(target)) : String(format: "%.1f", target)
+                return ("Shared number", "\(t) \(unit)")
+            }
+            return ("Shared number", "One number, together")
+        case .hybrid:
+            return ("Two goals", "A shared list and a shared number")
+        }
+    }
+
+    /// Ensure every circle carries at least its founding chapter so the
+    /// group's story always has a timeline. Backfills circles persisted
+    /// before chapters landed and any seeded circle without an explicit
+    /// story; leaves circles that already have chapters untouched.
+    static func withChapterTimelines(_ circles: [FFCircle]) -> [FFCircle] {
+        circles.map { circle in
+            guard circle.chapters.isEmpty else { return circle }
+            var c = circle
+            let snap = chapterSnapshot(
+                objectives: c.objectives,
+                tasks: c.tasks,
+                unit: c.collectiveUnit,
+                target: c.collectiveTarget
+            )
+            c.chapters = [
+                CircleChapter(
+                    objectives: c.objectives,
+                    title: snap.title,
+                    detail: snap.detail,
+                    startedAt: c.createdAt,
+                    endedAt: nil,
+                    outcome: .ongoing,
+                    actorName: nil
+                )
+            ]
+            return c
+        }
+    }
+
+    /// Story posts (proofs / moments) attached to a circle within a
+    /// chapter's window — the proofs + milestones that lookback surfaces
+    /// alongside each chapter.
+    func storyPosts(forCircleId circleId: UUID, in chapter: CircleChapter) -> [StoryPost] {
+        let end = chapter.endedAt ?? Date()
+        return storyPosts.filter { post in
+            post.circleId == circleId
+                && post.createdAt >= chapter.startedAt
+                && post.createdAt <= end
+        }
+    }
+
     // MARK: - Note actions
 
     /// Append a brand-new Note and persist. Caller is responsible for
@@ -1862,6 +2159,35 @@ extension Store {
                     entryType: .penalty
                 )
                 logEntries.append(entry)
+            }
+
+            // Linked Cadence Must routines with an opt-in skip penalty
+            // get the same missed-Must-Do treatment. Without a penalty
+            // they're exempt (the link enriches, never pressures).
+            for link in cadenceLinks where cadenceConnected
+                && link.type == .launchRun
+                && link.tier == .must
+                && link.recurrence.matches(yesterday) {
+                guard let penalty = link.skipPenalty, penalty < 0 else { continue }
+                let earnedYesterday = logEntries.contains { entry in
+                    entry.cadenceLinkId == link.id
+                        && cal.isDate(entry.date, inSameDayAs: yesterday)
+                        && entry.entryType == .completed
+                }
+                let alreadyPenalised = logEntries.contains { entry in
+                    entry.cadenceLinkId == link.id
+                        && cal.isDate(entry.date, inSameDayAs: yesterday)
+                        && entry.entryType == .penalty
+                }
+                guard !earnedYesterday, !alreadyPenalised else { continue }
+                logEntries.append(LogEntry(
+                    date: yesterday,
+                    taskId: nil,
+                    todoId: nil,
+                    cadenceLinkId: link.id,
+                    pointsEarned: penalty,
+                    entryType: .penalty
+                ))
             }
         }
 
@@ -2694,19 +3020,40 @@ extension Store {
                 .map { CircleTask(title: $0, pointValue: nil, linkedPersonalTaskId: nil) }
             : []
         let unit = collectiveUnit?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let createdAt = Date()
+        let resolvedUnit = type == .collective ? (unit?.isEmpty == false ? unit : nil) : nil
+        let resolvedTarget = type == .collective ? collectiveTarget : nil
+        // Open the founding chapter so the circle's story starts the day
+        // it's born — every later mode switch adds to this timeline.
+        let snap = Self.chapterSnapshot(
+            objectives: type.objectives,
+            tasks: tasks,
+            unit: resolvedUnit,
+            target: resolvedTarget
+        )
+        let opening = CircleChapter(
+            objectives: type.objectives,
+            title: snap.title,
+            detail: snap.detail,
+            startedAt: createdAt,
+            endedAt: nil,
+            outcome: .ongoing,
+            actorName: nil
+        )
         let circle = FFCircle(
             name: trimmedName.isEmpty ? "New circle" : trimmedName,
             type: type,
             timeframe: timeframe,
             memberIds: memberIds,
             tasks: tasks,
-            collectiveUnit: type == .collective ? (unit?.isEmpty == false ? unit : nil) : nil,
-            collectiveTarget: type == .collective ? collectiveTarget : nil,
+            collectiveUnit: resolvedUnit,
+            collectiveTarget: resolvedTarget,
             collectiveProgress: type == .collective ? 0 : nil,
-            createdAt: Date(),
+            createdAt: createdAt,
             ownerId: currentUserId,
             adminIds: [],
-            membersCanProposeTasks: false
+            membersCanProposeTasks: false,
+            chapters: [opening]
         )
         circles.append(circle)
         persistAll()
@@ -2718,6 +3065,25 @@ extension Store {
     /// The witnessing texture of a friend's day. Deterministic — no
     /// backend — so it never reshuffles between renders.
     func friendDay(for friend: Friend) -> FriendDay { FriendDay.make(for: friend) }
+
+    /// A calm 0...1 ring fraction for a friend's day, respecting their
+    /// pairwise visibility tier. Full → today's task completion; Open →
+    /// recent momentum (never task-specific); Quiet → 0, so the ring
+    /// reads as a faint track only and reveals nothing they didn't share.
+    func dayRingFraction(for friend: Friend) -> Double {
+        let day = friendDay(for: friend)
+        switch friend.sharesWithMe.tier {
+        case .full: return day.completionFraction
+        case .open: return day.momentum
+        case .quiet: return 0
+        }
+    }
+
+    /// My own today completion as a 0...1 fraction — today's score against
+    /// the season's daily goal. Drives my presence ring in shared rooms.
+    var myTodayFraction: Double {
+        max(0, min(1, Double(todayScore) / Double(max(1, currentSeason.dailyGoal))))
+    }
 
     /// Whole months since the connection began. Zero when unknown.
     func connectedMonths(_ friend: Friend) -> Int {
@@ -3232,6 +3598,7 @@ extension Store {
         let run5kEnd = cal.date(byAdding: .day, value: 18, to: now) ?? now
         let run5kStart = cal.date(byAdding: .day, value: -12, to: now) ?? now
         let milesStart = cal.date(byAdding: .day, value: -45, to: now) ?? now
+        let aaronName = friends[0].displayName
 
         let run5k = FFCircle(
             name: "Run a 5K",
@@ -3249,7 +3616,29 @@ extension Store {
             createdAt: run5kStart,
             ownerId: userId,
             adminIds: [],
-            membersCanProposeTasks: false
+            membersCanProposeTasks: false,
+            // Story: two weeks just present together, then Aaron added the
+            // shared list they're running now.
+            chapters: [
+                CircleChapter(
+                    objectives: [],
+                    title: "Just present",
+                    detail: "Everyone kept their own goals",
+                    startedAt: cal.date(byAdding: .day, value: -26, to: now) ?? now,
+                    endedAt: run5kStart,
+                    outcome: .returned,
+                    actorName: nil
+                ),
+                CircleChapter(
+                    objectives: [.sharedList],
+                    title: "Shared list",
+                    detail: "Run a mile · Sleep 6+ hours · Stretch 10 min",
+                    startedAt: run5kStart,
+                    endedAt: nil,
+                    outcome: .ongoing,
+                    actorName: aaronName
+                )
+            ]
         )
 
         let miles = FFCircle(
@@ -3264,10 +3653,70 @@ extension Store {
             createdAt: milesStart,
             ownerId: userId,
             adminIds: [aaron],
-            membersCanProposeTasks: false
+            membersCanProposeTasks: false,
+            chapters: [
+                CircleChapter(
+                    objectives: [],
+                    title: "Just present",
+                    detail: "Found our footing together",
+                    startedAt: cal.date(byAdding: .day, value: -60, to: now) ?? now,
+                    endedAt: milesStart,
+                    outcome: .returned,
+                    actorName: nil
+                ),
+                CircleChapter(
+                    objectives: [.sharedNumber],
+                    title: "Shared number",
+                    detail: "1000 miles",
+                    startedAt: milesStart,
+                    endedAt: nil,
+                    outcome: .ongoing,
+                    actorName: nil
+                )
+            ]
         )
 
-        var result = [run5k, miles]
+        // A presence-only Witness circle: no shared goal, just a calm room
+        // these friends inhabit. Its story shows a finished shared list
+        // they ran together before returning to simply being present.
+        let eveningsStart = cal.date(byAdding: .day, value: -50, to: now) ?? now
+        let eveningsSwitch = cal.date(byAdding: .day, value: -20, to: now) ?? now
+        let evenings = FFCircle(
+            name: "Evenings Together",
+            type: .witness,
+            timeframe: .ongoing,
+            memberIds: [userId, aaron, naomi, kennedy],
+            tasks: [],
+            collectiveUnit: nil,
+            collectiveTarget: nil,
+            collectiveProgress: nil,
+            createdAt: eveningsStart,
+            ownerId: userId,
+            adminIds: [],
+            membersCanProposeTasks: false,
+            chapters: [
+                CircleChapter(
+                    objectives: [.sharedList],
+                    title: "Shared list",
+                    detail: "A 30-day evening reset",
+                    startedAt: eveningsStart,
+                    endedAt: eveningsSwitch,
+                    outcome: .completed,
+                    actorName: nil
+                ),
+                CircleChapter(
+                    objectives: [],
+                    title: "Just present",
+                    detail: "Everyone keeps their own goals now",
+                    startedAt: eveningsSwitch,
+                    endedAt: nil,
+                    outcome: .ongoing,
+                    actorName: aaronName
+                )
+            ]
+        )
+
+        var result = [run5k, miles, evenings]
 
         // Two more circles spanning the expanded roster so several
         // friend profiles surface a populated "Together" section.

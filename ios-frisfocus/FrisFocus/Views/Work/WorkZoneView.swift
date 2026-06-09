@@ -58,6 +58,8 @@ struct WorkZoneView: View {
                             TaskCardView(task: task)
                         case .todo(let todo):
                             TodoCardView(todo: todo)
+                        case .cadenceLink(let link):
+                            CadenceRoutineRow(link: link)
                         }
                     }
                 }

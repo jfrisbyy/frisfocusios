@@ -73,10 +73,16 @@ struct CreateSharedCircleView: View {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !selectedFriendIds.isEmpty else { return false }
         switch kind {
+        case .witness:
+            return true
         case .parallel:
             return !cleanedTasks.isEmpty
         case .collective:
             return (targetValue ?? 0) > 0
+                && !unitText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .hybrid:
+            return !cleanedTasks.isEmpty
+                && (targetValue ?? 0) > 0
                 && !unitText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -92,7 +98,7 @@ struct CreateSharedCircleView: View {
                     withSection
                     if kind == .parallel {
                         tasksSection
-                    } else {
+                    } else if kind == .collective {
                         targetSection
                     }
                     durationSection
@@ -184,6 +190,11 @@ struct CreateSharedCircleView: View {
                     title: "Everyone adds to one number",
                     blurb: "One shared target you build toward together — miles, plunges, pages."
                 )
+                typeRow(
+                    .witness,
+                    title: "Just be present together",
+                    blurb: "No shared goal — everyone keeps their own. A calm room you're in together. Add a goal anytime."
+                )
             }
         }
     }
@@ -238,9 +249,9 @@ struct CreateSharedCircleView: View {
 
     private var withSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionEyebrow(selectedFriendIds.isEmpty ? "WITH" : "WITH · \(selectedFriendIds.count) PICKED")
+            sectionEyebrow(selectedFriendIds.isEmpty ? "INVITE" : "INVITE · \(selectedFriendIds.count) PICKED")
             if friends.isEmpty {
-                Text("Add friends first to start a circle with them.")
+                Text("Add friends first to invite them to a circle.")
                     .font(.serifItalic(14, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(0.55))
             } else {
@@ -298,7 +309,7 @@ struct CreateSharedCircleView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Add \(friend.displayName)")
+        .accessibilityLabel("Invite \(friend.displayName)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
@@ -461,7 +472,7 @@ struct CreateSharedCircleView: View {
             .disabled(!canCreate || isCreating)
             .accessibilityLabel("Create the circle")
 
-            Text("You're the owner. You can add tasks, members, and remove the circle.")
+            Text("You're the owner. The friends you pick get an invite to join — you can invite more anytime.")
                 .font(.serifItalic(13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 .multilineTextAlignment(.center)

@@ -31,6 +31,7 @@ import UIKit
 struct CirclesView: View {
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
+    @Environment(ProfileStore.self) private var profileStore
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Section + rail state
@@ -50,6 +51,7 @@ struct CirclesView: View {
     @State private var showStoryCapture: Bool = false
     @State private var showMyStory: Bool = false
     @State private var showDirect: Bool = false
+    @State private var showAddFriends: Bool = false
     @State private var route: CirclesRoute?
 
     /// The real messaging backend — drives the paper-plane's unread dot.
@@ -79,7 +81,8 @@ struct CirclesView: View {
                             onYouTap: { handleYouTap() },
                             onYouAddTap: { handleYouAddTap() },
                             onDirectTap: { handleDirectTap() },
-                            onMessageTap: { friend in handleMessageTap(friend) }
+                            onMessageTap: { friend in handleMessageTap(friend) },
+                            onAddFriendTap: { handleAddFriendTap() }
                         )
                         .id(friendsAnchor)
                         .background(sectionTopTracker(.friends))
@@ -139,9 +142,6 @@ struct CirclesView: View {
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(28)
             }
-            .sheet(isPresented: $showProfileSheet) {
-                ProfileSheetView()
-            }
             .fullScreenCover(isPresented: $showStoryCapture) {
                 CaptureView(mode: .generalPost)
             }
@@ -158,6 +158,17 @@ struct CirclesView: View {
                     .environment(auth)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $showAddFriends) {
+                NavigationStack {
+                    FriendsView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") { showAddFriends = false }
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                        }
+                }
             }
             .sheet(isPresented: $showStartTogether, onDismiss: {
                 // Present the chosen flow only after the chooser has
@@ -200,6 +211,7 @@ struct CirclesView: View {
             .navigationDestination(item: $route) { route in
                 destination(for: route)
             }
+            .profileQuickCard(isPresented: $showProfileSheet)
             .task { await loadMessages() }
         }
     }
@@ -269,6 +281,11 @@ struct CirclesView: View {
 
     private func handleDirectTap() {
         showDirect = true
+    }
+
+    private func handleAddFriendTap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showAddFriends = true
     }
 
     /// The seeded "Friends today" people are a visual demo; their
@@ -513,8 +530,8 @@ struct CirclesView: View {
                 HStack {
                     Spacer()
                     ProfileAvatarButton(
-                        initials: auth.user?.initials ?? "",
-                        photoURL: auth.user?.photoURL
+                        initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
+                        photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL
                     ) {
                         showProfileSheet = true
                     }

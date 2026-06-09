@@ -355,6 +355,12 @@ struct LogEntry: Codable, Identifiable {
     var taskId: UUID?
     var todoId: UUID?
     var trainId: UUID? = nil
+    /// Set when this entry credits (or penalises) a linked Cadence
+    /// routine / outcome rather than a native Task or To-do. Lets the
+    /// plan row find today's "earned from Cadence" entry and keeps
+    /// Cadence-derived points distinguishable for the social-privacy
+    /// layer. Optional so entries persisted before the link decode cleanly.
+    var cadenceLinkId: UUID? = nil
     var pointsEarned: Int
     var entryType: LogEntryType = .completed
 }
@@ -515,11 +521,13 @@ extension FFTask {
 enum HomeRowItem: Identifiable {
     case task(FFTask)
     case todo(Todo)
+    case cadenceLink(CadenceLink)
 
     var id: UUID {
         switch self {
         case .task(let t): return t.id
         case .todo(let td): return td.id
+        case .cadenceLink(let link): return link.id
         }
     }
 }

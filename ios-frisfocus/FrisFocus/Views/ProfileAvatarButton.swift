@@ -18,6 +18,13 @@ struct ProfileAvatarButton: View {
     var photoURL: URL? = nil
     let action: () -> Void
 
+    /// Expands the tap target to ~50 pt — well past Apple's 44 pt
+    /// minimum — without disturbing layout. The disc stays 32 pt; the
+    /// matching negative padding on the button keeps neighbouring
+    /// content in place. This is what stops taps from missing or being
+    /// swallowed by the surrounding scroll view.
+    private let hitSlop: CGFloat = 9
+
     var body: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -43,8 +50,11 @@ struct ProfileAvatarButton: View {
                     .stroke(Theme.sunWarm, lineWidth: 1.5)
             )
             .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
+            .padding(hitSlop)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(-hitSlop)
         .accessibilityLabel("Profile")
         .accessibilityHint("Open profile, settings, and season management")
     }

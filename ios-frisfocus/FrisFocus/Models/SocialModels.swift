@@ -172,11 +172,60 @@ struct Friend: Codable, Identifiable {
 
 // MARK: - FFCircle
 
-/// Whether everyone works their own copy of the same task list
-/// (`parallel`) or contributes to a single shared target (`collective`).
+/// A goal layered onto a circle. A circle carries zero, one, or two of
+/// these; its `type` is *derived* from which layers are present rather
+/// than stored as a fixed identity.
+///
+///   • sharedList   — the old "parallel" goal: a shared checklist each
+///                    member works their own copy of.
+///   • sharedNumber — the old "collective" goal: one summed numeric
+///                    target the group builds toward together.
+enum CircleObjectiveKind: String, Codable, Equatable, Hashable {
+    case sharedList
+    case sharedNumber
+}
+
+/// The *shape* a circle reads as — a readout of its objective layers,
+/// never stored as identity:
+///   • witness    — no shared goal (presence only)
+///   • parallel   — one shared checklist (a `sharedList` layer)
+///   • collective — one shared number (a `sharedNumber` layer)
+///   • hybrid     — both layers at once (advanced; not the default)
 enum CircleType: String, Codable {
+    case witness
     case parallel
     case collective
+    case hybrid
+}
+
+extension CircleType {
+    /// The objective layers that define this shape. Witness has none;
+    /// hybrid carries both.
+    var objectives: [CircleObjectiveKind] {
+        switch self {
+        case .witness: return []
+        case .parallel: return [.sharedList]
+        case .collective: return [.sharedNumber]
+        case .hybrid: return [.sharedList, .sharedNumber]
+        }
+    }
+
+    /// Derive the shape from a set of layers. Both layers → hybrid; a
+    /// shared list → parallel; a shared number → collective; none →
+    /// witness. The type is always a readout, never stored as identity.
+    init(objectives: [CircleObjectiveKind]) {
+        let hasList = objectives.contains(.sharedList)
+        let hasNumber = objectives.contains(.sharedNumber)
+        if hasList && hasNumber { self = .hybrid }
+        else if hasList { self = .parallel }
+        else if hasNumber { self = .collective }
+        else { self = .witness }
+    }
+
+    /// True when this shape carries a shared checklist layer.
+    var hasSharedList: Bool { objectives.contains(.sharedList) }
+    /// True when this shape carries a shared number layer.
+    var hasSharedNumber: Bool { objectives.contains(.sharedNumber) }
 }
 
 /// Time-boxed circles end on a fixed date and archive when reached.
@@ -184,6 +233,43 @@ enum CircleType: String, Codable {
 enum CircleTimeframe: Codable, Equatable {
     case timeBoxed(endDate: Date)
     case ongoing
+}
+
+// MARK: - The group's story (CR2)
+
+/// How a chapter of a circle's life ended. Drives the warm lookback in
+/// "Our story" — honest about what happened, never a scoreboard.
+enum CircleChapterOutcome: String, Codable, Equatable {
+    case ongoing      // the current chapter — still being lived
+    case completed    // a goal the group finished together and is proud of
+    case setAside     // a goal set aside — its data sleeps (dormant), never gone
+    case returned     // returned to presence-only (Witness)
+}
+
+/// One stretch of a circle's life: which objective layers were active,
+/// when it ran, and how it ended. A circle keeps a timeline of these so
+/// the group can look back on everything they've done together. Chapters
+/// are pure history — the live `type` is always derived from the
+/// circle's current `objectives`, not from the chapter list.
+struct CircleChapter: Codable, Identifiable, Equatable {
+    var id: UUID = UUID()
+    /// The objective layers active during this chapter ([] = Witness).
+    var objectives: [CircleObjectiveKind]
+    /// Warm human label, e.g. "Run a 5K", "1000 miles", or "Just present".
+    var title: String
+    /// Optional supporting line, e.g. the target or a short task summary.
+    var detail: String?
+    var startedAt: Date
+    /// nil while this is the current chapter.
+    var endedAt: Date?
+    var outcome: CircleChapterOutcome
+    /// Display name of whoever opened this chapter (the switch actor).
+    var actorName: String?
+
+    /// The shape this chapter ran as, derived from its layers.
+    var type: CircleType { CircleType(objectives: objectives) }
+    /// The current chapter has no end date yet.
+    var isCurrent: Bool { endedAt == nil }
 }
 
 /// A group sharing a goal. For `parallel` circles `tasks` is the
@@ -197,7 +283,10 @@ enum CircleTimeframe: Codable, Equatable {
 struct FFCircle: Codable, Identifiable {
     var id: UUID = UUID()
     var name: String
-    var type: CircleType
+    /// The shared goals layered onto this circle (0, 1, or 2). The
+    /// circle's `type` is derived from these — the durable group +
+    /// always-on presence are constant; only the layers vary.
+    var objectives: [CircleObjectiveKind]
     var timeframe: CircleTimeframe
     var memberIds: [UUID]
     var tasks: [CircleTask]
@@ -205,6 +294,31 @@ struct FFCircle: Codable, Identifiable {
     var collectiveTarget: Double?
     var collectiveProgress: Double?
     var createdAt: Date = Date()
+
+    /// The circle's lifetime story — each stretch it ran as Witness, a
+    /// shared list, a shared number, or both. The last open chapter
+    /// (`endedAt == nil`) is the one being lived now. Empty for circles
+    /// persisted before chapters landed; the Store backfills an opening
+    /// chapter on load so every circle has a timeline.
+    var chapters: [CircleChapter] = []
+
+    /// The circle's shape, derived from its objective layers — Witness
+    /// (no layers), Parallel (a shared list), Collective (one number), or
+    /// Hybrid (both).
+    var type: CircleType { CircleType(objectives: objectives) }
+
+    /// Whether a shared checklist layer is currently active.
+    var hasSharedList: Bool { objectives.contains(.sharedList) }
+    /// Whether a shared number layer is currently active.
+    var hasSharedNumber: Bool { objectives.contains(.sharedNumber) }
+
+    /// The chapter being lived right now (last open one), if any.
+    var currentChapter: CircleChapter? { chapters.last { $0.endedAt == nil } }
+
+    /// Past chapters, newest first — the group's completed lookback.
+    var pastChapters: [CircleChapter] {
+        chapters.filter { $0.endedAt != nil }.sorted { ($0.endedAt ?? .distantPast) > ($1.endedAt ?? .distantPast) }
+    }
 
     // MARK: - Roles + governance (C11)
 
@@ -250,9 +364,13 @@ struct FFCircle: Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, type, timeframe, memberIds, tasks
+        case id, name, objectives, timeframe, memberIds, tasks
         case collectiveUnit, collectiveTarget, collectiveProgress, createdAt
-        case ownerId, adminIds, membersCanProposeTasks
+        case ownerId, adminIds, membersCanProposeTasks, chapters
+        // Legacy key: circles persisted before the layer model stored a
+        // bare `type`. Kept so old data migrates and a back-compat
+        // readout is still written.
+        case type
     }
 
     init(
@@ -268,11 +386,12 @@ struct FFCircle: Codable, Identifiable {
         createdAt: Date = Date(),
         ownerId: UUID? = nil,
         adminIds: [UUID] = [],
-        membersCanProposeTasks: Bool = false
+        membersCanProposeTasks: Bool = false,
+        chapters: [CircleChapter] = []
     ) {
         self.id = id
         self.name = name
-        self.type = type
+        self.objectives = type.objectives
         self.timeframe = timeframe
         self.memberIds = memberIds
         self.tasks = tasks
@@ -283,13 +402,13 @@ struct FFCircle: Codable, Identifiable {
         self.ownerId = ownerId
         self.adminIds = adminIds
         self.membersCanProposeTasks = membersCanProposeTasks
+        self.chapters = chapters
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
         self.name = try c.decode(String.self, forKey: .name)
-        self.type = try c.decode(CircleType.self, forKey: .type)
         self.timeframe = try c.decode(CircleTimeframe.self, forKey: .timeframe)
         self.memberIds = try c.decode([UUID].self, forKey: .memberIds)
         self.tasks = try c.decode([CircleTask].self, forKey: .tasks)
@@ -300,6 +419,42 @@ struct FFCircle: Codable, Identifiable {
         self.ownerId = try c.decodeIfPresent(UUID.self, forKey: .ownerId)
         self.adminIds = (try c.decodeIfPresent([UUID].self, forKey: .adminIds)) ?? []
         self.membersCanProposeTasks = (try c.decodeIfPresent(Bool.self, forKey: .membersCanProposeTasks)) ?? false
+        self.chapters = (try c.decodeIfPresent([CircleChapter].self, forKey: .chapters)) ?? []
+
+        // Migration: prefer explicit objective layers; fall back to the
+        // legacy `type`; finally infer from the payload so nothing
+        // decodes to an empty shape by accident.
+        if let objs = try c.decodeIfPresent([CircleObjectiveKind].self, forKey: .objectives) {
+            self.objectives = objs
+        } else if let legacy = try c.decodeIfPresent(CircleType.self, forKey: .type) {
+            self.objectives = legacy.objectives
+        } else if !self.tasks.isEmpty {
+            self.objectives = [.sharedList]
+        } else if self.collectiveTarget != nil || self.collectiveUnit != nil {
+            self.objectives = [.sharedNumber]
+        } else {
+            self.objectives = []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(objectives, forKey: .objectives)
+        // Back-compat readout so an older build still finds a `type`.
+        try c.encode(type, forKey: .type)
+        try c.encode(timeframe, forKey: .timeframe)
+        try c.encode(memberIds, forKey: .memberIds)
+        try c.encode(tasks, forKey: .tasks)
+        try c.encodeIfPresent(collectiveUnit, forKey: .collectiveUnit)
+        try c.encodeIfPresent(collectiveTarget, forKey: .collectiveTarget)
+        try c.encodeIfPresent(collectiveProgress, forKey: .collectiveProgress)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(ownerId, forKey: .ownerId)
+        try c.encode(adminIds, forKey: .adminIds)
+        try c.encode(membersCanProposeTasks, forKey: .membersCanProposeTasks)
+        try c.encode(chapters, forKey: .chapters)
     }
 }
 

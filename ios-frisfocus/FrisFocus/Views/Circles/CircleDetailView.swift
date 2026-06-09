@@ -32,10 +32,12 @@ struct CircleDetailView: View {
     let circle: FFCircle
 
     @State private var showCaptureSheet: Bool = false
-    @State private var showOverflowMenu: Bool = false
     @State private var showSettings: Bool = false
     @State private var linkPickerTarget: LinkPickerTarget?
     @State private var showGroupStory: Bool = false
+    /// The lifetime "Our story" chapter lookback (distinct from the
+    /// daily clips player above).
+    @State private var showOurStory: Bool = false
     @State private var storyCaptureTarget: CircleStoryCaptureTarget?
 
     /// Which time slice the parallel body renders. Drives both "The
@@ -77,46 +79,10 @@ struct CircleDetailView: View {
                         .padding(.horizontal, Theme.pageHorizontalPadding)
                         .padding(.top, hasStoryToday ? 12 : 18)
 
-                    // Parallel circles surface "The work" — the
-                    // shared task list with working checkboxes and
-                    // link-status sublines. Collective circles keep
-                    // the body empty until C4b lands their bar.
-                    if circle.type == .parallel {
-                        scopeToggle
-                            .padding(.horizontal, Theme.pageHorizontalPadding)
-                            .padding(.top, 22)
-                            .padding(.bottom, 4)
-
-                        CircleSharedTasksSection(
-                            circle: circle,
-                            scope: scope,
-                            onLinkTap: { task in
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                linkPickerTarget = LinkPickerTarget(circleTaskId: task.id)
-                            },
-                            onAddToStory: { task in
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                storyCaptureTarget = CircleStoryCaptureTarget(task: task)
-                            }
-                        )
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 14)
-                        .padding(.bottom, 8)
-
-                        CircleMemberProgressSection(circle: circle, scope: scope)
-                            .padding(.horizontal, Theme.pageHorizontalPadding)
-                            .padding(.top, 18)
-                            .padding(.bottom, 8)
-                    } else {
-                        Color.clear.frame(height: 32)
-                    }
-
-                    settingsFooter
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 6)
-
-                    // Tail so future content scrolls clear of the sundial.
-                    Color.clear.frame(height: 160)
+                    // The body renders by whatever layers are active:
+                    // a shared list, a shared number, both (hybrid), or
+                    // neither (witness presence). Always clearly separated.
+                    layeredBody
                 }
             }
             .background(Theme.warmWheat)
@@ -160,19 +126,85 @@ struct CircleDetailView: View {
             StoryPlayerView(mode: .circle(circle))
                 .environment(store)
         }
-        .confirmationDialog(
-            circle.name,
-            isPresented: $showOverflowMenu,
-            titleVisibility: .visible
-        ) {
-            Button("Circle settings") { showSettings = true }
-            Button("Mute updates") {
-                // Stub — mute behaviour lands in a later prompt.
+        .sheet(isPresented: $showOurStory) {
+            CircleStoryView(circleId: circle.id)
+                .environment(store)
+        }
+    }
+
+    // MARK: - Layered body
+
+    /// Renders the circle by its active objective layers — the shared
+    /// list, the shared number, both (hybrid, clearly separated), or a
+    /// pure presence roster for Witness circles.
+    @ViewBuilder
+    private var layeredBody: some View {
+        // Shared-list layer — "The work" + per-member progress.
+        if circle.hasSharedList {
+            scopeToggle
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+                .padding(.top, 22)
+                .padding(.bottom, 4)
+
+            CircleSharedTasksSection(
+                circle: circle,
+                scope: scope,
+                onLinkTap: { task in
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    linkPickerTarget = LinkPickerTarget(circleTaskId: task.id)
+                },
+                onAddToStory: { task in
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    storyCaptureTarget = CircleStoryCaptureTarget(task: task)
+                }
+            )
+            .padding(.horizontal, Theme.pageHorizontalPadding)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
+
+            CircleMemberProgressSection(circle: circle, scope: scope)
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 8)
+        }
+
+        // Shared-number layer — one number + contributions. In a hybrid a
+        // divider sits above it so the two goals read as separate things.
+        if circle.hasSharedNumber {
+            if circle.hasSharedList {
+                hybridDivider
+                    .padding(.horizontal, Theme.pageHorizontalPadding)
+                    .padding(.top, 26)
             }
-            Button("Leave circle", role: .destructive) {
-                // Stub — leave-circle confirmation lands in a later prompt.
-            }
-            Button("Cancel", role: .cancel) { }
+            CircleCollectiveSection(circle: circle)
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+                .padding(.top, circle.hasSharedList ? 16 : 24)
+                .padding(.bottom, 8)
+        }
+
+        // Witness circles are pure presence — who's showing up today,
+        // each at their own sharing. No goal, no progress bar, no ranking.
+        if circle.type == .witness {
+            CirclePresenceSection(circle: circle)
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+                .padding(.top, 20)
+                .padding(.bottom, 8)
+        }
+
+        // Tail so content scrolls clear of the sundial.
+        Color.clear.frame(height: 160)
+    }
+
+    /// A labelled hairline that separates the two goals in a hybrid so
+    /// the page never reads as a pile of features.
+    private var hybridDivider: some View {
+        HStack(spacing: 10) {
+            Rectangle().fill(Theme.textPrimary.opacity(0.1)).frame(height: 0.5)
+            Text("AND")
+                .font(.sans(9, weight: .semibold))
+                .tracking(2)
+                .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            Rectangle().fill(Theme.textPrimary.opacity(0.1)).frame(height: 0.5)
         }
     }
 
@@ -303,7 +335,16 @@ struct CircleDetailView: View {
     @ViewBuilder
     private var hero: some View {
         ZStack(alignment: .bottomLeading) {
-            CircleDetailHeroGradient(type: circle.type)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showSettings = true
+            } label: {
+                CircleDetailHeroGradient(type: circle.type)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Circle settings")
+            .accessibilityHint("Opens settings for this circle")
 
             starsLayer
                 .allowsHitTesting(false)
@@ -344,24 +385,38 @@ struct CircleDetailView: View {
 
             Spacer()
 
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showOverflowMenu = true
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.sans(17, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        Circle().fill(Theme.textCream.opacity(0.08))
-                    )
-                    .overlay(
-                        Circle().strokeBorder(Theme.textCream.opacity(0.18), lineWidth: 0.5)
-                    )
+            HStack(spacing: 8) {
+                if pendingCount > 0 {
+                    pendingHeaderBadge
+                }
+                ourStoryButton
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Circle options")
         }
+    }
+
+    /// A quiet entry into the group's lifetime story, parked in the
+    /// header beside the back button.
+    private var ourStoryButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showOurStory = true
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "book.closed")
+                    .font(.sans(10, weight: .semibold))
+                Text("Our story")
+                    .font(.sans(12, weight: .medium))
+            }
+            .foregroundStyle(Theme.textCream)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule(style: .continuous).fill(Theme.textCream.opacity(0.16)))
+            .overlay(Capsule(style: .continuous).strokeBorder(Theme.textCream.opacity(0.28), lineWidth: 0.5))
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Our story")
+        .accessibilityHint("A lookback on everything this circle has done together")
     }
 
     // MARK: - Identity block
@@ -373,10 +428,16 @@ struct CircleDetailView: View {
                 .tracking(2)
                 .foregroundStyle(Theme.textCream.opacity(0.72))
 
-            Text(circle.name)
-                .font(.serif(25, weight: .medium))
-                .foregroundStyle(Theme.textCream)
-                .lineLimit(2)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(circle.name)
+                    .font(.serif(25, weight: .medium))
+                    .foregroundStyle(Theme.textCream)
+                    .lineLimit(2)
+                Image(systemName: "gearshape.fill")
+                    .font(.sans(13, weight: .medium))
+                    .foregroundStyle(Theme.textCream.opacity(0.5))
+                    .accessibilityHidden(true)
+            }
 
             HStack(spacing: 10) {
                 CircleDetailMemberStack(memberIds: circle.memberIds, maxVisible: 4)
@@ -389,12 +450,7 @@ struct CircleDetailView: View {
     }
 
     private var eyebrowText: String {
-        let typeLabel: String = {
-            switch circle.type {
-            case .parallel: return "PARALLEL CIRCLE"
-            case .collective: return "COLLECTIVE CIRCLE"
-            }
-        }()
+        let typeLabel = circle.type.eyebrowLabel
         switch circle.timeframe {
         case .timeBoxed(let endDate):
             let days = CircleDetailHelpers.daysLeft(until: endDate)
@@ -444,51 +500,33 @@ struct CircleDetailView: View {
             .position(point)
     }
 
-    // MARK: - Settings footer
+    // MARK: - Pending review signal
 
-    private var settingsFooter: some View {
-        let pendingCount = store.canManageTasks(in: circle)
+    /// Count of pending join/task requests the current user can act on.
+    /// Zero for members without management rights, so the header badge
+    /// only lights up for owners/admins who can clear the queue.
+    private var pendingCount: Int {
+        store.canManageTasks(in: circle)
             ? store.pendingRequestCount(forCircleId: circle.id)
             : 0
-        return Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showSettings = true
-        } label: {
-            HStack(spacing: 10) {
-                Text("Circle settings")
-                    .font(.sans(14, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                if pendingCount > 0 {
-                    Text("\(pendingCount) PENDING")
-                        .font(.sans(10, weight: .semibold))
-                        .tracking(1.4)
-                        .foregroundStyle(Theme.textCream)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Theme.alertGreen)
-                        )
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.sans(12, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
-            }
-            .padding(.vertical, 14)
-            .padding(.horizontal, 14)
+    }
+
+    /// The "N PENDING" pill shown in the header's top-right when there's
+    /// a review queue. Non-interactive — taps fall through to the hero
+    /// button so the whole header still opens settings.
+    private var pendingHeaderBadge: some View {
+        Text("\(pendingCount) PENDING")
+            .font(.sans(10, weight: .semibold))
+            .tracking(1.4)
+            .foregroundStyle(Theme.textCream)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(0.55))
+                Capsule(style: .continuous)
+                    .fill(Theme.alertGreen)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Circle settings")
+            .allowsHitTesting(false)
+            .accessibilityLabel("\(pendingCount) pending requests")
     }
 }
 
@@ -531,20 +569,7 @@ struct CircleDetailHeroGradient: View {
     }
 
     static func colors(for type: CircleType) -> [Color] {
-        switch type {
-        case .parallel:
-            return [
-                Color(hex: 0x1A1830),
-                Color(hex: 0x3A2F48),
-                Color(hex: 0x6B4D52)
-            ]
-        case .collective:
-            return [
-                Color(hex: 0x13251A),
-                Color(hex: 0x1F4030),
-                Color(hex: 0x3B6D4A)
-            ]
-        }
+        type.heroColors
     }
 }
 

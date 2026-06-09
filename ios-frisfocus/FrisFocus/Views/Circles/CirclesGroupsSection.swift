@@ -114,6 +114,11 @@ struct CirclesGroupsSection: View {
                 ForEach(store.circles) { circle in
                     Group {
                         switch circle.type {
+                        case .witness:
+                            WitnessCircleCard(
+                                circle: circle,
+                                onTap: { onCircleTap(circle) }
+                            )
                         case .parallel:
                             ParallelCircleCard(
                                 circle: circle,
@@ -122,6 +127,11 @@ struct CirclesGroupsSection: View {
                             )
                         case .collective:
                             CollectiveCircleCard(
+                                circle: circle,
+                                onTap: { onCircleTap(circle) }
+                            )
+                        case .hybrid:
+                            HybridCircleCard(
                                 circle: circle,
                                 onTap: { onCircleTap(circle) }
                             )
@@ -596,6 +606,180 @@ private struct CollectiveCircleCard: View {
         return circle.memberIds.sorted { lhs, rhs in
             (totals[lhs] ?? 0) > (totals[rhs] ?? 0)
         }
+    }
+}
+
+// MARK: - Witness circle card
+
+/// A presence-only circle: no goal, no progress bar. Just the people in
+/// the room and a calm line. Warm amber/gold cue so it reads as a
+/// Witness circle at a glance.
+private struct WitnessCircleCard: View {
+    @Environment(Store.self) private var store
+    let circle: FFCircle
+    let onTap: () -> Void
+
+    private let tint = CircleType.witness.tint
+    private let tintDark = CircleType.witness.tintDark
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(CirclesSectionHelpers.eyebrowText(typeLabel: "WITNESS", timeframe: circle.timeframe))
+                            .font(.sans(10, weight: .medium))
+                            .tracking(2)
+                            .foregroundStyle(tintDark.opacity(0.9))
+                        Text(circle.name)
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                    Spacer()
+                    MemberAvatarStack(memberIds: circle.memberIds, maxVisible: 4)
+                }
+                HStack(spacing: 8) {
+                    Image(systemName: "moon.stars.fill")
+                        .font(.sans(11, weight: .semibold))
+                        .foregroundStyle(tint)
+                    Text("Just present · everyone on their own goals")
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(tint.opacity(0.22), lineWidth: 0.6)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Witness circle: \(circle.name)")
+    }
+}
+
+// MARK: - Hybrid circle card
+
+/// A two-goal circle: a shared list AND a shared number, shown as two
+/// compact rows so it reads clearly as carrying both. Teal cue marks it
+/// as a hybrid; the list stays violet and the number stays green within.
+private struct HybridCircleCard: View {
+    @Environment(Store.self) private var store
+    let circle: FFCircle
+    let onTap: () -> Void
+
+    private let tintDark = CircleType.hybrid.tintDark
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(CirclesSectionHelpers.eyebrowText(typeLabel: "HYBRID", timeframe: circle.timeframe))
+                            .font(.sans(10, weight: .medium))
+                            .tracking(2)
+                            .foregroundStyle(tintDark.opacity(0.9))
+                        Text(circle.name)
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                    Spacer()
+                    MemberAvatarStack(memberIds: circle.memberIds, maxVisible: 4)
+                }
+                listRow
+                numberRow
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(CircleType.hybrid.tint.opacity(0.25), lineWidth: 0.6)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hybrid circle: \(circle.name)")
+    }
+
+    private var listRow: some View {
+        let total = max(circle.tasks.count, 1)
+        let segments = circle.tasks.count
+        let done = userCompletionsToday
+        return HStack(spacing: 10) {
+            Image(systemName: "checklist")
+                .font(.sans(11, weight: .semibold))
+                .foregroundStyle(CircleType.parallel.tintDark)
+            HStack(spacing: 4) {
+                ForEach(0..<max(segments, 1), id: \.self) { idx in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(idx < done ? CircleType.parallel.tint : Theme.textPrimary.opacity(0.1))
+                        .frame(height: 7)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            Text("\(done)/\(total)")
+                .font(.sans(12, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textPrimary.opacity(0.7))
+        }
+    }
+
+    private var numberRow: some View {
+        let progress = circle.collectiveProgress ?? 0
+        let target = circle.collectiveTarget ?? 1
+        let fraction = max(0, min(1, progress / max(target, 0.0001)))
+        return VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Theme.textPrimary.opacity(0.1))
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(CircleType.collective.tint)
+                        .frame(width: proxy.size.width * fraction)
+                }
+            }
+            .frame(height: 8)
+            HStack(spacing: 6) {
+                Image(systemName: "number")
+                    .font(.sans(10, weight: .semibold))
+                    .foregroundStyle(CircleType.collective.tintDark)
+                Text(numberLabel)
+                    .font(.sans(11, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var numberLabel: String {
+        let p = circle.collectiveProgress ?? 0
+        let t = circle.collectiveTarget ?? 0
+        let unit = (circle.collectiveUnit ?? "").replacingOccurrences(of: "miles", with: "mi")
+        return "\(circleNumber(p)) of \(circleNumber(t)) \(unit)".trimmingCharacters(in: .whitespaces)
+    }
+
+    private var userCompletionsToday: Int {
+        let cal = Calendar.current
+        let today = Date()
+        return store.circleTaskCompletions.filter { c in
+            c.circleId == circle.id
+                && c.memberId == store.currentUserId
+                && cal.isDate(c.date, inSameDayAs: today)
+        }.count
     }
 }
 

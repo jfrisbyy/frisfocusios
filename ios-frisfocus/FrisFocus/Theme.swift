@@ -52,6 +52,16 @@ enum Theme {
     static let alertAmber = Color(hex: 0x854F0B)
     static let alertGreen = Color(hex: 0x3B6D11)
 
+    // MARK: - Cadence (Esengo link)
+    //
+    // A calm lavender marks everything that comes from Cadence — the
+    // plan row stripe + play control, the link flow, and the Season
+    // "Earned from Cadence" section — so a linked item is unmistakable
+    // inside the cream-and-serif aesthetic without shouting.
+    static let cadenceLavender = Color(hex: 0x7C6FE3)
+    static let cadenceLavenderDark = Color(hex: 0x4A3F9E)
+    static let cadenceLavenderWash = Color(hex: 0xEDE9FB)
+
     // MARK: - Folder tints (note zone)
     static let folderSongsBg = Color(red: 127.0/255, green: 119.0/255, blue: 221.0/255).opacity(0.15)
     static let folderSongsText = Color(hex: 0x4A3F9E)
@@ -203,6 +213,83 @@ extension Category {
         case .health:    return Color(hex: 0x3B6D11)
         case .work:      return Color(hex: 0x0C447C)
         case .apartment: return Theme.textSecondary
+        }
+    }
+}
+
+// MARK: - Circle shape palette
+//
+// A circle's shape is a readout of its objective layers; this is the
+// single source of truth for how each shape is labeled and colored
+// across cards, detail heroes, and the create chooser. Violet for
+// Parallel (a shared list), green for Collective (one number), warm
+// amber/gold for Witness (presence only — matching the witness-model
+// warmth).
+extension CircleType {
+    /// Uppercase eyebrow shown on cards and detail heroes.
+    var eyebrowLabel: String {
+        switch self {
+        case .witness: return "WITNESS CIRCLE"
+        case .parallel: return "PARALLEL CIRCLE"
+        case .collective: return "COLLECTIVE CIRCLE"
+        case .hybrid: return "HYBRID CIRCLE"
+        }
+    }
+
+    /// Short eyebrow tag (no "CIRCLE" suffix) for compact card rows.
+    var shortEyebrow: String {
+        switch self {
+        case .witness: return "WITNESS"
+        case .parallel: return "PARALLEL"
+        case .collective: return "COLLECTIVE"
+        case .hybrid: return "HYBRID"
+        }
+    }
+
+    /// One-line description of how the shape works, used in the chooser.
+    var blurb: String {
+        switch self {
+        case .witness: return "Just be in the room together — everyone keeps their own goals."
+        case .parallel: return "A shared checklist — each person works their own copy each day."
+        case .collective: return "One shared target you build toward together — miles, plunges, pages."
+        case .hybrid: return "Two goals at once — a shared list and a shared number, side by side."
+        }
+    }
+
+    /// Accent tint — the dominant per-shape color. Hybrid reads as a
+    /// distinct teal so a two-goal circle is unmistakable beside the
+    /// violet list and green number circles.
+    var tint: Color {
+        switch self {
+        case .witness: return Color(hex: 0xC2922F)
+        case .parallel: return Color(hex: 0x7F77DD)
+        case .collective: return Color(hex: 0x639922)
+        case .hybrid: return Color(hex: 0x3F8E8E)
+        }
+    }
+
+    /// Darker variant legible on a ~15% wash of `tint`.
+    var tintDark: Color {
+        switch self {
+        case .witness: return Color(hex: 0x6E4E12)
+        case .parallel: return Color(hex: 0x4A3F9E)
+        case .collective: return Color(hex: 0x3B6D11)
+        case .hybrid: return Color(hex: 0x245A5A)
+        }
+    }
+
+    /// Night-sky hero gradient stops, tinted per shape so the color cue
+    /// alone tells the user which kind of circle they're inside.
+    var heroColors: [Color] {
+        switch self {
+        case .witness:
+            return [Color(hex: 0x241B0C), Color(hex: 0x3E2F12), Color(hex: 0x6B5220)]
+        case .parallel:
+            return [Color(hex: 0x1A1830), Color(hex: 0x3A2F48), Color(hex: 0x6B4D52)]
+        case .collective:
+            return [Color(hex: 0x13251A), Color(hex: 0x1F4030), Color(hex: 0x3B6D4A)]
+        case .hybrid:
+            return [Color(hex: 0x0F2228), Color(hex: 0x1C3D43), Color(hex: 0x356E6E)]
         }
     }
 }

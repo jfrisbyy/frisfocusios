@@ -72,8 +72,13 @@ struct RemoteAvatarView: View {
 // MARK: - Inbox
 
 struct ProofsInboxView: View {
+    /// When set (from a tapped push), the inbox opens this person's 1:1
+    /// thread automatically once its data has loaded.
+    var initialPeerId: String? = nil
+
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
+    @Environment(ModerationService.self) private var moderation
     @Environment(\.dismiss) private var dismiss
 
     /// The real messaging backend. Owned here and shared into the thread
@@ -91,12 +96,14 @@ struct ProofsInboxView: View {
     @State private var pendingThreadFriend: RemoteProfile?
     /// The friend a press-and-hold targeted — drives the camera cover.
     @State private var proofFriend: RemoteProfile?
+    /// Ensures a push-delivered `initialPeerId` only auto-opens once.
+    @State private var didTryInitialPeer: Bool = false
 
     private var myId: String? { auth.user?.id }
 
     private var conversations: [DirectConversationSummary] {
         guard let myId else { return [] }
-        return message.conversations(myUserId: myId)
+        return message.conversations(myUserId: myId).filter { !moderation.isBlocked($0.friend.id) }
     }
 
     var body: some View {
@@ -151,6 +158,8 @@ struct ProofsInboxView: View {
         .fullScreenCover(item: $openFriend) { friend in
             ProofThreadView(friend: friend, message: message, myUserId: myId ?? "")
                 .environment(store)
+                .environment(auth)
+                .environment(moderation)
         }
         .fullScreenCover(item: $proofFriend) { friend in
             CaptureView(
@@ -180,7 +189,7 @@ struct ProofsInboxView: View {
             }
         }) {
             NewProofFriendPicker(
-                friends: friendGraph.friends,
+                friends: friendGraph.friends.filter { !moderation.isBlocked($0.id) },
                 isLoading: friendGraph.isLoading
             ) { friend in
                 pendingThreadFriend = friend
@@ -203,6 +212,24 @@ struct ProofsInboxView: View {
         await message.load(myUserId: myId)
         message.startRealtime(myUserId: myId)
         await friendGraph.load(myUserId: myId)
+        await openInitialPeerIfNeeded(myId: myId)
+    }
+
+    /// Auto-open the 1:1 thread for a push-delivered peer id, resolving the
+    /// profile from the messages we just loaded, then the friend graph,
+    /// then a direct fetch. Runs at most once.
+    private func openInitialPeerIfNeeded(myId: String) async {
+        guard !didTryInitialPeer,
+              let peerId = initialPeerId,
+              !peerId.isEmpty,
+              peerId != myId else { return }
+        didTryInitialPeer = true
+        guard !moderation.isBlocked(peerId) else { return }
+        if let profile = message.profile(for: peerId) ?? friendGraph.friends.first(where: { $0.id == peerId }) {
+            openFriend = profile
+        } else if let fetched = await friendGraph.fetchProfile(id: peerId) {
+            openFriend = fetched
+        }
     }
 
     private func open(_ friend: RemoteProfile) {

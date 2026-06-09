@@ -18,6 +18,137 @@ export type Database = {
   }
   public: {
     Tables: {
+      blocks: {
+        Row: {
+          blocked_id: string
+          blocker_id: string
+          created_at: string
+          id: string
+        }
+        Insert: {
+          blocked_id: string
+          blocker_id: string
+          created_at?: string
+          id?: string
+        }
+        Update: {
+          blocked_id?: string
+          blocker_id?: string
+          created_at?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "blocks_blocked_id_fkey"
+            columns: ["blocked_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "blocks_blocker_id_fkey"
+            columns: ["blocker_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cadence_outcome_events: {
+        Row: {
+          account_id: string
+          consumed_by_frisfocus: boolean
+          created_at: string
+          event_type: string
+          id: string
+          metrics: Json
+          occurred_at: string
+          routine_id: string | null
+          source_app: string
+          verified: boolean
+        }
+        Insert: {
+          account_id: string
+          consumed_by_frisfocus?: boolean
+          created_at?: string
+          event_type: string
+          id?: string
+          metrics?: Json
+          occurred_at?: string
+          routine_id?: string | null
+          source_app?: string
+          verified?: boolean
+        }
+        Update: {
+          account_id?: string
+          consumed_by_frisfocus?: boolean
+          created_at?: string
+          event_type?: string
+          id?: string
+          metrics?: Json
+          occurred_at?: string
+          routine_id?: string | null
+          source_app?: string
+          verified?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cadence_outcome_events_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cadence_outcome_events_routine_id_fkey"
+            columns: ["routine_id"]
+            isOneToOne: false
+            referencedRelation: "cadence_routines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cadence_routines: {
+        Row: {
+          account_id: string
+          created_at: string
+          est_minutes: number
+          id: string
+          kind: string | null
+          name: string
+          step_count: number
+          updated_at: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          est_minutes?: number
+          id?: string
+          kind?: string | null
+          name: string
+          step_count?: number
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          est_minutes?: number
+          id?: string
+          kind?: string | null
+          name?: string
+          step_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cadence_routines_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_contributions: {
         Row: {
           amount: number
@@ -54,6 +185,58 @@ export type Database = {
           {
             foreignKeyName: "circle_contributions_user_id_fkey"
             columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_invitations: {
+        Row: {
+          circle_id: string
+          created_at: string
+          id: string
+          invitee_id: string
+          inviter_id: string
+          responded_at: string | null
+          status: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          id?: string
+          invitee_id: string
+          inviter_id: string
+          responded_at?: string | null
+          status?: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          id?: string
+          invitee_id?: string
+          inviter_id?: string
+          responded_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_invitations_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_invitations_invitee_id_fkey"
+            columns: ["invitee_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_invitations_inviter_id_fkey"
+            columns: ["inviter_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -227,6 +410,38 @@ export type Database = {
           },
         ]
       }
+      device_tokens: {
+        Row: {
+          created_at: string
+          platform: string
+          token: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          platform?: string
+          token: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          platform?: string
+          token?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_tokens_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       direct_messages: {
         Row: {
           body: string | null
@@ -278,6 +493,47 @@ export type Database = {
           {
             foreignKeyName: "direct_messages_sender_id_fkey"
             columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      esengo_entitlements: {
+        Row: {
+          account_id: string
+          created_at: string
+          id: string
+          product: string
+          renews_at: string | null
+          source: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          account_id: string
+          created_at?: string
+          id?: string
+          product: string
+          renews_at?: string | null
+          source?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string
+          created_at?: string
+          id?: string
+          product?: string
+          renews_at?: string | null
+          source?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "esengo_entitlements_account_id_fkey"
+            columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -370,6 +626,7 @@ export type Database = {
           id: string
           name: string | null
           updated_at: string | null
+          username: string | null
         }
         Insert: {
           avatar_url?: string | null
@@ -378,6 +635,7 @@ export type Database = {
           id: string
           name?: string | null
           updated_at?: string | null
+          username?: string | null
         }
         Update: {
           avatar_url?: string | null
@@ -386,14 +644,69 @@ export type Database = {
           id?: string
           name?: string | null
           updated_at?: string | null
+          username?: string | null
         }
         Relationships: []
+      }
+      reports: {
+        Row: {
+          created_at: string
+          details: string | null
+          id: string
+          message_id: string | null
+          reason: string
+          reported_user_id: string | null
+          reporter_id: string
+        }
+        Insert: {
+          created_at?: string
+          details?: string | null
+          id?: string
+          message_id?: string | null
+          reason: string
+          reported_user_id?: string | null
+          reporter_id: string
+        }
+        Update: {
+          created_at?: string
+          details?: string | null
+          id?: string
+          message_id?: string | null
+          reason?: string
+          reported_user_id?: string | null
+          reporter_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reports_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "direct_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reports_reported_user_id_fkey"
+            columns: ["reported_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reports_reporter_id_fkey"
+            columns: ["reporter_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      esengo_has_product: { Args: { p_product: string }; Returns: boolean }
+      is_blocked: { Args: { other_id: string }; Returns: boolean }
       is_circle_member: { Args: { p_circle_id: string }; Returns: boolean }
       my_circle_role: { Args: { p_circle_id: string }; Returns: string }
       owns_circle: { Args: { p_circle_id: string }; Returns: boolean }

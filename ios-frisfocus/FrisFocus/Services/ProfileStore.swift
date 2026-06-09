@@ -1,0 +1,225 @@
+//
+//  ProfileStore.swift
+//  FrisFocus
+//
+//  The signed-in user's own editable profile, backed by the `profiles`
+//  table. Auth (the Rork JWT) gives us a stable id, email, and the
+//  provider's name/photo; this layer lets the user override their
+//  display name, claim a unique @username, and upload a custom photo —
+//  and surfaces that identity app-wide (the home avatar, the account
+//  hub) so the user sees themselves the way friends do.
+//
+//  Injected once at the app root and loaded whenever the signed-in id
+//  changes. Friend-facing surfaces (Friends, circles, proofs) already
+//  read `profiles` via `RemoteProfile`, so an edit here propagates to
+//  everyone automatically.
+//
+
+import Foundation
+import Supabase
+import UIKit
+
+// MARK: - Wire payloads
+
+/// Minimal row used for the username availability check.
+private nonisolated struct ProfileIdRow: Decodable, Sendable {
+    let id: String
+}
+
+/// Partial upsert of the user's own profile. Optional fields use
+/// `encodeIfPresent` (synthesized), so a `nil` is omitted from the
+/// payload and leaves that column untouched — never accidentally
+/// nulled. `id` anchors the upsert to the PK.
+private nonisolated struct ProfileEditUpsert: Encodable, Sendable {
+    let id: String
+    let email: String?
+    let name: String?
+    let username: String?
+    let avatarUrl: String?
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, email, name, username
+        case avatarUrl = "avatar_url"
+        case updatedAt = "updated_at"
+    }
+}
+
+// MARK: - Store
+
+@Observable
+@MainActor
+final class ProfileStore {
+    /// The signed-in user's own profile row, once loaded. The UI falls
+    /// back to the auth-provided identity while this is nil.
+    var myProfile: RemoteProfile?
+
+    var isLoading = false
+    var isSaving = false
+    var errorMessage: String?
+    var showError = false
+
+    @ObservationIgnored private var loadedForUserId: String?
+
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    // MARK: Load
+
+    /// Fetch the user's own profile row. Cheap to call repeatedly — it
+    /// no-ops if already loaded for this id unless `force` is set.
+    func load(myUserId: String, force: Bool = false) async {
+        if !force, loadedForUserId == myUserId, myProfile != nil { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let rows: [RemoteProfile] = try await supabase
+                .from("profiles")
+                .select("id, email, name, username, avatar_url")
+                .eq("id", value: myUserId)
+                .limit(1)
+                .execute()
+                .value
+            myProfile = rows.first
+            loadedForUserId = myUserId
+        } catch {
+            fail("Couldn't load your profile.", error)
+        }
+    }
+
+    /// Drop cached state on sign-out so the next user starts clean.
+    func clear() {
+        myProfile = nil
+        loadedForUserId = nil
+    }
+
+    // MARK: Username
+
+    /// A tidy handle: lowercased, trimmed, 3–20 of [a–z 0–9 _].
+    nonisolated static func sanitizeUsername(_ raw: String) -> String {
+        let lowered = raw.lowercased()
+        let allowed = lowered.unicodeScalars.filter {
+            CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_").contains($0)
+        }
+        return String(String.UnicodeScalarView(allowed.prefix(20)))
+    }
+
+    nonisolated static func isValidUsername(_ candidate: String) -> Bool {
+        let c = candidate.count
+        guard c >= 3, c <= 20 else { return false }
+        return candidate.allSatisfy { $0.isLowercase || $0.isNumber || $0 == "_" }
+    }
+
+    /// Case-insensitive availability. Free when no *other* profile holds
+    /// the handle (the user's own current handle counts as available).
+    func isUsernameAvailable(_ raw: String, myUserId: String) async -> Bool {
+        let candidate = Self.sanitizeUsername(raw)
+        guard Self.isValidUsername(candidate) else { return false }
+        do {
+            let rows: [ProfileIdRow] = try await supabase
+                .from("profiles")
+                .select("id")
+                .ilike("username", pattern: candidate)
+                .execute()
+                .value
+            return rows.allSatisfy { $0.id == myUserId }
+        } catch {
+            print("[ProfileStore] username check failed: \(error)")
+            return false
+        }
+    }
+
+    // MARK: Save
+
+    /// Upsert the user's edited profile. Returns true on success. A
+    /// duplicate @username surfaces a friendly, specific message.
+    @discardableResult
+    func save(
+        name: String,
+        username: String?,
+        email: String?,
+        avatarUrl: String?,
+        myUserId: String
+    ) async -> Bool {
+        isSaving = true
+        defer { isSaving = false }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanUsername = username.map(Self.sanitizeUsername)
+
+        do {
+            let updated: RemoteProfile = try await supabase
+                .from("profiles")
+                .upsert(ProfileEditUpsert(
+                    id: myUserId,
+                    email: email,
+                    name: trimmedName.isEmpty ? nil : trimmedName,
+                    username: (cleanUsername?.isEmpty == false) ? cleanUsername : nil,
+                    avatarUrl: avatarUrl,
+                    updatedAt: Self.iso.string(from: Date())
+                ))
+                .select("id, email, name, username, avatar_url")
+                .single()
+                .execute()
+                .value
+            myProfile = updated
+            loadedForUserId = myUserId
+            return true
+        } catch {
+            let text = "\(error)"
+            if text.contains("23505") || text.lowercased().contains("duplicate") || text.contains("profiles_username") {
+                fail("That @username is already taken. Try another.", error)
+            } else {
+                fail("Couldn't save your profile.", error)
+            }
+            return false
+        }
+    }
+
+    // MARK: Avatar
+
+    /// Upload a chosen image to the public avatars bucket under the
+    /// user's own folder and return its public URL, or nil on failure.
+    func uploadAvatar(_ image: UIImage, myUserId: String) async -> String? {
+        guard let data = downscaledJPEG(image) else {
+            fail("Couldn't process that photo.", NSError(domain: "ProfileStore", code: -1))
+            return nil
+        }
+        let path = "\(myUserId)/avatar_\(UUID().uuidString).jpg"
+        do {
+            _ = try await supabase.storage
+                .from("avatars")
+                .upload(path, data: data, options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: true))
+            let url = try supabase.storage.from("avatars").getPublicURL(path: path)
+            return url.absoluteString
+        } catch {
+            fail("Couldn't upload your photo.", error)
+            return nil
+        }
+    }
+
+    /// Square-ish JPEG sized for an avatar — keeps uploads small.
+    private func downscaledJPEG(_ image: UIImage, maxDimension: CGFloat = 512) -> Data? {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let scale = min(1, maxDimension / max(size.width, size.height))
+        let target = CGSize(width: size.width * scale, height: size.height * scale)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let rendered = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+        return rendered.jpegData(compressionQuality: 0.82)
+    }
+
+    // MARK: Helpers
+
+    private func fail(_ message: String, _ error: Error) {
+        print("[ProfileStore] \(message) \(error)")
+        errorMessage = message
+        showError = true
+    }
+}

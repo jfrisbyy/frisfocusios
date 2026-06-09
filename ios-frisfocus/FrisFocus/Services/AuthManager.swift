@@ -385,6 +385,23 @@ class AuthManager {
         user = nil
     }
 
+    /// Permanently erase all of the user's data via the `delete-account`
+    /// edge function, then sign out locally. Returns true on success.
+    @MainActor
+    func deleteAccount() async -> Bool {
+        do {
+            let _: DeleteAccountResponse = try await supabase.functions.invoke(
+                "delete-account",
+                options: .init(method: .post)
+            )
+            await signOut()
+            return true
+        } catch {
+            setError("Couldn't delete your account. Please try again.")
+            return false
+        }
+    }
+
     private func setError(_ message: String) {
         errorMessage = message
         showError = true
@@ -433,6 +450,10 @@ nonisolated struct ProfileUpsert: Encodable, Sendable {
 }
 
 // MARK: - Response Types
+
+nonisolated struct DeleteAccountResponse: Codable, Sendable {
+    let ok: Bool?
+}
 
 private struct InitiateResponse: Codable {
     let auth_url: String
