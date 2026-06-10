@@ -24,11 +24,13 @@ struct SeasonExpandedView: View {
 
     @State private var selectedCategory: Category? = nil
     @State private var showOpenOnly: Bool = false
-    @State private var showMustDoOnly: Bool = false
+    @State private var showHighValueOnly: Bool = false
     @State private var showNewTaskForm: Bool = false
     @State private var showCaptureSheet: Bool = false
     @State private var showAvoidanceManager: Bool = false
     @State private var showHabitTrains: Bool = false
+    @State private var showMilestones: Bool = false
+    @State private var showSettings: Bool = false
     @State private var topSafeInset: CGFloat = 0
 
     var body: some View {
@@ -113,6 +115,14 @@ struct SeasonExpandedView: View {
         }
         .sheet(isPresented: $showHabitTrains) {
             HabitTrainsManagerView()
+                .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showMilestones) {
+            MilestonesView()
+                .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showSettings) {
+            ScoringSettingsView()
                 .presentationDetents([.large])
         }
     }
@@ -317,7 +327,7 @@ struct SeasonExpandedView: View {
 
                 ForEach(seasonCategoriesInTierOrder, id: \.self) { cat in
                     pillView(
-                        label: cat.displayName,
+                        label: store.categoryDisplayName(cat),
                         accentColor: cat,
                         isSelected: selectedCategory == cat,
                         pointsToday: pointsToday(for: cat)
@@ -345,7 +355,7 @@ struct SeasonExpandedView: View {
             HStack(spacing: 5) {
                 if let cat = accentColor, !isSelected {
                     Circle()
-                        .fill(cat.color)
+                        .fill(Color(hex: store.categoryColorHex(cat)))
                         .frame(width: 5, height: 5)
                 }
                 Text(label)
@@ -394,14 +404,22 @@ struct SeasonExpandedView: View {
             }
 
             modeFilterPill(
-                label: "Must-Do",
-                iconName: "exclamationmark.triangle",
-                isSelected: showMustDoOnly
+                label: "High-value",
+                iconName: "flame",
+                isSelected: showHighValueOnly
             ) {
-                showMustDoOnly.toggle()
+                showHighValueOnly.toggle()
             }
 
             Spacer()
+
+            modeFilterPill(
+                label: "Scoring",
+                iconName: "slider.horizontal.3",
+                isSelected: false
+            ) {
+                showSettings = true
+            }
         }
         .padding(.horizontal, 22)
         .padding(.top, 8)
@@ -554,7 +572,8 @@ struct SeasonExpandedView: View {
 
     private var milestonesLink: some View {
         Button(action: {
-            // TODO: navigate to a season milestones page.
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showMilestones = true
         }) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -585,14 +604,11 @@ struct SeasonExpandedView: View {
             return "Add milestones to map the season"
         }
 
-        let cleared = milestones.filter { $0.status == .cleared }.count
-        let inMotion = milestones.filter { $0.status == .inMotion }.count
-        let upcoming = milestones.filter { $0.status == .upcoming }.count
+        let done = milestones.filter { $0.isCompleted }.count
+        let earned = milestones.filter { $0.isCompleted }.map(\.pointValue).reduce(0, +)
 
-        var parts: [String] = []
-        if cleared > 0 { parts.append("\(cleared) cleared") }
-        if inMotion > 0 { parts.append("\(inMotion) in motion") }
-        if upcoming > 0 { parts.append("\(upcoming) upcoming") }
+        var parts: [String] = ["\(done)/\(milestones.count) done"]
+        if earned > 0 { parts.append("+\(earned) pts") }
         return parts.joined(separator: " · ")
     }
 
@@ -628,7 +644,7 @@ struct SeasonExpandedView: View {
         store.tasks.filter { task in
             guard task.category == category, task.isPinnedToday else { return false }
             if showOpenOnly, store.hasLogEntryToday(forTaskId: task.id) { return false }
-            if showMustDoOnly, task.tier != .must { return false }
+            if showHighValueOnly, task.nominalValue < store.reminderValueThreshold { return false }
             return true
         }
     }

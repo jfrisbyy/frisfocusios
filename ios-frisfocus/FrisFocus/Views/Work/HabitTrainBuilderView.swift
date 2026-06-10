@@ -304,12 +304,12 @@ private struct TaskPickerView: View {
                                 dismiss()
                             } label: {
                                 HStack(spacing: 10) {
-                                    Circle().fill(task.category.color).frame(width: 6, height: 6)
+                                    Circle().fill(Color(hex: store.categoryColorHex(task.category))).frame(width: 6, height: 6)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(task.title)
                                             .font(.sans(14, weight: .medium))
                                             .foregroundStyle(Theme.textPrimary)
-                                        Text("\(task.pointValue) pts · \(task.tier.label.capitalized)")
+                                        Text("\(task.nominalValue) pts")
                                             .font(.sans(11, weight: .regular))
                                             .foregroundStyle(Theme.textPrimary.opacity(0.55))
                                     }

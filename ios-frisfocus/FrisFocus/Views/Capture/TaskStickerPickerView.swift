@@ -139,9 +139,9 @@ struct TaskStickerPickerView: View {
                         row(
                             title: task.title,
                             isTask: true,
-                            isMust: task.tier == .must,
+                            isMust: false,
                             isChecked: store.hasLogEntryToday(forTaskId: task.id),
-                            subtitle: task.category.displayName
+                            subtitle: store.categoryDisplayName(task.category)
                         ) {
                             pick(
                                 TaskStickerBlock(

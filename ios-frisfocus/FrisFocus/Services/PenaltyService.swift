@@ -116,14 +116,15 @@ extension Store {
     /// Add a new avoidance item. Trims whitespace off the name so
     /// accidental padding doesn't break sort order.
     @discardableResult
-    func addAvoidanceItem(name: String, pointsPerOccurrence: Int, note: String? = nil) -> AvoidanceItem {
+    func addAvoidanceItem(name: String, pointsPerOccurrence: Int, note: String? = nil, category: Category? = nil) -> AvoidanceItem {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
         let item = AvoidanceItem(
             name: trimmed,
             pointsPerOccurrence: max(1, pointsPerOccurrence),
             seasonId: currentSeason.id,
-            note: (cleanNote?.isEmpty ?? true) ? nil : cleanNote
+            note: (cleanNote?.isEmpty ?? true) ? nil : cleanNote,
+            category: category
         )
         avoidanceItems.append(item)
         persistAll()

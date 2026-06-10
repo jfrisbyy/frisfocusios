@@ -99,6 +99,14 @@ final class Store {
     /// friend-facing layer unless the user opts in here.
     var cadenceSurfacePointsSocially: Bool = false
 
+    // MARK: - Reminders (value-based)
+
+    /// Value-based reminders surface only unfinished tasks worth at
+    /// least this many points. The single user-facing reminder control,
+    /// replacing the retired MUST/SHOULD/COULD priority tiers. Gentle by
+    /// design — low-value habits never nag.
+    var reminderValueThreshold: Int = 8
+
     // MARK: - Pacts
 
     /// Two-person, time-boxed shared commitments. A pact is the
@@ -218,6 +226,7 @@ final class Store {
         static let cadenceConnected = "cadenceConnected"
         static let cadenceInviteDismissed = "cadenceInviteDismissed"
         static let cadenceSurfacePointsSocially = "cadenceSurfacePointsSocially"
+        static let reminderValueThreshold = "reminderValueThreshold"
 
         // Legacy keys cleared by the DEBUG migration below.
         static let legacyOneShots = "oneShots"
@@ -226,7 +235,7 @@ final class Store {
     /// Bumped whenever the on-disk shape changes incompatibly. The
     /// migration block in `init` clears persisted data when an older
     /// `modelVersion` is found.
-    private static let currentModelVersion = 12
+    private static let currentModelVersion = 13
 
     private let userDefaults = UserDefaults.standard
 
@@ -328,6 +337,9 @@ final class Store {
             self.cadenceConnected = userDefaults.bool(forKey: Keys.cadenceConnected)
             self.cadenceInviteDismissed = userDefaults.bool(forKey: Keys.cadenceInviteDismissed)
             self.cadenceSurfacePointsSocially = userDefaults.bool(forKey: Keys.cadenceSurfacePointsSocially)
+            if userDefaults.object(forKey: Keys.reminderValueThreshold) != nil {
+                self.reminderValueThreshold = userDefaults.integer(forKey: Keys.reminderValueThreshold)
+            }
             // Back-fill ownerId on any circle persisted before the
             // role layer landed so role lookups never return
             // .member for the actual creator.
@@ -506,6 +518,7 @@ final class Store {
         userDefaults.set(cadenceConnected, forKey: Keys.cadenceConnected)
         userDefaults.set(cadenceInviteDismissed, forKey: Keys.cadenceInviteDismissed)
         userDefaults.set(cadenceSurfacePointsSocially, forKey: Keys.cadenceSurfacePointsSocially)
+        userDefaults.set(reminderValueThreshold, forKey: Keys.reminderValueThreshold)
     }
 
     // MARK: - Focus (F1) actions
@@ -877,46 +890,54 @@ extension Store {
         let now = Date()
         let hour = cal.component(.hour, from: now)
 
-        // 1. Must-Do tasks not logged today — only after 10 AM so the
-        //    section stays quiet first thing in the morning.
-        if hour >= 10 {
-            for task in tasks where task.tier == .must {
-                guard !hasLogEntryToday(forTaskId: task.id) else { continue }
+        // Quiet hours: nothing surfaces before 10 AM or after 10 PM so a
+        // reminder is always a gentle daytime nudge, never late-night
+        // pressure.
+        guard hour >= 10 && hour < 22 else { return [] }
 
-                let subtitle: String = {
-                    if let penalty = task.skipPenalty, penalty < 0 {
-                        return "Must-Do · skipping it pulls \u{2212}\(abs(penalty)) from the day"
-                    }
-                    return "Must-Do · hasn\u{2019}t been logged today"
-                }()
-
-                result.append(AlertItem(
-                    severity: .red,
-                    title: "\(task.title) hasn\u{2019}t been logged today.",
-                    subtitle: subtitle
-                ))
+        // 1. Higher-value unfinished tasks pinned for today. Value-based
+        //    (replaces the retired MUST/SHOULD/COULD tiers): only items
+        //    worth at least the reminder threshold surface, so low-value
+        //    habits never nag. Highest value first.
+        let highValueOpen = tasks
+            .filter {
+                $0.isPinnedToday
+                    && $0.nominalValue >= reminderValueThreshold
+                    && !hasLogEntryToday(forTaskId: $0.id)
             }
+            .sorted { $0.nominalValue > $1.nominalValue }
 
-            // Linked Cadence Must routines not yet run. A reminder only —
-            // the deduction (if any) is the link's opt-in skip penalty.
-            for link in todaysCadenceLinks where link.tier == .must {
-                guard !isCadenceLinkEarnedToday(link) else { continue }
-                let subtitle: String = {
-                    if let penalty = link.skipPenalty, penalty < 0 {
-                        return "Must-Do · skipping it pulls \u{2212}\(abs(penalty)) from the day"
-                    }
-                    return "Must-Do · hasn\u{2019}t been run \(link.runWord)"
-                }()
-                result.append(AlertItem(
-                    severity: .red,
-                    title: "\(link.routineName) hasn\u{2019}t been run \(link.runWord).",
-                    subtitle: subtitle
-                ))
-            }
+        for task in highValueOpen {
+            let hasSkip = (task.skipPenalty ?? 0) < 0
+            let subtitle: String = {
+                if let penalty = task.skipPenalty, penalty < 0 {
+                    return "Worth \(task.nominalValue) · skipping pulls \u{2212}\(abs(penalty)) from the day"
+                }
+                return "Worth \(task.nominalValue) · still open today"
+            }()
+            result.append(AlertItem(
+                severity: hasSkip ? .red : .amber,
+                title: "\(task.title) is still open.",
+                subtitle: subtitle
+            ))
         }
 
-        // 2. Should-Do drift in non-Quiet categories: most recent
-        //    completion is 7+ days ago (or never).
+        // Linked Cadence routines with an opt-in skip penalty not yet
+        // run. Value/penalty-based now — the retired tier no longer gates
+        // this. Routines without a skip penalty enrich, never pressure.
+        for link in todaysCadenceLinks where (link.skipPenalty ?? 0) < 0 {
+            guard !isCadenceLinkEarnedToday(link) else { continue }
+            let penalty = abs(link.skipPenalty ?? 0)
+            result.append(AlertItem(
+                severity: .red,
+                title: "\(link.routineName) hasn\u{2019}t been run \(link.runWord).",
+                subtitle: "Skipping it pulls \u{2212}\(penalty) from the day"
+            ))
+        }
+
+        // 2. Category drift in non-Quiet categories: the most recent
+        //    completion of a meaningful (>= threshold) task is 7+ days
+        //    ago (or never). One drift alert per category.
         let quietCategories: Set<Category> = Set(
             currentSeason.categories
                 .filter { $0.tier == .quiet }
@@ -924,7 +945,7 @@ extension Store {
         )
         var coveredCategories: Set<Category> = []
 
-        for task in tasks where task.tier == .should && !quietCategories.contains(task.category) {
+        for task in tasks where !quietCategories.contains(task.category) && task.nominalValue >= reminderValueThreshold {
             guard !coveredCategories.contains(task.category) else { continue }
 
             let mostRecent = logEntries
@@ -947,7 +968,7 @@ extension Store {
 
             result.append(AlertItem(
                 severity: .amber,
-                title: "No \(task.category.displayName) time logged \(timePhrase).",
+                title: "No \(categoryDisplayName(task.category)) time logged \(timePhrase).",
                 subtitle: driftSubtitle(for: task.category)
             ))
         }
@@ -1091,7 +1112,7 @@ extension Store {
     /// we're already inside a circle→personal mirror, in which case
     /// `isMirroringFromCircle` short-circuits the bridge to break the
     /// loop.
-    func completeTask(_ task: FFTask) {
+    func completeTask(_ task: FFTask, quantity: Double? = nil) {
         guard !hasLogEntryToday(forTaskId: task.id) else { return }
 
         // Detect whether this completion is a "return" — no completed
@@ -1118,11 +1139,17 @@ extension Store {
 
         let scoreBefore = todayScore
 
+        // Points by the task's scoring shape: flat → its value; tiered →
+        // the highest level the logged amount reaches; quantity → base
+        // payout plus per-unit beyond the floor.
+        let earned = task.scoring.points(forQuantity: quantity, flatValue: task.pointValue)
+
         let entry = LogEntry(
             date: Date(),
             taskId: task.id,
             todoId: nil,
-            pointsEarned: task.pointValue,
+            quantity: quantity,
+            pointsEarned: earned,
             entryType: .completed
         )
         logEntries.append(entry)
@@ -1247,10 +1274,14 @@ extension Store {
     /// Should-Do completions that aren't returns are intentionally
     /// quiet.
     func recordSignalIfWorthy(forTask task: FFTask, isReturn: Bool, daysSince: Int?) {
-        guard task.tier != .could else { return }
+        // Value-based gating (replaces the retired MUST/SHOULD/COULD
+        // tiers): a return to any task is always worth a quiet signal;
+        // a routine completion only signals when the task is high-value,
+        // so low-value habits never flood a friend's headline.
+        let isHighValue = task.nominalValue >= reminderValueThreshold
+        guard isReturn || isHighValue else { return }
 
         let kind: SignalKind = isReturn ? .returning : .mustDo
-        if kind == .mustDo && task.tier != .must { return }
 
         let fact = SignalFact(
             ownerId: currentUserId,
@@ -2136,7 +2167,9 @@ extension Store {
         //    launch — there's no "yesterday" to evaluate when the app
         //    didn't exist yet.
         if !isFirstRollover, let yesterday = cal.date(byAdding: .day, value: -1, to: today) {
-            for task in tasks where task.tier == .must {
+            // Skip penalties apply to ANY task that opts into one (no
+            // longer gated by the retired Must-Do tier).
+            for task in tasks {
                 guard let penalty = task.skipPenalty, penalty < 0 else { continue }
 
                 let completedYesterday = logEntries.contains { entry in
@@ -2166,7 +2199,6 @@ extension Store {
             // they're exempt (the link enriches, never pressures).
             for link in cadenceLinks where cadenceConnected
                 && link.type == .launchRun
-                && link.tier == .must
                 && link.recurrence.matches(yesterday) {
                 guard let penalty = link.skipPenalty, penalty < 0 else { continue }
                 let earnedYesterday = logEntries.contains { entry in
@@ -2222,7 +2254,9 @@ extension Store {
     static func seedSeason() -> Season {
         let calendar = Calendar.current
         let startDate = calendar.date(byAdding: .day, value: -22, to: Date()) ?? Date()
+        let seasonId = UUID()
         return Season(
+            id: seasonId,
             name: "Album Season",
             lengthDays: 60,
             startDate: startDate,
@@ -2236,7 +2270,11 @@ extension Store {
                 SeasonCategory(category: .health, tier: .support),
                 SeasonCategory(category: .work, tier: .quiet)
             ],
-            milestones: []
+            milestones: [
+                Milestone(seasonId: seasonId, weekNumber: 3, title: "Finish 3 demos", status: .inMotion, pointValue: 50),
+                Milestone(seasonId: seasonId, weekNumber: 6, title: "Master the EP", status: .upcoming, pointValue: 80),
+                Milestone(seasonId: seasonId, weekNumber: 9, title: "Release the single", status: .upcoming, pointValue: 120)
+            ]
         )
     }
 
@@ -2316,6 +2354,37 @@ extension Store {
                 tier: .could,
                 estimatedMinutes: 10,
                 pinSchedule: .today
+            ),
+            // Tiered — sleep awards the highest level the logged hours reach.
+            FFTask(
+                title: "Sleep 7+ hours",
+                category: .health,
+                pointValue: 4,
+                pinSchedule: .daily,
+                scoring: ScoringConfig(
+                    type: .tiered,
+                    unit: "hours",
+                    tiers: [
+                        ScoreTier(threshold: 6, points: 2),
+                        ScoreTier(threshold: 7, points: 4),
+                        ScoreTier(threshold: 8, points: 6)
+                    ]
+                )
+            ),
+            // Quantity — base payout at a floor, plus more per block beyond.
+            FFTask(
+                title: "Pushups",
+                category: .fitness,
+                pointValue: 3,
+                pinSchedule: .today,
+                scoring: ScoringConfig(
+                    type: .quantity,
+                    unit: "reps",
+                    baseThreshold: 100,
+                    basePoints: 3,
+                    unitSize: 50,
+                    pointsPerUnit: 1
+                )
             )
         ]
     }

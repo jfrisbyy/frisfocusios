@@ -57,9 +57,9 @@ struct CategorySectionView: View {
         if !openTasks.isEmpty {
             parts.append("\(openTasks.count) open")
         }
-        let mustOpen = openTasks.filter { $0.tier == .must }.count
-        if mustOpen > 0 {
-            parts.append("\(mustOpen) Must")
+        let highValueOpen = openTasks.filter { $0.nominalValue >= store.reminderValueThreshold }.count
+        if highValueOpen > 0 {
+            parts.append("\(highValueOpen) high-value")
         }
         return parts.joined(separator: " · ")
     }
@@ -91,7 +91,7 @@ struct CategorySectionView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(category.displayName)
+                    Text(store.categoryDisplayName(category))
                         .font(.serif(16, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
 
@@ -118,13 +118,14 @@ struct CategorySectionView: View {
     }
 
     private var categorySwatch: some View {
-        ZStack {
+        let swatch = Color(hex: store.categoryColorHex(category))
+        return ZStack {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(category.color.opacity(0.15))
+                .fill(swatch.opacity(0.15))
                 .frame(width: 30, height: 30)
 
             Circle()
-                .fill(category.color)
+                .fill(swatch)
                 .frame(width: 11, height: 11)
         }
     }
@@ -167,7 +168,7 @@ struct CategorySectionView: View {
         case .quiet:
             return Theme.textPrimary.opacity(0.06)
         case .primary, .support:
-            return category.color.opacity(0.15)
+            return Color(hex: store.categoryColorHex(category)).opacity(0.15)
         }
     }
 }

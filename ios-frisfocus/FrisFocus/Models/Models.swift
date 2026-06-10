@@ -56,7 +56,99 @@ enum MilestoneStatus: String, Codable {
 }
 
 enum LogEntryType: String, Codable {
-    case completed, skipped, penalty, boosterBonus, trainBonus
+    case completed, skipped, penalty, boosterBonus, trainBonus, milestone
+}
+
+// MARK: - Scoring styles
+
+/// How a daily task turns a logged amount into points.
+///
+/// - `.flat` — done equals a fixed number of points (the original behavior).
+/// - `.tiered` — discrete levels by amount; logging awards the points of
+///   the highest level the amount reaches (e.g. sleep 6h→2, 8h→4).
+/// - `.quantity` — a base payout at a floor plus more per unit beyond it
+///   (e.g. 200 pushups→3, then +1 every 100 after).
+enum ScoringType: String, Codable, Equatable, CaseIterable {
+    case flat, tiered, quantity
+
+    var displayName: String {
+        switch self {
+        case .flat: return "Flat"
+        case .tiered: return "Tiered"
+        case .quantity: return "Quantity"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .flat: return "Done is worth a fixed number of points."
+        case .tiered: return "Levels by amount \u{2014} the higher you log, the more you earn."
+        case .quantity: return "A base payout at a floor, plus more per unit beyond it."
+        }
+    }
+}
+
+/// One discrete level in a tiered task. At or above `threshold` (measured
+/// in the config's `unit`), the level awards `points`. The engine awards
+/// the points of the highest tier whose threshold the logged amount meets.
+struct ScoreTier: Codable, Equatable, Identifiable {
+    var id: UUID = UUID()
+    var threshold: Double
+    var points: Int
+}
+
+/// The scoring shape attached to an `FFTask`. Flat tasks ignore every
+/// field except their owning task's `pointValue`; tiered tasks read
+/// `tiers`; quantity tasks read the `base*` / `unit*` fields.
+struct ScoringConfig: Codable, Equatable {
+    var type: ScoringType = .flat
+    /// Human label for the logged amount: "hours", "pushups", "steps".
+    var unit: String = ""
+
+    // Tiered
+    var tiers: [ScoreTier] = []
+
+    // Quantity (increment)
+    var baseThreshold: Double = 0
+    var basePoints: Int = 0
+    var unitSize: Double = 1
+    var pointsPerUnit: Int = 0
+
+    /// True when logging this task needs an amount (tiered / quantity).
+    var requiresQuantity: Bool { type != .flat }
+
+    /// Points earned for a logged `quantity`. `flatValue` is the owning
+    /// task's `pointValue`, used by the flat style and as a safe fallback.
+    func points(forQuantity quantity: Double?, flatValue: Int) -> Int {
+        switch type {
+        case .flat:
+            return flatValue
+        case .tiered:
+            guard let q = quantity else { return 0 }
+            return tiers.filter { q >= $0.threshold }.map(\.points).max() ?? 0
+        case .quantity:
+            guard let q = quantity, q >= baseThreshold else { return 0 }
+            let size = unitSize <= 0 ? 1 : unitSize
+            let extra = Int(((q - baseThreshold) / size).rounded(.down))
+            return basePoints + extra * pointsPerUnit
+        }
+    }
+
+    /// A representative "headline" value for value-based reminders,
+    /// sorting, and the card readout. Flat → the task value; tiered →
+    /// the top tier; quantity → the base payout.
+    func headlineValue(flatValue: Int) -> Int {
+        switch type {
+        case .flat: return flatValue
+        case .tiered: return tiers.map(\.points).max() ?? flatValue
+        case .quantity: return basePoints
+        }
+    }
+
+    /// Sorted tiers (ascending threshold) for display and evaluation.
+    var sortedTiers: [ScoreTier] {
+        tiers.sorted { $0.threshold < $1.threshold }
+    }
 }
 
 // MARK: - Booster Rule
@@ -166,6 +258,10 @@ struct AvoidanceItem: Codable, Identifiable, Equatable {
     var pointsPerOccurrence: Int
     var seasonId: UUID? = nil
     var note: String? = nil
+    /// Optional category link so a negative can sit under the area it
+    /// pulls down (e.g. a "doomscroll" negative under Work). Optional so
+    /// occurrences persisted before this field still decode.
+    var category: Category? = nil
     var createdAt: Date = Date()
 }
 
@@ -236,6 +332,12 @@ struct SeasonCategory: Codable, Identifiable {
     var id: UUID = UUID()
     var category: Category
     var tier: CategoryTier
+    /// Per-season rename. When non-nil, replaces the built-in display
+    /// name everywhere this category is shown in the season.
+    var customName: String? = nil
+    /// Per-season recolor as `#RRGGBB`. When non-nil, replaces the
+    /// built-in swatch color.
+    var customColorHex: String? = nil
 }
 
 struct Milestone: Codable, Identifiable {
@@ -244,6 +346,14 @@ struct Milestone: Codable, Identifiable {
     var weekNumber: Int
     var title: String
     var status: MilestoneStatus
+    /// A deliberately large one-time reward, credited once on the day the
+    /// milestone is completed. May exceed the daily target by design.
+    var pointValue: Int = 0
+    /// The day this milestone was achieved. `nil` means not yet done;
+    /// scoring credits `pointValue` to this day's total.
+    var completedDate: Date? = nil
+
+    var isCompleted: Bool { completedDate != nil }
 }
 
 struct Season: Codable, Identifiable {
@@ -267,18 +377,26 @@ struct FFTask: Codable, Identifiable {
     var title: String
     var category: Category
     var pointValue: Int
-    var tier: Tier
+    /// Legacy priority tier. Retired from the UI and all scoring/reminder
+    /// behavior in favor of value-based reminders; retained (defaulted)
+    /// only so tasks persisted before the switch still decode. Do not
+    /// branch on this.
+    var tier: Tier = .should
     var skipPenalty: Int?
     var estimatedMinutes: Int?
     var pinSchedule: PinSchedule = .none
     var booster: BoosterRule? = nil
     var penalty: PenaltyRule? = nil
+    /// The scoring shape (flat / tiered / quantity). Defaults to flat so
+    /// every task scored before this field existed reads as a flat
+    /// `pointValue` task with no behavior change.
+    var scoring: ScoringConfig = ScoringConfig()
 
     // Backward-compatible decoding so persisted tasks predating
-    // `booster` / `penalty` still hydrate. Missing keys fall through
-    // to the property defaults.
+    // `booster` / `penalty` / `scoring` still hydrate. Missing keys fall
+    // through to the property defaults.
     private enum CodingKeys: String, CodingKey {
-        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, booster, penalty
+        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, booster, penalty, scoring
     }
 
     init(
@@ -286,12 +404,13 @@ struct FFTask: Codable, Identifiable {
         title: String,
         category: Category,
         pointValue: Int,
-        tier: Tier,
+        tier: Tier = .should,
         skipPenalty: Int? = nil,
         estimatedMinutes: Int? = nil,
         pinSchedule: PinSchedule = .none,
         booster: BoosterRule? = nil,
-        penalty: PenaltyRule? = nil
+        penalty: PenaltyRule? = nil,
+        scoring: ScoringConfig = ScoringConfig()
     ) {
         self.id = id
         self.title = title
@@ -303,6 +422,7 @@ struct FFTask: Codable, Identifiable {
         self.pinSchedule = pinSchedule
         self.booster = booster
         self.penalty = penalty
+        self.scoring = scoring
     }
 
     init(from decoder: Decoder) throws {
@@ -311,12 +431,13 @@ struct FFTask: Codable, Identifiable {
         self.title = try c.decode(String.self, forKey: .title)
         self.category = try c.decode(Category.self, forKey: .category)
         self.pointValue = try c.decode(Int.self, forKey: .pointValue)
-        self.tier = try c.decode(Tier.self, forKey: .tier)
+        self.tier = try c.decodeIfPresent(Tier.self, forKey: .tier) ?? .should
         self.skipPenalty = try c.decodeIfPresent(Int.self, forKey: .skipPenalty)
         self.estimatedMinutes = try c.decodeIfPresent(Int.self, forKey: .estimatedMinutes)
         self.pinSchedule = try c.decodeIfPresent(PinSchedule.self, forKey: .pinSchedule) ?? .none
         self.booster = try c.decodeIfPresent(BoosterRule.self, forKey: .booster)
         self.penalty = try c.decodeIfPresent(PenaltyRule.self, forKey: .penalty)
+        self.scoring = try c.decodeIfPresent(ScoringConfig.self, forKey: .scoring) ?? ScoringConfig()
     }
 
     func encode(to encoder: Encoder) throws {
@@ -331,6 +452,7 @@ struct FFTask: Codable, Identifiable {
         try c.encode(pinSchedule, forKey: .pinSchedule)
         try c.encodeIfPresent(booster, forKey: .booster)
         try c.encodeIfPresent(penalty, forKey: .penalty)
+        try c.encode(scoring, forKey: .scoring)
     }
 }
 
@@ -361,6 +483,13 @@ struct LogEntry: Codable, Identifiable {
     /// Cadence-derived points distinguishable for the social-privacy
     /// layer. Optional so entries persisted before the link decode cleanly.
     var cadenceLinkId: UUID? = nil
+    /// Set when this entry credits a completed `Milestone` (a large,
+    /// one-time reward landing on the day it was achieved).
+    var milestoneId: UUID? = nil
+    /// The amount logged for a tiered / quantity task (hours, reps, steps),
+    /// kept so the row can show what was logged and so an edit can
+    /// recompute. `nil` for flat tasks and non-task entries.
+    var quantity: Double? = nil
     var pointsEarned: Int
     var entryType: LogEntryType = .completed
 }
@@ -510,6 +639,19 @@ extension FFTask {
     /// working without rewrites.
     var isPinnedToday: Bool {
         isPinnedFor(Date())
+    }
+
+    /// The representative point value used for value-based reminders,
+    /// emphasis, and the card readout — resolves the right number across
+    /// flat / tiered / quantity shapes.
+    var nominalValue: Int {
+        scoring.headlineValue(flatValue: pointValue)
+    }
+
+    /// True when completing this task needs an amount entry (tiered /
+    /// quantity) rather than a single check.
+    var requiresQuantityLogging: Bool {
+        scoring.requiresQuantity
     }
 }
 

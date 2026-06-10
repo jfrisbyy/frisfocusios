@@ -290,12 +290,14 @@ private struct AvoidanceItemFormView: View {
     @State private var name: String
     @State private var pointsPerOccurrence: Int
     @State private var note: String
+    @State private var category: Category?
 
     init(editing: AvoidanceItem?) {
         self.editing = editing
         _name = State(initialValue: editing?.name ?? "")
         _pointsPerOccurrence = State(initialValue: editing?.pointsPerOccurrence ?? 5)
         _note = State(initialValue: editing?.note ?? "")
+        _category = State(initialValue: editing?.category)
     }
 
     var body: some View {
@@ -325,6 +327,25 @@ private struct AvoidanceItemFormView: View {
                     Text("Cost")
                 } footer: {
                     Text("How many points each logged occurrence quietly deducts from your weekly total.")
+                }
+
+                Section {
+                    Picker("Area", selection: $category) {
+                        Text("None").tag(Category?.none)
+                        ForEach(store.currentSeason.categories.map(\.category), id: \.self) { cat in
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(Color(hex: store.categoryColorHex(cat)))
+                                    .frame(width: 8, height: 8)
+                                Text(store.categoryDisplayName(cat))
+                            }
+                            .tag(Category?.some(cat))
+                        }
+                    }
+                } header: {
+                    Text("Area (optional)")
+                } footer: {
+                    Text("Link this negative to the area it pulls down.")
                 }
 
                 Section {
@@ -367,12 +388,14 @@ private struct AvoidanceItemFormView: View {
             updated.name = name
             updated.pointsPerOccurrence = pointsPerOccurrence
             updated.note = note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : note
+            updated.category = category
             store.updateAvoidanceItem(updated)
         } else {
             store.addAvoidanceItem(
                 name: name,
                 pointsPerOccurrence: pointsPerOccurrence,
-                note: note
+                note: note,
+                category: category
             )
         }
         dismiss()

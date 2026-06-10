@@ -83,7 +83,7 @@ extension TaskStickerBlock {
             title: task.title,
             isChecked: isChecked,
             isTask: true,
-            isMust: task.tier == .must,
+            isMust: false,
             sourceTaskId: task.id,
             position: position
         )

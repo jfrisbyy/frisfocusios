@@ -61,8 +61,8 @@ struct CadenceRoutineRow: View {
                             .strikethrough(isEarned, color: Theme.textPrimary.opacity(0.6))
                             .fixedSize(horizontal: false, vertical: true)
 
-                        if link.tier == .must {
-                            TierTag(tier: link.tier)
+                        if let penalty = link.skipPenalty, penalty < 0 {
+                            SkipPenaltyTag(points: penalty)
                         }
                     }
 
@@ -195,19 +195,19 @@ struct CadenceTag: View {
     }
 }
 
-// MARK: - Tier tag (compact)
+// MARK: - Skip-penalty tag (compact)
 
-private struct TierTag: View {
-    let tier: Tier
+private struct SkipPenaltyTag: View {
+    let points: Int
 
     var body: some View {
-        Text(tier.label)
+        Text("\u{2212}\(abs(points))")
             .font(.sans(9, weight: .semibold))
             .tracking(0.5)
-            .foregroundStyle(tier.color)
+            .foregroundStyle(Theme.alertRed)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
-            .background(tier.color.opacity(0.12))
+            .background(Theme.alertRed.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
     }
 }

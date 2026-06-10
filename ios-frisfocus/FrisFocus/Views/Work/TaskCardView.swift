@@ -3,13 +3,14 @@
 //  FrisFocus
 //
 //  A Today's Few task card. Repeatable task with a circle checkbox,
-//  a category dot, an optional MUST/SHOULD tier pill, an optional pin
-//  icon next to the title, and a raw point value on the right (no `+`).
+//  a category dot, an optional pin icon next to the title, and the
+//  point value on the right. Higher-value tasks get a quiet emphasis
+//  (replacing the retired MUST/SHOULD/COULD tier pill).
 //
-//  Tapping the checkbox writes a `LogEntry` to the Store (or removes
-//  it, on a second tap). Light haptic on every toggle. The completed
-//  state is derived live from `store.hasLogEntryToday(forTaskId:)` so
-//  the checkbox always reflects the persisted truth.
+//  Flat tasks toggle a completion directly. Tiered / quantity tasks open
+//  an amount sheet so the engine can score the logged amount. The
+//  completed state is derived live from the Store so the checkbox always
+//  reflects the persisted truth.
 //
 
 import SwiftUI
@@ -21,9 +22,32 @@ struct TaskCardView: View {
 
     @State private var showEdit: Bool = false
     @State private var showShareCapture: Bool = false
+    @State private var showLogAmount: Bool = false
 
-    private var isCompleted: Bool {
-        store.hasLogEntryToday(forTaskId: task.id)
+    /// Today's completed entry for this task, if any. Carries the actual
+    /// points earned (which, for tiered / quantity tasks, depends on the
+    /// logged amount).
+    private var todayEntry: LogEntry? {
+        let cal = Calendar.current
+        return store.logEntries.first {
+            $0.taskId == task.id
+                && $0.entryType == .completed
+                && cal.isDate($0.date, inSameDayAs: Date())
+        }
+    }
+
+    private var isCompleted: Bool { todayEntry != nil }
+
+    /// Whether this task is worth at least the reminder threshold — drives
+    /// the quiet high-value emphasis on the checkbox.
+    private var isHighValue: Bool {
+        task.nominalValue >= store.reminderValueThreshold
+    }
+
+    /// The number shown on the right: the actual points earned once
+    /// logged, otherwise the task's representative value.
+    private var displayValue: Int {
+        todayEntry?.pointsEarned ?? task.nominalValue
     }
 
     private var boosterStatus: (progress: Int, required: Int, earned: Bool, period: BoosterPeriod, bonusPoints: Int)? {
@@ -57,14 +81,12 @@ struct TaskCardView: View {
 
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(task.category.color)
+                        .fill(Color(hex: store.categoryColorHex(task.category)))
                         .frame(width: 5, height: 5)
 
                     Text(metadataString)
                         .font(.sans(11, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.6))
-
-                    TierPill(tier: task.tier)
                 }
 
                 if boosterStatus != nil || penaltyStatus != nil {
@@ -94,11 +116,19 @@ struct TaskCardView: View {
 
             Spacer(minLength: 8)
 
-            // Point value
-            Text("\(task.pointValue)")
-                .font(.serif(22, weight: .medium))
-                .foregroundStyle(Theme.textPrimary.opacity(isCompleted ? 0.4 : 1.0))
-                .padding(.top, 2)
+            // Point value — actual earned once logged, representative
+            // value otherwise. A small "+" hint marks amount-logged tasks.
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("\(displayValue)")
+                    .font(.serif(22, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(isCompleted ? 0.4 : 1.0))
+                if task.requiresQuantityLogging, !isCompleted {
+                    Image(systemName: "plus.forwardslash.minus")
+                        .font(.system(size: 9, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                }
+            }
+            .padding(.top, 2)
         }
         .padding(14)
         .background(Color.white)
@@ -130,6 +160,12 @@ struct TaskCardView: View {
         .sheet(isPresented: $showEdit) {
             NewTaskFormView(editing: task) { }
         }
+        .sheet(isPresented: $showLogAmount) {
+            LogQuantitySheet(task: task)
+                .environment(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .fullScreenCover(isPresented: $showShareCapture) {
             CaptureView(
                 mode: .generalPost,
@@ -154,16 +190,14 @@ struct TaskCardView: View {
             } else {
                 Circle()
                     .stroke(
-                        task.tier == .must
-                            ? Theme.alertRed
-                            : Theme.textPrimary.opacity(0.35),
+                        Theme.textPrimary.opacity(isHighValue ? 0.5 : 0.3),
                         lineWidth: 1.5
                     )
                     .frame(width: 22, height: 22)
 
-                if task.tier == .must {
+                if isHighValue {
                     Circle()
-                        .fill(Theme.alertRed.opacity(0.18))
+                        .fill(Color(hex: store.categoryColorHex(task.category)).opacity(0.2))
                         .frame(width: 12, height: 12)
                 }
             }
@@ -176,7 +210,15 @@ struct TaskCardView: View {
     // MARK: - Metadata
 
     private var metadataString: String {
-        var parts = [task.category.displayName, "Task"]
+        var parts = [store.categoryDisplayName(task.category)]
+        switch task.scoring.type {
+        case .flat:
+            parts.append("Task")
+        case .tiered:
+            parts.append(task.scoring.unit.isEmpty ? "Tiered" : "Tiered · \(task.scoring.unit)")
+        case .quantity:
+            parts.append(task.scoring.unit.isEmpty ? "Quantity" : "Per \(task.scoring.unit)")
+        }
         if let minutes = task.estimatedMinutes {
             parts.append("\(minutes) min")
         }
@@ -189,26 +231,12 @@ struct TaskCardView: View {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if isCompleted {
             store.uncompleteTask(task)
+        } else if task.requiresQuantityLogging {
+            // Tiered / quantity tasks need an amount before they can score.
+            showLogAmount = true
         } else {
             store.completeTask(task)
         }
-    }
-}
-
-// MARK: - Tier pill
-
-private struct TierPill: View {
-    let tier: Tier
-
-    var body: some View {
-        Text(tier.label)
-            .font(.sans(9, weight: .semibold))
-            .tracking(0.5)
-            .foregroundStyle(tier.color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(tier.color.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
     }
 }
 

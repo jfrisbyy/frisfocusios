@@ -3,8 +3,9 @@
 //  FrisFocus
 //
 //  Full-height form sheet for creating or editing a repeatable Task.
-//  Title, category, point value, tier, optional skip penalty for
-//  Must-Dos, pin-to-today, and an optional Booster rule.
+//  Title, season category, a scoring style (flat / tiered / quantity)
+//  with its details, an optional skip penalty available on any task,
+//  pin-to-today, and the optional Booster + Weekly-limit rules.
 //
 //  Use the default initializer to create; pass `editing:` to edit an
 //  existing task in place. Saving appends/updates `store.tasks`,
@@ -24,9 +25,20 @@ struct NewTaskFormView: View {
     @State private var title: String
     @State private var category: Category
     @State private var pointValue: Int
-    @State private var tier: Tier
-    @State private var skipPenalty: Int
     @State private var pinToToday: Bool
+
+    // Scoring style
+    @State private var scoringType: ScoringType
+    @State private var unit: String
+    @State private var tiers: [ScoreTier]
+    @State private var baseThreshold: Double
+    @State private var basePoints: Int
+    @State private var unitSize: Double
+    @State private var pointsPerUnit: Int
+
+    // Skip penalty (any task)
+    @State private var skipPenaltyEnabled: Bool
+    @State private var skipPenalty: Int
 
     // Booster
     @State private var boosterEnabled: Bool
@@ -46,12 +58,25 @@ struct NewTaskFormView: View {
         _title = State(initialValue: editing?.title ?? "")
         _category = State(initialValue: editing?.category ?? .work)
         _pointValue = State(initialValue: editing?.pointValue ?? 5)
-        _tier = State(initialValue: editing?.tier ?? .should)
-        _skipPenalty = State(initialValue: editing?.skipPenalty ?? -5)
         _pinToToday = State(initialValue: {
             guard let t = editing else { return false }
             return t.isPinnedToday
         }())
+
+        let scoring = editing?.scoring ?? ScoringConfig()
+        _scoringType = State(initialValue: scoring.type)
+        _unit = State(initialValue: scoring.unit)
+        _tiers = State(initialValue: scoring.tiers.isEmpty
+            ? [ScoreTier(threshold: 6, points: 2), ScoreTier(threshold: 8, points: 4)]
+            : scoring.sortedTiers)
+        _baseThreshold = State(initialValue: scoring.baseThreshold == 0 ? 100 : scoring.baseThreshold)
+        _basePoints = State(initialValue: scoring.basePoints == 0 ? 3 : scoring.basePoints)
+        _unitSize = State(initialValue: scoring.unitSize <= 0 ? 50 : scoring.unitSize)
+        _pointsPerUnit = State(initialValue: scoring.pointsPerUnit == 0 ? 1 : scoring.pointsPerUnit)
+
+        let skip = editing?.skipPenalty
+        _skipPenaltyEnabled = State(initialValue: (skip ?? 0) < 0)
+        _skipPenalty = State(initialValue: skip ?? -5)
 
         let booster = editing?.booster
         _boosterEnabled = State(initialValue: booster?.enabled ?? false)
@@ -81,61 +106,9 @@ struct NewTaskFormView: View {
                     Text("Title")
                 }
 
-                Section {
-                    Picker("Category", selection: $category) {
-                        ForEach(Category.allCases, id: \.self) { cat in
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(cat.color)
-                                    .frame(width: 8, height: 8)
-                                Text(cat.displayName)
-                            }
-                            .tag(cat)
-                        }
-                    }
-                } header: {
-                    Text("Category")
-                }
-
-                Section {
-                    Stepper(value: $pointValue, in: 1...30) {
-                        HStack {
-                            Text("Worth")
-                            Spacer()
-                            Text("\(pointValue) pts")
-                                .font(.serif(17, weight: .medium))
-                                .foregroundStyle(Theme.textPrimary)
-                        }
-                    }
-                } header: {
-                    Text("Points")
-                } footer: {
-                    Text("How many points this Task is worth toward your daily goal.")
-                }
-
-                Section {
-                    Picker("Tier", selection: $tier) {
-                        Text("Must").tag(Tier.must)
-                        Text("Should").tag(Tier.should)
-                        Text("Could").tag(Tier.could)
-                    }
-                    .pickerStyle(.segmented)
-
-                    if tier == .must {
-                        Stepper(value: $skipPenalty, in: -20...0) {
-                            HStack {
-                                Text("Skip penalty")
-                                Spacer()
-                                Text("\(skipPenalty) pts")
-                                    .foregroundStyle(Theme.alertRed)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Tier")
-                } footer: {
-                    Text(tierFooter)
-                }
+                categorySection
+                scoringSection
+                skipPenaltySection
 
                 Section {
                     Toggle("Pin to today", isOn: $pinToToday)
@@ -143,91 +116,8 @@ struct NewTaskFormView: View {
                     Text("Pinned Tasks appear on Today's Plan on the home screen.")
                 }
 
-                // MARK: Booster
-
-                Section {
-                    Toggle("Booster", isOn: $boosterEnabled.animation(.easeInOut(duration: 0.2)))
-
-                    if boosterEnabled {
-                        Stepper(value: $boosterTimesRequired, in: 1...30) {
-                            HStack {
-                                Text("Times required")
-                                Spacer()
-                                Text("\(boosterTimesRequired)\u{00D7}")
-                                    .font(.serif(17, weight: .medium))
-                                    .foregroundStyle(Theme.textPrimary)
-                            }
-                        }
-
-                        Picker("Period", selection: $boosterPeriod) {
-                            Text("Week").tag(BoosterPeriod.week)
-                            Text("Month").tag(BoosterPeriod.month)
-                        }
-                        .pickerStyle(.segmented)
-
-                        Stepper(value: $boosterBonusPoints, in: 1...100) {
-                            HStack {
-                                Text("Bonus points")
-                                Spacer()
-                                Text("+\(boosterBonusPoints)")
-                                    .font(.serif(17, weight: .medium))
-                                    .foregroundStyle(Theme.alertGreen)
-                            }
-                        }
-
-                        Text(boosterPreviewSentence)
-                            .font(.serifItalic(13))
-                            .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                            .padding(.top, 2)
-                    }
-                } header: {
-                    Text("Booster")
-                } footer: {
-                    Text("A count-toward-a-target reward. Miss a day, no problem — only the count by the end of the \(boosterPeriod.displayName) matters.")
-                }
-
-                // MARK: Weekly limit
-
-                Section {
-                    Toggle("Weekly limit", isOn: $penaltyEnabled.animation(.easeInOut(duration: 0.2)))
-
-                    if penaltyEnabled {
-                        Picker("Condition", selection: $penaltyCondition) {
-                            Text("More than").tag(PenaltyCondition.moreThan)
-                            Text("Less than").tag(PenaltyCondition.lessThan)
-                        }
-                        .pickerStyle(.segmented)
-
-                        Stepper(value: $penaltyThreshold, in: 0...7) {
-                            HStack {
-                                Text("Times this week")
-                                Spacer()
-                                Text("\(penaltyThreshold)\u{00D7}")
-                                    .font(.serif(17, weight: .medium))
-                                    .foregroundStyle(Theme.textPrimary)
-                            }
-                        }
-
-                        Stepper(value: $penaltyPoints, in: 1...100) {
-                            HStack {
-                                Text("Penalty points")
-                                Spacer()
-                                Text("\u{2212}\(penaltyPoints)")
-                                    .font(.serif(17, weight: .medium))
-                                    .foregroundStyle(Theme.alertAmber)
-                            }
-                        }
-
-                        Text(penaltyPreviewSentence)
-                            .font(.serifItalic(13))
-                            .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                            .padding(.top, 2)
-                    }
-                } header: {
-                    Text("Weekly limit")
-                } footer: {
-                    Text("A gentle, private reduction goal. Points stay off your friends' feeds and only show up in your own weekly total.")
-                }
+                boosterSection
+                weeklyLimitSection
             }
             .scrollContentBackground(.hidden)
             .background(Theme.warmWheat)
@@ -248,18 +138,283 @@ struct NewTaskFormView: View {
         }
     }
 
+    // MARK: - Category
+
+    private var availableCategories: [Category] {
+        var cats = store.currentSeason.categories.map(\.category)
+        if let editing, !cats.contains(editing.category) { cats.append(editing.category) }
+        if !cats.contains(category) { cats.append(category) }
+        return cats
+    }
+
+    private var categorySection: some View {
+        Section {
+            Picker("Category", selection: $category) {
+                ForEach(availableCategories, id: \.self) { cat in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color(hex: store.categoryColorHex(cat)))
+                            .frame(width: 8, height: 8)
+                        Text(store.categoryDisplayName(cat))
+                    }
+                    .tag(cat)
+                }
+            }
+        } header: {
+            Text("Category")
+        }
+    }
+
+    // MARK: - Scoring style
+
+    private var scoringSection: some View {
+        Section {
+            Picker("Scoring style", selection: $scoringType.animation(.easeInOut(duration: 0.2))) {
+                ForEach(ScoringType.allCases, id: \.self) { type in
+                    Text(type.displayName).tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            switch scoringType {
+            case .flat:
+                Stepper(value: $pointValue, in: 1...100) {
+                    HStack {
+                        Text("Worth")
+                        Spacer()
+                        Text("\(pointValue) pts")
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                }
+            case .tiered:
+                tieredEditor
+            case .quantity:
+                quantityEditor
+            }
+        } header: {
+            Text("Scoring")
+        } footer: {
+            Text(scoringType.blurb)
+        }
+    }
+
+    @ViewBuilder
+    private var tieredEditor: some View {
+        unitField(placeholder: "e.g. hours")
+
+        ForEach($tiers) { $tier in
+            HStack(spacing: 10) {
+                Text("At")
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                TextField("amount", value: $tier.threshold, format: .number)
+                    .keyboardType(.decimalPad)
+                    .frame(width: 56)
+                    .multilineTextAlignment(.center)
+                    .padding(.vertical, 4)
+                    .background(Theme.textPrimary.opacity(0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                if !unit.isEmpty {
+                    Text(unit).foregroundStyle(Theme.textPrimary.opacity(0.6))
+                }
+                Spacer()
+                Stepper("\(tier.points) pts", value: $tier.points, in: 0...100)
+                    .labelsHidden()
+                Text("\(tier.points) pts")
+                    .font(.serif(15, weight: .medium))
+                    .frame(width: 52, alignment: .trailing)
+            }
+        }
+        .onDelete { tiers.remove(atOffsets: $0) }
+
+        Button {
+            let nextThreshold = (tiers.map(\.threshold).max() ?? 0) + 1
+            let nextPoints = (tiers.map(\.points).max() ?? 0) + 2
+            tiers.append(ScoreTier(threshold: nextThreshold, points: nextPoints))
+        } label: {
+            Label("Add level", systemImage: "plus.circle")
+                .font(.sans(14, weight: .medium))
+                .foregroundStyle(Theme.alertGreen)
+        }
+    }
+
+    @ViewBuilder
+    private var quantityEditor: some View {
+        unitField(placeholder: "e.g. reps")
+
+        HStack {
+            Text("Base at")
+            Spacer()
+            TextField("amount", value: $baseThreshold, format: .number)
+                .keyboardType(.decimalPad)
+                .frame(width: 64)
+                .multilineTextAlignment(.trailing)
+            if !unit.isEmpty { Text(unit).foregroundStyle(Theme.textPrimary.opacity(0.6)) }
+        }
+        Stepper(value: $basePoints, in: 0...100) {
+            HStack {
+                Text("Base points")
+                Spacer()
+                Text("\(basePoints) pts").font(.serif(16, weight: .medium))
+            }
+        }
+        HStack {
+            Text("Then every")
+            Spacer()
+            TextField("size", value: $unitSize, format: .number)
+                .keyboardType(.decimalPad)
+                .frame(width: 64)
+                .multilineTextAlignment(.trailing)
+            if !unit.isEmpty { Text(unit).foregroundStyle(Theme.textPrimary.opacity(0.6)) }
+        }
+        Stepper(value: $pointsPerUnit, in: 0...50) {
+            HStack {
+                Text("Adds")
+                Spacer()
+                Text("+\(pointsPerUnit) pts").font(.serif(16, weight: .medium)).foregroundStyle(Theme.alertGreen)
+            }
+        }
+
+        Text(quantityPreview)
+            .font(.serifItalic(13))
+            .foregroundStyle(Theme.textPrimary.opacity(0.7))
+    }
+
+    private func unitField(placeholder: String) -> some View {
+        HStack {
+            Text("Unit")
+            Spacer()
+            TextField(placeholder, text: $unit)
+                .multilineTextAlignment(.trailing)
+                .foregroundStyle(Theme.textPrimary)
+        }
+    }
+
+    private var quantityPreview: String {
+        let cfg = buildConfig()
+        let atBase = cfg.points(forQuantity: baseThreshold, flatValue: pointValue)
+        let beyond = baseThreshold + unitSize * 2
+        let atBeyond = cfg.points(forQuantity: beyond, flatValue: pointValue)
+        let unitLabel = unit.isEmpty ? "" : " \(unit)"
+        return "\(Int(baseThreshold))\(unitLabel) → \(atBase) pts · \(Int(beyond))\(unitLabel) → \(atBeyond) pts"
+    }
+
+    // MARK: - Skip penalty (any task)
+
+    private var skipPenaltySection: some View {
+        Section {
+            Toggle("Skip penalty", isOn: $skipPenaltyEnabled.animation(.easeInOut(duration: 0.2)))
+            if skipPenaltyEnabled {
+                Stepper(value: $skipPenalty, in: -20 ... -1) {
+                    HStack {
+                        Text("If skipped")
+                        Spacer()
+                        Text("\(skipPenalty) pts")
+                            .foregroundStyle(Theme.alertRed)
+                    }
+                }
+            }
+        } header: {
+            Text("Skip penalty")
+        } footer: {
+            Text("Optional. When on, skipping this task on a day it's pinned pulls points from that day. Available on any task — no priority tiers.")
+        }
+    }
+
+    // MARK: - Booster
+
+    private var boosterSection: some View {
+        Section {
+            Toggle("Booster", isOn: $boosterEnabled.animation(.easeInOut(duration: 0.2)))
+
+            if boosterEnabled {
+                Stepper(value: $boosterTimesRequired, in: 1...30) {
+                    HStack {
+                        Text("Times required")
+                        Spacer()
+                        Text("\(boosterTimesRequired)\u{00D7}")
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                }
+
+                Picker("Period", selection: $boosterPeriod) {
+                    Text("Week").tag(BoosterPeriod.week)
+                    Text("Month").tag(BoosterPeriod.month)
+                }
+                .pickerStyle(.segmented)
+
+                Stepper(value: $boosterBonusPoints, in: 1...100) {
+                    HStack {
+                        Text("Bonus points")
+                        Spacer()
+                        Text("+\(boosterBonusPoints)")
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.alertGreen)
+                    }
+                }
+
+                Text(boosterPreviewSentence)
+                    .font(.serifItalic(13))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                    .padding(.top, 2)
+            }
+        } header: {
+            Text("Booster")
+        } footer: {
+            Text("A count-toward-a-target reward. Miss a day, no problem — only the count by the end of the \(boosterPeriod.displayName) matters.")
+        }
+    }
+
+    // MARK: - Weekly limit
+
+    private var weeklyLimitSection: some View {
+        Section {
+            Toggle("Weekly limit", isOn: $penaltyEnabled.animation(.easeInOut(duration: 0.2)))
+
+            if penaltyEnabled {
+                Picker("Condition", selection: $penaltyCondition) {
+                    Text("More than").tag(PenaltyCondition.moreThan)
+                    Text("Less than").tag(PenaltyCondition.lessThan)
+                }
+                .pickerStyle(.segmented)
+
+                Stepper(value: $penaltyThreshold, in: 0...7) {
+                    HStack {
+                        Text("Times this week")
+                        Spacer()
+                        Text("\(penaltyThreshold)\u{00D7}")
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                }
+
+                Stepper(value: $penaltyPoints, in: 1...100) {
+                    HStack {
+                        Text("Penalty points")
+                        Spacer()
+                        Text("\u{2212}\(penaltyPoints)")
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.alertAmber)
+                    }
+                }
+
+                Text(penaltyPreviewSentence)
+                    .font(.serifItalic(13))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                    .padding(.top, 2)
+            }
+        } header: {
+            Text("Weekly limit")
+        } footer: {
+            Text("A gentle, private reduction goal. Points stay off your friends' feeds and only show up in your own weekly total.")
+        }
+    }
+
     // MARK: - Derived
 
     private var canSave: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var tierFooter: String {
-        switch tier {
-        case .must: return "Must-Dos cost points if you skip them."
-        case .should: return "Should-Dos are pinned to the season but unpenalized."
-        case .could: return "Could-Dos are nice-to-haves with no pressure."
-        }
     }
 
     private var boosterPreviewSentence: String {
@@ -274,6 +429,18 @@ struct NewTaskFormView: View {
         return "If \(name) is completed \(penaltyCondition.phrase) \(penaltyThreshold) times this week, lose \(penaltyPoints) points."
     }
 
+    private func buildConfig() -> ScoringConfig {
+        ScoringConfig(
+            type: scoringType,
+            unit: unit.trimmingCharacters(in: .whitespacesAndNewlines),
+            tiers: tiers,
+            baseThreshold: baseThreshold,
+            basePoints: basePoints,
+            unitSize: unitSize,
+            pointsPerUnit: pointsPerUnit
+        )
+    }
+
     // MARK: - Save
 
     private func save() {
@@ -281,6 +448,12 @@ struct NewTaskFormView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let config = buildConfig()
+        // Keep pointValue meaningful across shapes so value-based
+        // reminders and legacy reads have a sane number.
+        let resolvedValue = scoringType == .flat ? pointValue : config.headlineValue(flatValue: pointValue)
+        let resolvedSkip: Int? = skipPenaltyEnabled ? min(-1, skipPenalty) : nil
+
         let boosterRule: BoosterRule? = boosterEnabled
             ? BoosterRule(
                 enabled: true,
@@ -302,37 +475,31 @@ struct NewTaskFormView: View {
             var updated = store.tasks[idx]
             updated.title = trimmedTitle
             updated.category = category
-            updated.pointValue = pointValue
-            updated.tier = tier
-            updated.skipPenalty = tier == .must ? skipPenalty : nil
-            // Preserve any non-`.today` schedule; only flip the today
-            // pin when the user changed it.
+            updated.pointValue = resolvedValue
+            updated.scoring = config
+            updated.skipPenalty = resolvedSkip
             switch updated.pinSchedule {
             case .none, .today:
                 updated.pinSchedule = pinToToday ? .today : .none
             default:
                 if !pinToToday {
-                    // Honor explicit unpin from the form even on
-                    // recurring schedules.
                     updated.pinSchedule = .none
                 }
             }
             updated.booster = boosterRule
             updated.penalty = penaltyRule
             store.tasks[idx] = updated
-            // Re-evaluate the weekly limit so a freshly-saved (or
-            // disabled) rule takes effect immediately on the score.
             store.evaluatePenaltyForTask(updated)
         } else {
             let task = FFTask(
                 title: trimmedTitle,
                 category: category,
-                pointValue: pointValue,
-                tier: tier,
-                skipPenalty: tier == .must ? skipPenalty : nil,
+                pointValue: resolvedValue,
+                skipPenalty: resolvedSkip,
                 pinSchedule: pinToToday ? .today : .none,
                 booster: boosterRule,
-                penalty: penaltyRule
+                penalty: penaltyRule,
+                scoring: config
             )
             store.tasks.append(task)
             store.evaluatePenaltyForTask(task)
