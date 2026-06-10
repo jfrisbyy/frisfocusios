@@ -71,6 +71,14 @@ final class Store {
     /// `.trainBonus` LogEntry.
     var habitTrains: [HabitTrain] = []
 
+    // MARK: - Weekly boosters (first-class)
+
+    /// Standalone consistency rewards. Each watches a task or a whole
+    /// category and pays out all-or-nothing once its count threshold is
+    /// reached within the period. First-class so a booster can span
+    /// several tasks (a category) and survive any single task's deletion.
+    var boosters: [WeeklyBooster] = []
+
     // MARK: - Cadence link (Esengo)
 
     /// FrisFocus-side link records binding a Cadence routine (or an
@@ -211,6 +219,7 @@ final class Store {
         static let avoidanceItems = "avoidanceItems"
         static let avoidanceOccurrences = "avoidanceOccurrences"
         static let habitTrains = "habitTrains"
+        static let boosters = "boosters"
         static let viewedStoryPostIds = "viewedStoryPostIds"
         static let pacts = "pacts"
         static let pactCompletions = "pactCompletions"
@@ -272,6 +281,7 @@ final class Store {
             userDefaults.removeObject(forKey: Keys.avoidanceItems)
             userDefaults.removeObject(forKey: Keys.avoidanceOccurrences)
             userDefaults.removeObject(forKey: Keys.habitTrains)
+            userDefaults.removeObject(forKey: Keys.boosters)
             userDefaults.removeObject(forKey: Keys.viewedStoryPostIds)
             userDefaults.removeObject(forKey: Keys.pacts)
             userDefaults.removeObject(forKey: Keys.pactCompletions)
@@ -321,6 +331,7 @@ final class Store {
             self.avoidanceItems = Store.loadArray(Keys.avoidanceItems) ?? []
             self.avoidanceOccurrences = Store.loadArray(Keys.avoidanceOccurrences) ?? []
             self.habitTrains = Store.loadArray(Keys.habitTrains) ?? []
+            self.boosters = Store.loadArray(Keys.boosters) ?? []
             if let ids: [UUID] = Store.loadArray(Keys.viewedStoryPostIds) {
                 self.viewedStoryPostIds = Set(ids)
             }
@@ -340,6 +351,29 @@ final class Store {
             if userDefaults.object(forKey: Keys.reminderValueThreshold) != nil {
                 self.reminderValueThreshold = userDefaults.integer(forKey: Keys.reminderValueThreshold)
             }
+            // One-time migration: lift any legacy task-attached booster
+            // rules into first-class WeeklyBoosters referencing that
+            // task, then detach the inline rule. Guarded on the absence
+            // of the boosters key so it runs at most once per install.
+            if userDefaults.data(forKey: Keys.boosters) == nil {
+                var migrated: [WeeklyBooster] = []
+                for i in self.tasks.indices {
+                    if let rule = self.tasks[i].booster, rule.enabled {
+                        migrated.append(WeeklyBooster(
+                            seasonId: self.currentSeason.id,
+                            name: self.tasks[i].title,
+                            reference: .task(self.tasks[i].id),
+                            threshold: rule.timesRequired,
+                            period: rule.period,
+                            bonusPoints: rule.bonusPoints
+                        ))
+                    }
+                    self.tasks[i].booster = nil
+                }
+                self.boosters = migrated
+                persistAll()
+            }
+
             // Back-fill ownerId on any circle persisted before the
             // role layer landed so role lookups never return
             // .member for the actual creator.
@@ -487,6 +521,9 @@ final class Store {
         }
         if let data = try? encoder.encode(habitTrains) {
             userDefaults.set(data, forKey: Keys.habitTrains)
+        }
+        if let data = try? encoder.encode(boosters) {
+            userDefaults.set(data, forKey: Keys.boosters)
         }
         if let data = try? encoder.encode(Array(viewedStoryPostIds)) {
             userDefaults.set(data, forKey: Keys.viewedStoryPostIds)
@@ -1161,8 +1198,9 @@ extension Store {
 
         // Booster evaluation runs after the completion is committed so
         // the freshly-added LogEntry counts toward the period total.
-        // Award-once-per-period is enforced inside the service.
-        evaluateBoosterAfterCompletion(task)
+        // Every first-class booster the task feeds (direct or via its
+        // category) is checked; award-once-per-period is enforced inside.
+        evaluateBoostersAfterCompletion(task)
 
         // Weekly-limit penalty resolution: apply or revoke once for
         // the week depending on whether the condition currently holds.
@@ -1201,9 +1239,9 @@ extension Store {
             return fact.kind == .mustDo || fact.kind == .returning
         }
 
-        // If undoing this completion drops the count below the booster
-        // threshold for the current period, pull the bonus entry back.
-        revokeBoosterIfNoLongerEarned(task)
+        // If undoing this completion drops any referencing booster below
+        // its threshold for the current period, pull the bonus entry back.
+        revokeBoostersIfNoLongerEarned(task)
 
         // Re-evaluate the weekly-limit penalty too: an undo can flip
         // a `.moreThan` rule out of penalty range, or push a

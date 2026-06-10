@@ -167,14 +167,38 @@ enum BoosterPeriod: String, Codable, CaseIterable, Equatable {
     }
 }
 
-/// An optional consistency rule attached to an `FFTask`. Completing the
-/// task at least `timesRequired` times within the current `period`
-/// awards `bonusPoints` on top of per-completion points. Unlike a
-/// streak, a missed day doesn't reset anything — only the count
-/// against the target matters.
+/// Legacy task-attached consistency rule. Retired in favor of the
+/// first-class `WeeklyBooster` below; retained only so tasks persisted
+/// with an inline booster still decode and can be migrated into a
+/// standalone `WeeklyBooster` on load. Do not attach new rules here.
 struct BoosterRule: Codable, Equatable {
     var enabled: Bool = false
     var timesRequired: Int = 3
+    var period: BoosterPeriod = .week
+    var bonusPoints: Int = 10
+}
+
+/// What a first-class `WeeklyBooster` watches. A booster can track a
+/// single task or an entire category (every task in that area counts
+/// toward the same threshold), decoupling the reward from any one task.
+enum BoosterReference: Codable, Equatable, Hashable {
+    case task(UUID)
+    case category(Category)
+}
+
+/// A standalone consistency reward. The referenced target (a task or a
+/// whole category) must be completed at least `threshold` times within
+/// the current `period` to award `bonusPoints` — all-or-nothing, once
+/// per period. Unlike a streak, a missed day doesn't reset anything;
+/// only the count against the target matters. Being first-class lets a
+/// booster watch a category spanning several tasks, or outlive any
+/// single task it once pointed at.
+struct WeeklyBooster: Codable, Identifiable, Equatable {
+    var id: UUID = UUID()
+    var seasonId: UUID? = nil
+    var name: String
+    var reference: BoosterReference
+    var threshold: Int = 3
     var period: BoosterPeriod = .week
     var bonusPoints: Int = 10
 }
@@ -613,6 +637,11 @@ struct LogEntry: Codable, Identifiable {
     /// Set when this entry credits a completed `Milestone` (a large,
     /// one-time reward landing on the day it was achieved).
     var milestoneId: UUID? = nil
+    /// Set when this entry is a first-class `WeeklyBooster` payout. Lets
+    /// award-once-per-period dedup and the day breakdown identify which
+    /// booster fired without leaning on `taskId`. `nil` for non-booster
+    /// entries and entries persisted before boosters became first-class.
+    var boosterId: UUID? = nil
     /// The amount logged for a tiered / quantity task (hours, reps, steps),
     /// kept so the row can show what was logged and so an edit can
     /// recompute. `nil` for flat tasks and non-task entries.

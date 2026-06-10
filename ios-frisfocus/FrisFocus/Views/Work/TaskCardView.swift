@@ -50,8 +50,10 @@ struct TaskCardView: View {
         todayEntry?.pointsEarned ?? task.nominalValue
     }
 
-    private var boosterStatus: (progress: Int, required: Int, earned: Bool, period: BoosterPeriod, bonusPoints: Int)? {
-        store.boosterStatus(for: task)
+    /// Every first-class booster this task feeds — directly or because a
+    /// booster watches the task's whole category.
+    private var referencingBoosters: [WeeklyBooster] {
+        store.boosters(referencing: task)
     }
 
     private var penaltyStatus: (count: Int, threshold: Int, condition: PenaltyCondition, penaltyPoints: Int, breached: Bool)? {
@@ -89,15 +91,16 @@ struct TaskCardView: View {
                         .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 }
 
-                if boosterStatus != nil || penaltyStatus != nil {
+                if !referencingBoosters.isEmpty || penaltyStatus != nil {
                     HStack(spacing: 6) {
-                        if let status = boosterStatus {
+                        ForEach(referencingBoosters) { booster in
+                            let status = store.boosterStatus(for: booster)
                             BoosterProgressChip(
                                 progress: status.progress,
                                 required: status.required,
                                 earned: status.earned,
                                 period: status.period,
-                                category: task.category
+                                category: boosterCategory(booster)
                             )
                         }
                         if let p = penaltyStatus {
@@ -226,6 +229,13 @@ struct TaskCardView: View {
     }
 
     // MARK: - Action
+
+    /// Color anchor for a booster chip on this card: the watched category
+    /// for a category booster, otherwise this task's category.
+    private func boosterCategory(_ booster: WeeklyBooster) -> Category {
+        if case .category(let cat) = booster.reference { return cat }
+        return task.category
+    }
 
     private func toggle() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()

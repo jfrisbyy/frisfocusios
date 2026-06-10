@@ -29,6 +29,7 @@ struct SeasonExpandedView: View {
     @State private var showCaptureSheet: Bool = false
     @State private var showAvoidanceManager: Bool = false
     @State private var showHabitTrains: Bool = false
+    @State private var showBoosters: Bool = false
     @State private var showMilestones: Bool = false
     @State private var showSettings: Bool = false
     @State private var topSafeInset: CGFloat = 0
@@ -115,6 +116,10 @@ struct SeasonExpandedView: View {
         }
         .sheet(isPresented: $showHabitTrains) {
             HabitTrainsManagerView()
+                .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showBoosters) {
+            BoosterManagerView()
                 .presentationDetents([.large])
         }
         .sheet(isPresented: $showMilestones) {
@@ -475,6 +480,11 @@ struct SeasonExpandedView: View {
             libraryButton(label: "Trains", iconName: "circle.hexagongrid") {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 showHabitTrains = true
+            }
+
+            libraryButton(label: "Boosters", iconName: "sparkles") {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showBoosters = true
             }
 
             Spacer()

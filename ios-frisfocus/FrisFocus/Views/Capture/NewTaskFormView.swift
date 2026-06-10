@@ -40,12 +40,6 @@ struct NewTaskFormView: View {
     @State private var skipPenaltyEnabled: Bool
     @State private var skipPenalty: Int
 
-    // Booster
-    @State private var boosterEnabled: Bool
-    @State private var boosterTimesRequired: Int
-    @State private var boosterPeriod: BoosterPeriod
-    @State private var boosterBonusPoints: Int
-
     // Weekly-limit penalty
     @State private var penaltyEnabled: Bool
     @State private var penaltyCondition: PenaltyCondition
@@ -78,12 +72,6 @@ struct NewTaskFormView: View {
         _skipPenaltyEnabled = State(initialValue: (skip ?? 0) < 0)
         _skipPenalty = State(initialValue: skip ?? -5)
 
-        let booster = editing?.booster
-        _boosterEnabled = State(initialValue: booster?.enabled ?? false)
-        _boosterTimesRequired = State(initialValue: booster?.timesRequired ?? 3)
-        _boosterPeriod = State(initialValue: booster?.period ?? .week)
-        _boosterBonusPoints = State(initialValue: booster?.bonusPoints ?? 10)
-
         let penalty = editing?.penalty
         _penaltyEnabled = State(initialValue: penalty?.enabled ?? false)
         _penaltyCondition = State(initialValue: penalty?.condition ?? .moreThan)
@@ -94,10 +82,6 @@ struct NewTaskFormView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let editing {
-                    BoosterReadoutSection(task: editing)
-                }
-
                 Section {
                     TextField("e.g. Lift — push day", text: $title, axis: .vertical)
                         .font(.sans(16, weight: .regular))
@@ -116,7 +100,6 @@ struct NewTaskFormView: View {
                     Text("Pinned Tasks appear on Today's Plan on the home screen.")
                 }
 
-                boosterSection
                 weeklyLimitSection
             }
             .scrollContentBackground(.hidden)
@@ -321,51 +304,6 @@ struct NewTaskFormView: View {
         }
     }
 
-    // MARK: - Booster
-
-    private var boosterSection: some View {
-        Section {
-            Toggle("Booster", isOn: $boosterEnabled.animation(.easeInOut(duration: 0.2)))
-
-            if boosterEnabled {
-                Stepper(value: $boosterTimesRequired, in: 1...30) {
-                    HStack {
-                        Text("Times required")
-                        Spacer()
-                        Text("\(boosterTimesRequired)\u{00D7}")
-                            .font(.serif(17, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                }
-
-                Picker("Period", selection: $boosterPeriod) {
-                    Text("Week").tag(BoosterPeriod.week)
-                    Text("Month").tag(BoosterPeriod.month)
-                }
-                .pickerStyle(.segmented)
-
-                Stepper(value: $boosterBonusPoints, in: 1...100) {
-                    HStack {
-                        Text("Bonus points")
-                        Spacer()
-                        Text("+\(boosterBonusPoints)")
-                            .font(.serif(17, weight: .medium))
-                            .foregroundStyle(Theme.alertGreen)
-                    }
-                }
-
-                Text(boosterPreviewSentence)
-                    .font(.serifItalic(13))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                    .padding(.top, 2)
-            }
-        } header: {
-            Text("Booster")
-        } footer: {
-            Text("A count-toward-a-target reward. Miss a day, no problem — only the count by the end of the \(boosterPeriod.displayName) matters.")
-        }
-    }
-
     // MARK: - Weekly limit
 
     private var weeklyLimitSection: some View {
@@ -417,12 +355,6 @@ struct NewTaskFormView: View {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var boosterPreviewSentence: String {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = trimmed.isEmpty ? "this task" : trimmed
-        return "Complete \(name) \(boosterTimesRequired) times per \(boosterPeriod.displayName) to earn +\(boosterBonusPoints) bonus points."
-    }
-
     private var penaltyPreviewSentence: String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = trimmed.isEmpty ? "this task" : trimmed
@@ -454,14 +386,6 @@ struct NewTaskFormView: View {
         let resolvedValue = scoringType == .flat ? pointValue : config.headlineValue(flatValue: pointValue)
         let resolvedSkip: Int? = skipPenaltyEnabled ? min(-1, skipPenalty) : nil
 
-        let boosterRule: BoosterRule? = boosterEnabled
-            ? BoosterRule(
-                enabled: true,
-                timesRequired: boosterTimesRequired,
-                period: boosterPeriod,
-                bonusPoints: boosterBonusPoints
-            )
-            : nil
         let penaltyRule: PenaltyRule? = penaltyEnabled
             ? PenaltyRule(
                 enabled: true,
@@ -486,7 +410,6 @@ struct NewTaskFormView: View {
                     updated.pinSchedule = .none
                 }
             }
-            updated.booster = boosterRule
             updated.penalty = penaltyRule
             store.tasks[idx] = updated
             store.evaluatePenaltyForTask(updated)
@@ -497,7 +420,6 @@ struct NewTaskFormView: View {
                 pointValue: resolvedValue,
                 skipPenalty: resolvedSkip,
                 pinSchedule: pinToToday ? .today : .none,
-                booster: boosterRule,
                 penalty: penaltyRule,
                 scoring: config
             )
@@ -508,45 +430,6 @@ struct NewTaskFormView: View {
 
         dismiss()
         onSave()
-    }
-}
-
-// MARK: - Booster readout (edit mode)
-//
-// Quiet status block at the top of an edit-task form: progress chip plus,
-// when earned, the date the booster crossed the line in the current period.
-
-private struct BoosterReadoutSection: View {
-    @Environment(Store.self) private var store
-    let task: FFTask
-
-    var body: some View {
-        if let status = store.boosterStatus(for: task) {
-            Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    BoosterProgressChip(
-                        progress: status.progress,
-                        required: status.required,
-                        earned: status.earned,
-                        period: status.period,
-                        category: task.category
-                    )
-
-                    Text("Complete \(task.title) \(status.required) times per \(status.period.displayName) to earn +\(status.bonusPoints) bonus points.")
-                        .font(.serifItalic(13))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.7))
-
-                    if status.earned, let earnedOn = store.boosterEarnedDate(for: task) {
-                        Text("Earned \(earnedOn.formatted(date: .abbreviated, time: .omitted)) \u{00B7} +\(status.bonusPoints) pts")
-                            .font(.sans(11, weight: .medium))
-                            .foregroundStyle(Theme.alertGreen)
-                    }
-                }
-                .padding(.vertical, 4)
-            } header: {
-                Text("Booster status")
-            }
-        }
     }
 }
 
