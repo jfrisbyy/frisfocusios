@@ -114,9 +114,19 @@ extension Store {
     // MARK: - Standalone avoidance items
 
     /// Add a new avoidance item. Trims whitespace off the name so
-    /// accidental padding doesn't break sort order.
+    /// accidental padding doesn't break sort order. `negativeType`
+    /// selects the shape: `.perInstance` charges every occurrence;
+    /// `.frequencyThreshold` is free up to `freeCount` per `window`.
     @discardableResult
-    func addAvoidanceItem(name: String, pointsPerOccurrence: Int, note: String? = nil, category: Category? = nil) -> AvoidanceItem {
+    func addAvoidanceItem(
+        name: String,
+        pointsPerOccurrence: Int,
+        note: String? = nil,
+        category: Category? = nil,
+        negativeType: NegativeType = .perInstance,
+        window: NegativeWindow = .weekly,
+        freeCount: Int = 0
+    ) -> AvoidanceItem {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
         let item = AvoidanceItem(
@@ -124,19 +134,24 @@ extension Store {
             pointsPerOccurrence: max(1, pointsPerOccurrence),
             seasonId: currentSeason.id,
             note: (cleanNote?.isEmpty ?? true) ? nil : cleanNote,
-            category: category
+            category: category,
+            negativeType: negativeType,
+            window: window,
+            freeCount: max(0, freeCount)
         )
         avoidanceItems.append(item)
         persistAll()
         return item
     }
 
-    /// Update an existing avoidance item's name / point cost / note.
+    /// Update an existing avoidance item's name / point cost / note /
+    /// shape. Clamps the value and free count to sane minimums.
     func updateAvoidanceItem(_ item: AvoidanceItem) {
         guard let idx = avoidanceItems.firstIndex(where: { $0.id == item.id }) else { return }
         var updated = item
         updated.name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
         updated.pointsPerOccurrence = max(1, item.pointsPerOccurrence)
+        updated.freeCount = max(0, item.freeCount)
         avoidanceItems[idx] = updated
         persistAll()
     }
@@ -154,17 +169,21 @@ extension Store {
         persistAll()
     }
 
-    /// Log a single occurrence of an avoidance item. Deducts the
-    /// configured points immediately by writing a matching `.penalty`
-    /// LogEntry, then records the occurrence so the manager can show
-    /// week-to-date counts.
+    /// Log a single occurrence of an avoidance item. The deduction
+    /// depends on the shape: `.perInstance` always charges the value;
+    /// `.frequencyThreshold` charges 0 while the occurrence still sits
+    /// inside the free allowance, then the full value once over the line.
+    /// A matching `.penalty` LogEntry (possibly worth 0) folds the
+    /// deduction into the existing daily / weekly score, and the
+    /// occurrence drives the manager's running counter.
     func logAvoidanceOccurrence(_ item: AvoidanceItem) {
         let now = Date()
+        let deduction = avoidanceDeduction(for: item, at: now)
         let entry = LogEntry(
             date: now,
             taskId: nil,
             todoId: nil,
-            pointsEarned: -abs(item.pointsPerOccurrence),
+            pointsEarned: -deduction,
             entryType: .penalty
         )
         logEntries.append(entry)
@@ -172,7 +191,7 @@ extension Store {
         let occurrence = AvoidanceOccurrence(
             itemId: item.id,
             date: now,
-            pointsDeducted: abs(item.pointsPerOccurrence),
+            pointsDeducted: deduction,
             logEntryId: entry.id
         )
         avoidanceOccurrences.append(occurrence)
@@ -204,5 +223,81 @@ extension Store {
         occurrencesThisWeek(for: item)
             .map(\.pointsDeducted)
             .reduce(0, +)
+    }
+
+    // MARK: - Negative-shape windows & deduction
+
+    /// The interval the item's running counter spans: the configured
+    /// weekly/monthly window for a frequency-threshold negative, and the
+    /// week for a per-instance negative (which has no free allowance but
+    /// still reads its week-to-date count in the manager).
+    func avoidanceWindowInterval(for item: AvoidanceItem, reference: Date = Date()) -> DateInterval {
+        switch item.negativeType {
+        case .frequencyThreshold:
+            return item.window == .monthly
+                ? currentMonthInterval(reference: reference)
+                : currentWeekInterval(reference: reference)
+        case .perInstance:
+            return currentWeekInterval(reference: reference)
+        }
+    }
+
+    /// Occurrences of `item` inside its current window, newest first.
+    func occurrencesInWindow(for item: AvoidanceItem, reference: Date = Date()) -> [AvoidanceOccurrence] {
+        let interval = avoidanceWindowInterval(for: item, reference: reference)
+        return avoidanceOccurrences
+            .filter { $0.itemId == item.id && interval.contains($0.date) }
+            .sorted { $0.date > $1.date }
+    }
+
+    /// How many occurrences sit inside the item's current window.
+    func avoidanceCountInWindow(for item: AvoidanceItem, reference: Date = Date()) -> Int {
+        occurrencesInWindow(for: item, reference: reference).count
+    }
+
+    /// Free occurrences still available before deductions begin this
+    /// window. Always 0 for per-instance items (no free allowance).
+    func avoidanceFreeRemaining(for item: AvoidanceItem, reference: Date = Date()) -> Int {
+        guard item.negativeType == .frequencyThreshold else { return 0 }
+        let used = avoidanceCountInWindow(for: item, reference: reference)
+        return max(0, item.freeCount - used)
+    }
+
+    /// Occurrences past the free line this window — the ones that cost
+    /// points. Equals the full count for per-instance negatives.
+    func avoidanceChargedCount(for item: AvoidanceItem, reference: Date = Date()) -> Int {
+        switch item.negativeType {
+        case .perInstance:
+            return avoidanceCountInWindow(for: item, reference: reference)
+        case .frequencyThreshold:
+            return max(0, avoidanceCountInWindow(for: item, reference: reference) - item.freeCount)
+        }
+    }
+
+    /// Total points deducted by `item` inside its current window.
+    func avoidancePointsInWindow(for item: AvoidanceItem, reference: Date = Date()) -> Int {
+        occurrencesInWindow(for: item, reference: reference)
+            .map(\.pointsDeducted)
+            .reduce(0, +)
+    }
+
+    /// Points the next occurrence logged at `date` would cost given the
+    /// shape and the count already inside the window. per-instance always
+    /// charges the value; frequency-threshold charges 0 until the free
+    /// allowance is spent, then the full value for each one beyond it.
+    func avoidanceDeduction(for item: AvoidanceItem, at date: Date = Date()) -> Int {
+        let value = abs(item.pointsPerOccurrence)
+        switch item.negativeType {
+        case .perInstance:
+            return value
+        case .frequencyThreshold:
+            let interval = avoidanceWindowInterval(for: item, reference: date)
+            let priorCount = avoidanceOccurrences.filter {
+                $0.itemId == item.id && interval.contains($0.date)
+            }.count
+            // This occurrence is at position priorCount + 1 (1-indexed):
+            // free while that position is within the allowance.
+            return (priorCount + 1) <= max(0, item.freeCount) ? 0 : value
+        }
     }
 }

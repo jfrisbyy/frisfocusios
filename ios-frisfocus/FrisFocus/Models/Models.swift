@@ -247,14 +247,65 @@ struct HabitTrain: Codable, Identifiable, Equatable {
     var createdAt: Date = Date()
 }
 
+// MARK: - Negative shapes
+
+/// How a negative (avoidance) behavior turns a logged occurrence into a
+/// point deduction.
+///
+/// - `.perInstance` — bad every time, no acceptable amount. Each logged
+///   occurrence deducts the full value.
+/// - `.frequencyThreshold` — fine in moderation, costly only in excess
+///   (junk food, alcohol, takeout spend). Free up to `freeCount` times
+///   inside the window; every occurrence past the line deducts the value.
+enum NegativeType: String, Codable, Equatable, CaseIterable {
+    case perInstance
+    case frequencyThreshold
+
+    var displayName: String {
+        switch self {
+        case .perInstance:        return "Every time"
+        case .frequencyThreshold: return "In excess"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .perInstance:
+            return "Bad every time \u{2014} each one costs points."
+        case .frequencyThreshold:
+            return "Fine in moderation \u{2014} free up to a limit, then it counts."
+        }
+    }
+}
+
+/// The window over which a frequency-threshold negative's free allowance
+/// is counted and reset.
+enum NegativeWindow: String, Codable, Equatable, CaseIterable {
+    case weekly, monthly
+
+    /// Bare noun for inline copy: "this week" / "this month".
+    var displayName: String {
+        switch self {
+        case .weekly:  return "week"
+        case .monthly: return "month"
+        }
+    }
+}
+
 // MARK: - Avoidance Items (standalone)
 
 /// A standalone behavior the user wants to reduce — not tied to a
-/// positive task. Each logged occurrence deducts
-/// `pointsPerOccurrence` from the weekly total in real time.
+/// positive task. A `.perInstance` negative deducts `pointsPerOccurrence`
+/// every time it's logged; a `.frequencyThreshold` negative is free up to
+/// `freeCount` occurrences inside its `window`, then deducts the value
+/// for each one past the line. Deductions fold into the score via
+/// matching `.penalty` LogEntries.
 struct AvoidanceItem: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
+    /// The point value of a chargeable occurrence. For `.perInstance`
+    /// every occurrence costs this; for `.frequencyThreshold` only the
+    /// occurrences past `freeCount` cost this.
     var pointsPerOccurrence: Int
     var seasonId: UUID? = nil
     var note: String? = nil
@@ -262,7 +313,83 @@ struct AvoidanceItem: Codable, Identifiable, Equatable {
     /// pulls down (e.g. a "doomscroll" negative under Work). Optional so
     /// occurrences persisted before this field still decode.
     var category: Category? = nil
+    /// Which negative shape this is. Defaults to `.perInstance` so items
+    /// persisted before negative shapes existed read as flat every-time
+    /// negatives with no behavior change.
+    var negativeType: NegativeType = .perInstance
+    /// The free-allowance window for `.frequencyThreshold`. Ignored by
+    /// `.perInstance`.
+    var window: NegativeWindow = .weekly
+    /// How many occurrences are free inside the window before deductions
+    /// begin. Ignored by `.perInstance`.
+    var freeCount: Int = 0
     var createdAt: Date = Date()
+
+    // Backward-compatible decoding so avoidance items persisted before
+    // `negativeType` / `window` / `freeCount` existed still hydrate.
+    // Missing keys fall through to the property defaults.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, pointsPerOccurrence, seasonId, note, category,
+             negativeType, window, freeCount, createdAt
+    }
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        pointsPerOccurrence: Int,
+        seasonId: UUID? = nil,
+        note: String? = nil,
+        category: Category? = nil,
+        negativeType: NegativeType = .perInstance,
+        window: NegativeWindow = .weekly,
+        freeCount: Int = 0,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.pointsPerOccurrence = pointsPerOccurrence
+        self.seasonId = seasonId
+        self.note = note
+        self.category = category
+        self.negativeType = negativeType
+        self.window = window
+        self.freeCount = freeCount
+        self.createdAt = createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.name = try c.decode(String.self, forKey: .name)
+        self.pointsPerOccurrence = try c.decode(Int.self, forKey: .pointsPerOccurrence)
+        self.seasonId = try c.decodeIfPresent(UUID.self, forKey: .seasonId)
+        self.note = try c.decodeIfPresent(String.self, forKey: .note)
+        self.category = try c.decodeIfPresent(Category.self, forKey: .category)
+        self.negativeType = try c.decodeIfPresent(NegativeType.self, forKey: .negativeType) ?? .perInstance
+        self.window = try c.decodeIfPresent(NegativeWindow.self, forKey: .window) ?? .weekly
+        self.freeCount = try c.decodeIfPresent(Int.self, forKey: .freeCount) ?? 0
+        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(pointsPerOccurrence, forKey: .pointsPerOccurrence)
+        try c.encodeIfPresent(seasonId, forKey: .seasonId)
+        try c.encodeIfPresent(note, forKey: .note)
+        try c.encodeIfPresent(category, forKey: .category)
+        try c.encode(negativeType, forKey: .negativeType)
+        try c.encode(window, forKey: .window)
+        try c.encode(freeCount, forKey: .freeCount)
+        try c.encode(createdAt, forKey: .createdAt)
+    }
+}
+
+extension AvoidanceItem {
+    /// True when this negative uses the free-allowance / running-counter
+    /// shape rather than charging every occurrence.
+    var usesFreeAllowance: Bool { negativeType == .frequencyThreshold }
 }
 
 /// A single timestamped occurrence of an `AvoidanceItem`.

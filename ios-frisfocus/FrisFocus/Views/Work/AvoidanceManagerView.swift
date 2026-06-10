@@ -78,7 +78,7 @@ struct AvoidanceManagerView: View {
             Text("Private accounting")
                 .font(.serif(20, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Name a few things you'd like to reduce this season. Logging an occurrence quietly deducts points from your weekly total. Never shown to anyone else.")
+            Text("Name a few things you'd like to reduce this season. Some cost points every time; others stay free until you pass a limit you set. Never shown to anyone else.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.7))
                 .fixedSize(horizontal: false, vertical: true)
@@ -169,7 +169,7 @@ private struct AvoidanceItemCard: View {
                         .foregroundStyle(Theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text("\u{2212}\(item.pointsPerOccurrence) pts each")
+                    Text(subtitleText)
                         .font(.sans(11, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.6))
 
@@ -196,13 +196,22 @@ private struct AvoidanceItemCard: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                statBlock(value: "\(occurrenceCount)", label: occurrenceLabel)
-                Divider()
-                    .frame(height: 22)
-                    .overlay(Theme.textPrimary.opacity(0.1))
-                statBlock(value: "\u{2212}\(pointsThisWeek)", label: "pts this week")
-                Spacer()
+            if item.usesFreeAllowance {
+                FrequencyMeter(
+                    count: windowCount,
+                    freeCount: item.freeCount,
+                    window: item.window,
+                    pointsLost: pointsThisWindow
+                )
+            } else {
+                HStack(spacing: 8) {
+                    statBlock(value: "\(occurrenceCount)", label: occurrenceLabel)
+                    Divider()
+                        .frame(height: 22)
+                        .overlay(Theme.textPrimary.opacity(0.1))
+                    statBlock(value: "\u{2212}\(pointsThisWeek)", label: "pts this week")
+                    Spacer()
+                }
             }
 
             HStack(spacing: 8) {
@@ -266,6 +275,26 @@ private struct AvoidanceItemCard: View {
         store.avoidancePointsThisWeek(for: item)
     }
 
+    /// Occurrences inside the item's configured window (week or month).
+    private var windowCount: Int {
+        store.avoidanceCountInWindow(for: item)
+    }
+
+    /// Points deducted inside the item's window.
+    private var pointsThisWindow: Int {
+        store.avoidancePointsInWindow(for: item)
+    }
+
+    /// Line under the name describing the shape and its cost.
+    private var subtitleText: String {
+        switch item.negativeType {
+        case .perInstance:
+            return "\u{2212}\(item.pointsPerOccurrence) pts each time"
+        case .frequencyThreshold:
+            return "Free up to \(item.freeCount)/\(item.window.displayName) \u{00B7} \u{2212}\(item.pointsPerOccurrence) after"
+        }
+    }
+
     @ViewBuilder
     private func statBlock(value: String, label: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -275,6 +304,101 @@ private struct AvoidanceItemCard: View {
             Text(label)
                 .font(.sans(10, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.55))
+        }
+    }
+}
+
+// MARK: - Frequency meter
+//
+// The neutral running counter for a frequency-threshold negative. The
+// free allowance is always visible *before* it's crossed, so the count
+// approaching the line is never an ambush. Stays calm (grey) until the
+// count exceeds the free count, then the overflow reads amber with the
+// points lost.
+
+private struct FrequencyMeter: View {
+    let count: Int
+    let freeCount: Int
+    let window: NegativeWindow
+    let pointsLost: Int
+
+    private var over: Int { max(0, count - freeCount) }
+    private var freeUsed: Int { min(count, max(0, freeCount)) }
+    private var freeLeft: Int { max(0, freeCount - count) }
+    private var isOver: Bool { over > 0 }
+
+    /// Pips read cleanly for small allowances; large ones use a bar.
+    private var usePips: Bool { freeCount + over <= 12 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if usePips { pips } else { bar }
+            statusLine
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var pips: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<max(freeCount, 0), id: \.self) { i in
+                Circle()
+                    .fill(i < freeUsed ? Theme.textPrimary.opacity(0.5) : Color.clear)
+                    .frame(width: 10, height: 10)
+                    .overlay(
+                        Circle().strokeBorder(Theme.textPrimary.opacity(0.28), lineWidth: 1)
+                    )
+            }
+            if isOver {
+                Rectangle()
+                    .fill(Theme.textPrimary.opacity(0.16))
+                    .frame(width: 1, height: 13)
+                    .padding(.horizontal, 1)
+                ForEach(0..<over, id: \.self) { _ in
+                    Circle()
+                        .fill(Theme.alertAmber)
+                        .frame(width: 10, height: 10)
+                }
+            }
+        }
+    }
+
+    private var bar: some View {
+        GeometryReader { geo in
+            let totalSlots = max(freeCount + over, 1)
+            let unit = geo.size.width / CGFloat(totalSlots)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.textPrimary.opacity(0.08))
+                HStack(spacing: 0) {
+                    Capsule()
+                        .fill(Theme.textPrimary.opacity(0.4))
+                        .frame(width: unit * CGFloat(freeUsed))
+                    if isOver {
+                        Capsule()
+                            .fill(Theme.alertAmber)
+                            .frame(width: unit * CGFloat(over))
+                    }
+                }
+            }
+        }
+        .frame(height: 8)
+    }
+
+    private var statusLine: some View {
+        HStack(spacing: 6) {
+            Text("\(min(count, freeCount)) of \(freeCount) this \(window.displayName)")
+                .font(.sans(11, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.62))
+            if isOver {
+                Text("\u{00B7}").foregroundStyle(Theme.textPrimary.opacity(0.3))
+                Text("\(over) over \u{00B7} \u{2212}\(pointsLost) pts")
+                    .font(.sans(11, weight: .semibold))
+                    .foregroundStyle(Theme.alertAmber)
+            } else if freeLeft == 0 {
+                Text("\u{00B7}").foregroundStyle(Theme.textPrimary.opacity(0.3))
+                Text("at your limit")
+                    .font(.sans(11, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+            }
         }
     }
 }
@@ -291,6 +415,9 @@ private struct AvoidanceItemFormView: View {
     @State private var pointsPerOccurrence: Int
     @State private var note: String
     @State private var category: Category?
+    @State private var negativeType: NegativeType
+    @State private var window: NegativeWindow
+    @State private var freeCount: Int
 
     init(editing: AvoidanceItem?) {
         self.editing = editing
@@ -298,6 +425,10 @@ private struct AvoidanceItemFormView: View {
         _pointsPerOccurrence = State(initialValue: editing?.pointsPerOccurrence ?? 5)
         _note = State(initialValue: editing?.note ?? "")
         _category = State(initialValue: editing?.category)
+        _negativeType = State(initialValue: editing?.negativeType ?? .perInstance)
+        _window = State(initialValue: editing?.window ?? .weekly)
+        let existingFree = editing?.freeCount ?? 0
+        _freeCount = State(initialValue: existingFree > 0 ? existingFree : 2)
     }
 
     var body: some View {
@@ -314,19 +445,56 @@ private struct AvoidanceItemFormView: View {
                 }
 
                 Section {
+                    Picker("Shape", selection: $negativeType.animation(.easeInOut(duration: 0.2))) {
+                        ForEach(NegativeType.allCases, id: \.self) { type in
+                            Text(type.displayName).tag(type)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if negativeType == .frequencyThreshold {
+                        Picker("Window", selection: $window) {
+                            Text("Per week").tag(NegativeWindow.weekly)
+                            Text("Per month").tag(NegativeWindow.monthly)
+                        }
+                        .pickerStyle(.segmented)
+
+                        Stepper(value: $freeCount, in: 1...30) {
+                            HStack {
+                                Text("Free up to")
+                                Spacer()
+                                Text("\(freeCount)\u{00D7}")
+                                    .font(.serif(17, weight: .medium))
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Shape")
+                } footer: {
+                    Text(negativeType.blurb)
+                }
+
+                Section {
                     Stepper(value: $pointsPerOccurrence, in: 1...50) {
                         HStack {
-                            Text("Per occurrence")
+                            Text(costRowLabel)
                             Spacer()
                             Text("\u{2212}\(pointsPerOccurrence) pts")
                                 .font(.serif(17, weight: .medium))
                                 .foregroundStyle(Theme.alertAmber)
                         }
                     }
+
+                    if negativeType == .frequencyThreshold {
+                        Text(freqPreview)
+                            .font(.serifItalic(13))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                    }
                 } header: {
                     Text("Cost")
                 } footer: {
-                    Text("How many points each logged occurrence quietly deducts from your weekly total.")
+                    Text(costFooter)
                 }
 
                 Section {
@@ -379,6 +547,23 @@ private struct AvoidanceItemFormView: View {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var costRowLabel: String {
+        negativeType == .frequencyThreshold ? "Past the limit" : "Per occurrence"
+    }
+
+    private var costFooter: String {
+        switch negativeType {
+        case .perInstance:
+            return "How many points each logged occurrence quietly deducts from your weekly total."
+        case .frequencyThreshold:
+            return "The free ones stay neutral \u{2014} they never cost points. Each occurrence past the limit deducts this from your \(window.displayName)ly total."
+        }
+    }
+
+    private var freqPreview: String {
+        "First \(freeCount) this \(window.displayName) are free \u{00B7} each one after is \u{2212}\(pointsPerOccurrence) pts."
+    }
+
     private func save() {
         guard canSave else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -389,13 +574,19 @@ private struct AvoidanceItemFormView: View {
             updated.pointsPerOccurrence = pointsPerOccurrence
             updated.note = note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : note
             updated.category = category
+            updated.negativeType = negativeType
+            updated.window = window
+            updated.freeCount = freeCount
             store.updateAvoidanceItem(updated)
         } else {
             store.addAvoidanceItem(
                 name: name,
                 pointsPerOccurrence: pointsPerOccurrence,
                 note: note,
-                category: category
+                category: category,
+                negativeType: negativeType,
+                window: window,
+                freeCount: freeCount
             )
         }
         dismiss()
