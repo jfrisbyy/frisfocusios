@@ -4,9 +4,9 @@
 //
 //  The "Link a routine" flow (middle reference panel). Two steps in one
 //  scroll: choose a Cadence routine (or a passive outcome rule), then
-//  decide what it's worth — points (capped), season, priority,
-//  recurrence, optional skip penalty. A live preview shows exactly how
-//  it will appear before you add it.
+//  decide what it's worth — points (capped), season, recurrence, and an
+//  optional skip penalty. A live preview shows exactly how it will
+//  appear before you add it.
 //
 //  The scoring decision lives entirely on the FrisFocus side; the stored
 //  result is a `CadenceLink`.
@@ -30,8 +30,8 @@ struct LinkCadenceRoutineView: View {
 
     @State private var choice: Choice?
     @State private var points: Int = 8
-    @State private var tier: Tier = .should
     @State private var recurrence: CadenceRecurrence = .nightly
+    @State private var skipPenaltyEnabled: Bool = false
     @State private var skipPenalty: Int = -5
     @State private var threshold: Double = CadenceOutcomeKind.sleepDuration.defaultThreshold
 
@@ -156,15 +156,15 @@ struct LinkCadenceRoutineView: View {
                     rowDivider
                 }
                 staticRow(label: "Season", value: store.currentSeason.name)
-                rowDivider
-                priorityRow
                 if !isOutcome {
                     rowDivider
                     repeatsRow
-                }
-                if !isOutcome && tier == .must {
                     rowDivider
-                    skipPenaltyRow
+                    skipPenaltyToggleRow
+                    if skipPenaltyEnabled {
+                        rowDivider
+                        skipPenaltyRow
+                    }
                 }
             }
             .background(Color.white)
@@ -230,24 +230,15 @@ struct LinkCadenceRoutineView: View {
         .padding(.vertical, 14)
     }
 
-    private var priorityRow: some View {
-        HStack {
-            Text("Priority")
+    private var skipPenaltyToggleRow: some View {
+        Toggle(isOn: $skipPenaltyEnabled.animation(.easeInOut(duration: 0.2))) {
+            Text("Skip penalty")
                 .font(.sans(15, weight: .regular))
                 .foregroundStyle(Theme.textPrimary)
-            Spacer()
-            Menu {
-                Picker("Priority", selection: $tier) {
-                    Text("Must").tag(Tier.must)
-                    Text("Should").tag(Tier.should)
-                    Text("Could").tag(Tier.could)
-                }
-            } label: {
-                menuValue(tier.label.capitalized)
-            }
         }
+        .tint(Theme.cadenceLavender)
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.vertical, 10)
     }
 
     private var repeatsRow: some View {
@@ -272,7 +263,7 @@ struct LinkCadenceRoutineView: View {
 
     private var skipPenaltyRow: some View {
         HStack {
-            Text("Skip penalty")
+            Text("If skipped")
                 .font(.sans(15, weight: .regular))
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
@@ -457,9 +448,8 @@ struct LinkCadenceRoutineView: View {
                 category: routineCategory(r.kind),
                 points: capped,
                 seasonId: store.currentSeason.id,
-                tier: tier,
                 recurrence: recurrence,
-                skipPenalty: (tier == .must && skipPenalty < 0) ? skipPenalty : nil
+                skipPenalty: (skipPenaltyEnabled && skipPenalty < 0) ? skipPenalty : nil
             )
         case .outcome(let kind):
             return CadenceLink(
@@ -471,7 +461,6 @@ struct LinkCadenceRoutineView: View {
                 threshold: threshold,
                 points: capped,
                 seasonId: store.currentSeason.id,
-                tier: tier,
                 recurrence: recurrence
             )
         }

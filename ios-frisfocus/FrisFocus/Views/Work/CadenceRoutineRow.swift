@@ -224,7 +224,6 @@ private struct SkipPenaltyTag: View {
         estMinutes: 10,
         category: .health,
         points: 10,
-        tier: .should,
         recurrence: .nightly
     )
     return VStack(spacing: 10) {

@@ -170,7 +170,7 @@ enum CadenceRecurrence: String, Codable, Equatable, CaseIterable, Identifiable {
 // MARK: - Link record
 
 /// A FrisFocus-side link record. The scoring decision lives here:
-/// points, season, tier, recurrence — all owned by FrisFocus. Bound to
+/// points, season, recurrence — all owned by FrisFocus. Bound to
 /// an Esengo `accountId` so links only surface for the account that
 /// created them. Persisted locally with the rest of the FrisFocus graph.
 struct CadenceLink: Codable, Identifiable, Equatable {
@@ -195,7 +195,6 @@ struct CadenceLink: Codable, Identifiable, Equatable {
     // scoring
     var points: Int = 5
     var seasonId: UUID?
-    var tier: Tier = .should
     var recurrence: CadenceRecurrence = .nightly
     /// Opt-in negative penalty for a Must-level launch-run routine. Nil
     /// (the default) means the link enriches without pressure — exempt
