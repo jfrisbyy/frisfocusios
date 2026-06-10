@@ -497,7 +497,9 @@ struct DirectShareViewerView: View {
     // MARK: Playback state
 
     @State private var currentIndex: Int = 0
-    @State private var segmentProgress: Double = 0
+    /// 25 Hz segment progress, boxed so ticks re-render only the bars
+    /// leaf — not this whole player (see `PlaybackClock`).
+    @State private var clock = PlaybackClock()
     @State private var isPaused: Bool = false
     @State private var dragOffset: CGFloat = 0
     @State private var pressStart: Date?
@@ -518,9 +520,17 @@ struct DirectShareViewerView: View {
         return store.mediaAsset(forDirectShare: share)
     }
 
-    private var loadedImage: UIImage? {
-        guard let url = currentMedia?.localURL else { return nil }
-        return DirectShareFormat.image(at: url)
+    /// Decoded once per segment (onAppear / index change). The old
+    /// computed property re-read and re-decoded the file from disk on
+    /// every body evaluation.
+    @State private var loadedImage: UIImage?
+
+    private func loadCurrentImage() {
+        guard let url = currentMedia?.localURL else {
+            loadedImage = nil
+            return
+        }
+        loadedImage = DirectShareFormat.image(at: url)
     }
 
     private var currentDuration: TimeInterval {
@@ -570,33 +580,19 @@ struct DirectShareViewerView: View {
                 DispatchQueue.main.async { dismiss() }
                 return
             }
+            loadCurrentImage()
             markCurrentViewed()
         }
-        .onChange(of: currentIndex) { _, _ in markCurrentViewed() }
+        .onChange(of: currentIndex) { _, _ in
+            loadCurrentImage()
+            markCurrentViewed()
+        }
     }
 
     // MARK: - Progress bars
 
     private var progressBars: some View {
-        HStack(spacing: 4) {
-            ForEach(shares.indices, id: \.self) { idx in
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.textCream.opacity(0.28))
-                        Capsule()
-                            .fill(Theme.textCream)
-                            .frame(width: geo.size.width * fillFraction(for: idx))
-                    }
-                }
-                .frame(height: 2.5)
-            }
-        }
-    }
-
-    private func fillFraction(for idx: Int) -> Double {
-        if idx < currentIndex { return 1 }
-        if idx == currentIndex { return min(1, max(0, segmentProgress)) }
-        return 0
+        SegmentedProgressBars(count: shares.count, currentIndex: currentIndex, clock: clock)
     }
 
     // MARK: - Media
@@ -700,8 +696,8 @@ struct DirectShareViewerView: View {
     private func tickProgress() {
         guard !isPaused, currentShare != nil else { return }
         let increment = tick / max(0.1, currentDuration)
-        segmentProgress += increment
-        if segmentProgress >= 1 {
+        clock.progress += increment
+        if clock.progress >= 1 {
             advance()
         }
     }
@@ -712,15 +708,15 @@ struct DirectShareViewerView: View {
             return
         }
         currentIndex += 1
-        segmentProgress = 0
+        clock.progress = 0
     }
 
     private func goPrev() {
         if currentIndex == 0 {
-            segmentProgress = 0
+            clock.progress = 0
         } else {
             currentIndex -= 1
-            segmentProgress = 0
+            clock.progress = 0
         }
     }
 

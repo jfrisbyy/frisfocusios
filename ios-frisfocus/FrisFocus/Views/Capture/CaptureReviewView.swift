@@ -424,6 +424,16 @@ struct CaptureReviewView: View {
     @State private var thumbCache: [CaptureFilter: UIImage] = [:]
     @State private var canvasSize: CGSize = .zero
 
+    /// Downscaled bases for the live canvas and the filter chips. The
+    /// camera hands back a full-resolution photo (often 12MP+);
+    /// compositing that texture on every drag frame is what made moving
+    /// captions / stickers feel heavy, and running CIFilters over it on
+    /// the main thread hitched the filter strip. The canvas renders from
+    /// `displayBase` (capped near export resolution, so the flattened
+    /// JPEG is unchanged) and the 54pt chips from a tiny `chipBase`.
+    @State private var displayBase: UIImage?
+    @State private var chipBase: UIImage?
+
     @State private var showDiscardConfirm: Bool = false
 
     // Save-to-camera-roll state. `isSaving` swaps the top-bar download glyph
@@ -461,7 +471,7 @@ struct CaptureReviewView: View {
 
     private var filteredImage: UIImage {
         if let cached = filteredImageCache[selectedFilter] { return cached }
-        let out = selectedFilter.apply(to: sourceImage)
+        let out = selectedFilter.apply(to: displayBase ?? sourceImage)
         filteredImageCache[selectedFilter] = out
         return out
     }
@@ -472,29 +482,10 @@ struct CaptureReviewView: View {
         ZStack {
             Color.black.ignoresSafeArea()
             mediaCanvas
-            if !isEditing && !isDrawing {
-                chromeLayer
-            }
-            if isDrawing {
-                drawingChrome
-            }
-            if isEditing {
-                captionEditorOverlay
-            }
-            if isDraggingBlock && !isEditing && !isDrawing {
-                trashOverlay
-            }
-            if let sentToast {
-                sentToastView(sentToast)
-            }
+            overlayChrome
         }
         .preferredColorScheme(.dark)
         .statusBarHidden(true)
-        .animation(.easeInOut(duration: 0.18), value: isEditing)
-        .animation(.easeInOut(duration: 0.18), value: activeBlockId)
-        .animation(.easeInOut(duration: 0.18), value: isDraggingBlock)
-        .animation(.easeInOut(duration: 0.2), value: isDrawing)
-        .animation(.easeInOut(duration: 0.2), value: sentToast)
         .confirmationDialog(
             "Discard this post?",
             isPresented: $showDiscardConfirm,
@@ -521,6 +512,7 @@ struct CaptureReviewView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.hidden)
         }
+        .task { await prepareScaledBases() }
         .task {
             if var seed = initialTaskSticker, taskStickers.isEmpty {
                 seed.position = CGPoint(x: 0.5, y: 0.6)
@@ -534,6 +526,51 @@ struct CaptureReviewView: View {
                 audience = ShareAudience(everyone: false, friendIds: [friendId], circleIds: [])
             }
         }
+    }
+
+    // MARK: - Overlay chrome
+
+    /// Chrome, editor, trash and toast layers. The implicit animations
+    /// live here — scoped away from `mediaCanvas` — so selection / drag
+    /// state flips never schedule an animated layout pass over the
+    /// background image and the live sticker/caption layer.
+    @ViewBuilder
+    private var overlayChrome: some View {
+        Group {
+            if !isEditing && !isDrawing {
+                chromeLayer
+            }
+            if isDrawing {
+                drawingChrome
+            }
+            if isEditing {
+                captionEditorOverlay
+            }
+            if isDraggingBlock && !isEditing && !isDrawing {
+                trashOverlay
+            }
+            if let sentToast {
+                sentToastView(sentToast)
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: isEditing)
+        .animation(.easeInOut(duration: 0.18), value: activeBlockId)
+        .animation(.easeInOut(duration: 0.18), value: isDraggingBlock)
+        .animation(.easeInOut(duration: 0.2), value: isDrawing)
+        .animation(.easeInOut(duration: 0.2), value: sentToast)
+    }
+
+    /// Builds the downscaled display / chip bases off the main thread,
+    /// then resets the filter caches so they re-fill at display size.
+    private func prepareScaledBases() async {
+        let source = sourceImage
+        guard source.size.width > 0, source.size.height > 0 else { return }
+        let display = await source.scaledDown(maxPixelDimension: 2800)
+        let chip = await source.scaledDown(maxPixelDimension: 200)
+        displayBase = display ?? source
+        chipBase = chip ?? source
+        filteredImageCache = [:]
+        thumbCache = [:]
     }
 
     // MARK: - Media canvas
@@ -1051,11 +1088,17 @@ struct CaptureReviewView: View {
         } label: {
             VStack(spacing: 6) {
                 ZStack {
-                    Image(uiImage: thumb(for: filter))
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 54, height: 54)
-                        .clipShape(Circle())
+                    if let thumbImage = thumb(for: filter) {
+                        Image(uiImage: thumbImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 54, height: 54)
+                            .clipShape(Circle())
+                    } else {
+                        Circle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 54, height: 54)
+                    }
 
                     if isVideo {
                         filter.tintOverlay
@@ -1081,9 +1124,13 @@ struct CaptureReviewView: View {
         .accessibilityLabel("\(filter.label) filter")
     }
 
-    private func thumb(for filter: CaptureFilter) -> UIImage {
+    /// Chip thumbnails are filtered from the tiny `chipBase` — never
+    /// the full-resolution source. Returns `nil` (a neutral placeholder
+    /// chip) for the first frames until the base is prepared.
+    private func thumb(for filter: CaptureFilter) -> UIImage? {
         if let cached = thumbCache[filter] { return cached }
-        let img = filter.apply(to: sourceImage)
+        guard let base = chipBase else { return nil }
+        let img = filter.apply(to: base)
         thumbCache[filter] = img
         return img
     }
@@ -2359,5 +2406,23 @@ private struct DraggableCaptionView: View {
             .onEnded { value in
                 onCommitRotation(block.rotation + value.rotation)
             }
+    }
+}
+
+// MARK: - Downscaling
+
+private extension UIImage {
+    /// Aspect-preserving downscale capped at `maxPixelDimension` on the
+    /// longest side, decoded and drawn off the main thread via the async
+    /// thumbnail API. Returns `nil` when the image is already small
+    /// enough (caller keeps the original).
+    func scaledDown(maxPixelDimension: CGFloat) async -> UIImage? {
+        let pixelWidth = size.width * scale
+        let pixelHeight = size.height * scale
+        let longestSide = max(pixelWidth, pixelHeight)
+        guard longestSide > maxPixelDimension, longestSide > 0 else { return nil }
+        let factor = maxPixelDimension / longestSide
+        let target = CGSize(width: pixelWidth * factor, height: pixelHeight * factor)
+        return await byPreparingThumbnail(ofSize: target)
     }
 }

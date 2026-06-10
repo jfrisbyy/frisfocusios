@@ -66,7 +66,9 @@ struct StoryPlayerView: View {
 
     @State private var currentIndex: Int = 0
     /// Fill fraction of the segment currently playing, 0...1.
-    @State private var segmentProgress: Double = 0
+    /// 25 Hz segment progress, boxed so ticks re-render only the bars
+    /// leaf — not this whole player (see `PlaybackClock`).
+    @State private var clock = PlaybackClock()
     @State private var isPaused: Bool = false
     @State private var dragOffset: CGFloat = 0
     @State private var pressStart: Date?
@@ -306,7 +308,7 @@ struct StoryPlayerView: View {
             if case .friend(let friend) = mode,
                let start = posts.firstIndex(where: { $0.authorId == friend.id }) {
                 currentIndex = start
-                segmentProgress = 0
+                clock.progress = 0
             }
             markCurrentViewed()
         }
@@ -334,26 +336,7 @@ struct StoryPlayerView: View {
     // MARK: - Progress bars
 
     private var progressBars: some View {
-        HStack(spacing: 4) {
-            ForEach(posts.indices, id: \.self) { idx in
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Theme.textCream.opacity(0.28))
-                        Capsule()
-                            .fill(Theme.textCream)
-                            .frame(width: geo.size.width * fillFraction(for: idx))
-                    }
-                }
-                .frame(height: 2.5)
-            }
-        }
-    }
-
-    private func fillFraction(for idx: Int) -> Double {
-        if idx < currentIndex { return 1 }
-        if idx == currentIndex { return min(1, max(0, segmentProgress)) }
-        return 0
+        SegmentedProgressBars(count: posts.count, currentIndex: currentIndex, clock: clock)
     }
 
     // MARK: - Header
@@ -558,7 +541,7 @@ struct StoryPlayerView: View {
             withAnimation(.easeInOut(duration: 0.22)) {
                 circleScope = value
                 currentIndex = 0
-                segmentProgress = 0
+                clock.progress = 0
             }
         } label: {
             Text(label)
@@ -890,7 +873,7 @@ struct StoryPlayerView: View {
         if currentIndex >= posts.count {
             currentIndex = posts.count - 1
         }
-        segmentProgress = 0
+        clock.progress = 0
         isPaused = false
     }
 
@@ -917,8 +900,8 @@ struct StoryPlayerView: View {
     private func tickProgress() {
         guard !isPaused, !replyFocused, currentPost != nil else { return }
         let increment = tick / max(0.1, currentDuration)
-        segmentProgress += increment
-        if segmentProgress >= 1 {
+        clock.progress += increment
+        if clock.progress >= 1 {
             advance()
         }
     }
@@ -929,15 +912,15 @@ struct StoryPlayerView: View {
             return
         }
         currentIndex += 1
-        segmentProgress = 0
+        clock.progress = 0
     }
 
     private func goPrev() {
         if currentIndex == 0 {
-            segmentProgress = 0
+            clock.progress = 0
         } else {
             currentIndex -= 1
-            segmentProgress = 0
+            clock.progress = 0
         }
     }
 

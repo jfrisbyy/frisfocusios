@@ -35,7 +35,9 @@ struct ProofPlayerView: View {
     @State private var isLoading: Bool = true
     @State private var failed: Bool = false
 
-    @State private var segmentProgress: Double = 0
+    /// 25 Hz playback progress, boxed so ticks re-render only the bar
+    /// leaf — not this whole player (see `PlaybackClock`).
+    @State private var clock = PlaybackClock()
     @State private var isPaused: Bool = false
     @State private var dragOffset: CGFloat = 0
     @State private var pressStart: Date?
@@ -155,15 +157,7 @@ struct ProofPlayerView: View {
     // MARK: - Progress
 
     private var progressBar: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Theme.textCream.opacity(0.28))
-                Capsule()
-                    .fill(Theme.textCream)
-                    .frame(width: geo.size.width * min(1, max(0, segmentProgress)))
-            }
-        }
-        .frame(height: 2.5)
+        SingleSegmentBar(clock: clock)
     }
 
     // MARK: - Header
@@ -270,9 +264,9 @@ struct ProofPlayerView: View {
 
     private func tickProgress() {
         guard !isPaused, !isLoading, !failed, reportTarget == nil else { return }
-        segmentProgress += tick / max(0.1, currentDuration)
-        if segmentProgress >= 1 {
-            segmentProgress = 1
+        clock.progress += tick / max(0.1, currentDuration)
+        if clock.progress >= 1 {
+            clock.progress = 1
             dismiss()
         }
     }
