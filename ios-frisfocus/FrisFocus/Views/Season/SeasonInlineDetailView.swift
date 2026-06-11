@@ -9,9 +9,9 @@
 //  tasks, filters, and season footer read as part of the landscape.
 //
 //  Content order: title strip → category pills → mode filter pills →
-//  per-category sections → Cadence earned → season dashboard → season
-//  options grid → full-width minimize button. Sections reveal with a
-//  gentle stagger when the zone expands.
+//  per-category sections → Cadence earned → season dashboard →
+//  collapsible season options menu → full-width minimize button.
+//  Sections reveal with a gentle stagger when the zone expands.
 //
 
 import SwiftUI
@@ -37,6 +37,9 @@ struct SeasonInlineDetailView: View {
     @State private var showWeekShare: Bool = false
     @State private var showSeasonSetup: Bool = false
     @State private var showNextSeasonDialog: Bool = false
+    @State private var showWeekStats: Bool = false
+    /// The season options grid starts folded each time the detail opens.
+    @State private var optionsExpanded: Bool = false
     /// Drives the staggered entrance of each content band.
     @State private var revealed: Bool = false
 
@@ -66,7 +69,7 @@ struct SeasonInlineDetailView: View {
             }
 
             staggered(3) { seasonDashboard }
-            staggered(3) { seasonOptionsGrid }
+            staggered(3) { seasonOptionsSection }
             staggered(4) { minimizeButton }
         }
         .frame(maxWidth: .infinity)
@@ -98,6 +101,9 @@ struct SeasonInlineDetailView: View {
         }
         .fullScreenCover(isPresented: $showWeekShare) {
             ShareCameraView(context: store.weekShareContext())
+        }
+        .fullScreenCover(isPresented: $showWeekStats) {
+            WeekStatsView()
         }
         .fullScreenCover(isPresented: $showSeasonSetup) {
             SeasonSetupFlowView()
@@ -354,16 +360,24 @@ struct SeasonInlineDetailView: View {
                     progress: ratio(store.todayScore, store.currentSeason.dailyGoal)
                 )
 
-                dashboardCard(
-                    label: "This week",
-                    value: "\(store.weekScore)",
-                    denominator: " / \(store.currentSeason.weeklyGoal)",
-                    detail: goalDetail(
-                        score: store.weekScore,
-                        goal: store.currentSeason.weeklyGoal
-                    ),
-                    progress: ratio(store.weekScore, store.currentSeason.weeklyGoal)
-                )
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showWeekStats = true
+                } label: {
+                    dashboardCard(
+                        label: "This week",
+                        value: "\(store.weekScore)",
+                        denominator: " / \(store.currentSeason.weeklyGoal)",
+                        detail: goalDetail(
+                            score: store.weekScore,
+                            goal: store.currentSeason.weeklyGoal
+                        ),
+                        progress: ratio(store.weekScore, store.currentSeason.weeklyGoal)
+                    )
+                }
+                .buttonStyle(PressableTileStyle())
+                .accessibilityLabel("This week")
+                .accessibilityHint("Opens week stats with your full history")
                 .overlay(alignment: .topTrailing) {
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -507,73 +521,136 @@ struct SeasonInlineDetailView: View {
 
     // MARK: - Season options
 
-    /// Every season-level control in one tidy two-column grid of glass
-    /// tiles — replacing the old sideways-scrolling button row.
-    private var seasonOptionsGrid: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Season options")
+    /// One glass row that unfolds into the full two-column grid of
+    /// season controls. Starts collapsed each time the detail opens so
+    /// the page stays short and focused on tasks and the dashboard.
+    private var seasonOptionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            optionsToggleRow
 
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 10),
-                    GridItem(.flexible(), spacing: 10)
-                ],
-                spacing: 10
-            ) {
-                optionTile(
-                    label: "New task",
-                    hint: "Add a task to today",
-                    iconName: "plus",
-                    haptic: .medium
+            if optionsExpanded {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 10),
+                        GridItem(.flexible(), spacing: 10)
+                    ],
+                    spacing: 10
                 ) {
-                    showNewTaskForm = true
+                    ForEach(Array(seasonOptions.enumerated()), id: \.offset) { index, option in
+                        optionTile(
+                            label: option.label,
+                            hint: option.hint,
+                            iconName: option.iconName,
+                            haptic: option.haptic,
+                            action: option.action
+                        )
+                        .transition(
+                            .opacity
+                                .combined(with: .offset(y: -10))
+                                .animation(
+                                    .spring(response: 0.4, dampingFraction: 0.85)
+                                        .delay(0.03 * Double(index))
+                                )
+                        )
+                    }
                 }
 
-                optionTile(
-                    label: "Reduce",
-                    hint: "Things you're cutting back",
-                    iconName: "arrow.down.right"
-                ) {
-                    showAvoidanceManager = true
-                }
-
-                optionTile(
-                    label: "Trains",
-                    hint: "Linked habit streaks",
-                    iconName: "circle.hexagongrid"
-                ) {
-                    showHabitTrains = true
-                }
-
-                optionTile(
-                    label: "Boosters",
-                    hint: "Bonus point multipliers",
-                    iconName: "sparkles"
-                ) {
-                    showBoosters = true
-                }
-
-                optionTile(
-                    label: "Milestones",
-                    hint: "The season's big wins",
-                    iconName: "flag"
-                ) {
-                    showMilestones = true
-                }
-
-                optionTile(
-                    label: "Scoring",
-                    hint: "Reminders, categories, colors",
-                    iconName: "slider.horizontal.3"
-                ) {
-                    showSettings = true
-                }
+                nextSeasonTile
+                    .transition(
+                        .opacity
+                            .combined(with: .offset(y: -10))
+                            .animation(
+                                .spring(response: 0.4, dampingFraction: 0.85)
+                                    .delay(0.03 * Double(seasonOptions.count))
+                            )
+                    )
             }
-
-            nextSeasonTile
         }
         .padding(.horizontal, 22)
         .padding(.top, 26)
+    }
+
+    /// The collapsed face of the options menu — icon, label, rotating
+    /// chevron. Tapping springs the grid open or folds it back.
+    private var optionsToggleRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+                optionsExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "square.grid.2x2")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(Theme.textCream.opacity(0.85))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Season options")
+                        .font(.sans(13, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                    Text("Tasks, boosters, milestones, scoring & more")
+                        .font(.sans(10, weight: .regular))
+                        .foregroundStyle(Theme.textCream.opacity(0.55))
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textCream.opacity(0.5))
+                    .rotationEffect(.degrees(optionsExpanded ? 180 : 0))
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity)
+            .background(glassFill)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(glassStroke, lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(PressableTileStyle())
+        .accessibilityLabel("Season options")
+        .accessibilityHint(optionsExpanded ? "Collapses the season options menu" : "Expands the season options menu")
+    }
+
+    /// The seven season-level controls, in display order.
+    private var seasonOptions: [SeasonOptionItem] {
+        [
+            SeasonOptionItem(
+                label: "New task",
+                hint: "Add a task to today",
+                iconName: "plus",
+                haptic: .medium
+            ) { showNewTaskForm = true },
+            SeasonOptionItem(
+                label: "Reduce",
+                hint: "Things you're cutting back",
+                iconName: "arrow.down.right"
+            ) { showAvoidanceManager = true },
+            SeasonOptionItem(
+                label: "Trains",
+                hint: "Linked habit streaks",
+                iconName: "circle.hexagongrid"
+            ) { showHabitTrains = true },
+            SeasonOptionItem(
+                label: "Boosters",
+                hint: "Bonus point multipliers",
+                iconName: "sparkles"
+            ) { showBoosters = true },
+            SeasonOptionItem(
+                label: "Milestones",
+                hint: "The season's big wins",
+                iconName: "flag"
+            ) { showMilestones = true },
+            SeasonOptionItem(
+                label: "Scoring",
+                hint: "Reminders, categories, colors",
+                iconName: "slider.horizontal.3"
+            ) { showSettings = true }
+        ]
     }
 
     @ViewBuilder
@@ -759,6 +836,15 @@ struct SeasonInlineDetailView: View {
             .map(\.pointsEarned)
             .reduce(0, +)
     }
+}
+
+/// One entry in the season options grid.
+private struct SeasonOptionItem {
+    let label: String
+    let hint: String
+    let iconName: String
+    var haptic: UIImpactFeedbackGenerator.FeedbackStyle = .light
+    let action: () -> Void
 }
 
 /// Soft press feedback for the glass tiles — a gentle shrink + dim.
