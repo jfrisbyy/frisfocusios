@@ -80,6 +80,11 @@ struct SharePreviewView: View {
     /// positions are normalized against.
     @State private var cardSize: CGSize = .zero
 
+    /// Pinch-to-zoom framing for the media layer. The edit layer and
+    /// the day-overlay chrome stay in card space on top; the zoom is
+    /// baked into both the clean in-app card and the attributed export.
+    @State private var mediaZoom: MediaZoom = MediaZoom()
+
     // Caption editor state (shared CaptionEditorOverlay).
     @State private var editingCaptionId: UUID? = nil
     @State private var draftText: String = ""
@@ -217,6 +222,13 @@ struct SharePreviewView: View {
                         }
                     }
             )
+            // Pinch on open canvas zooms the media; pinching a caption /
+            // sticker still resizes that block (child gestures win).
+            .modifier(MediaZoomGestureModifier(
+                zoom: $mediaZoom,
+                canvasSize: geo.size,
+                isEnabled: !isDrawing && editingCaptionId == nil && !isWorking
+            ))
             .onAppear { cardSize = geo.size }
             .onChange(of: geo.size) { _, newSize in
                 cardSize = newSize
@@ -338,11 +350,16 @@ struct SharePreviewView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: geo.size.width, height: geo.size.height)
+                    .scaleEffect(mediaZoom.scale)
+                    .offset(mediaZoom.offset)
+                    .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
             }
         case .video(let url, _, _):
             VideoLoopView(url: url, gravity: .resizeAspectFill)
                 .id(url)
+                .scaleEffect(mediaZoom.scale)
+                .offset(mediaZoom.offset)
         }
     }
 
@@ -1036,6 +1053,9 @@ struct SharePreviewView: View {
                     options: options,
                     username: username,
                     attributed: false,
+                    zoom: mediaZoom.scale,
+                    zoomOffset: mediaZoom.offset,
+                    zoomCanvas: cardSize,
                     editLayer: { size in editLayerImage(at: size) }
                 )
                 mediaData = composed?.jpegData(compressionQuality: 0.9)
@@ -1050,6 +1070,9 @@ struct SharePreviewView: View {
                     username: username,
                     attributed: false,
                     animated: !reduceMotion,
+                    zoom: mediaZoom.scale,
+                    zoomOffset: mediaZoom.offset,
+                    zoomCanvas: cardSize,
                     editLayer: { size in editLayerImage(at: size) }
                 )
                 mediaData = try? Data(contentsOf: composedURL ?? url)
@@ -1114,6 +1137,9 @@ struct SharePreviewView: View {
                     options: options,
                     username: username,
                     attributed: true,
+                    zoom: mediaZoom.scale,
+                    zoomOffset: mediaZoom.offset,
+                    zoomCanvas: cardSize,
                     editLayer: { size in editLayerImage(at: size) }
                 )
                 isWorking = false
@@ -1129,6 +1155,9 @@ struct SharePreviewView: View {
                     username: username,
                     attributed: true,
                     animated: !reduceMotion,
+                    zoom: mediaZoom.scale,
+                    zoomOffset: mediaZoom.offset,
+                    zoomCanvas: cardSize,
                     editLayer: { size in editLayerImage(at: size) }
                 )
                 isWorking = false

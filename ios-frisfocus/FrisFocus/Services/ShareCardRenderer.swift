@@ -70,6 +70,8 @@ enum ShareCardRenderer {
     /// supplies the user's edits (captions, task stickers, drawing)
     /// rendered at the crop's pixel size — drawn between the photo and
     /// the day-overlay chrome so attribution is never obscured.
+    /// `zoom` / `zoomOffset` (card points) / `zoomCanvas` (the card's
+    /// point size) bake the preview's pinch framing into the photo.
     @MainActor
     static func compositePhoto(
         _ photo: UIImage,
@@ -77,6 +79,9 @@ enum ShareCardRenderer {
         options: ShareOverlayOptions,
         username: String,
         attributed: Bool,
+        zoom: CGFloat = 1.0,
+        zoomOffset: CGSize = .zero,
+        zoomCanvas: CGSize = .zero,
         editLayer: ((CGSize) -> UIImage?)? = nil
     ) -> UIImage? {
         guard let base = normalizedStoryCrop(photo) else { return nil }
@@ -89,7 +94,8 @@ enum ShareCardRenderer {
             pixelSize: base.size
         )
         let edits = editLayer?(base.size)
-        guard overlay != nil || edits != nil else { return base }
+        let isZoomed = zoom > 1.001
+        guard overlay != nil || edits != nil || isZoomed else { return base }
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -97,7 +103,19 @@ enum ShareCardRenderer {
         let renderer = UIGraphicsImageRenderer(size: base.size, format: format)
         return renderer.image { _ in
             let rect = CGRect(origin: .zero, size: base.size)
-            base.draw(in: rect)
+            if isZoomed {
+                // The crop shares the card's 9:16 aspect, so the
+                // points→pixels mapping is a single uniform ratio.
+                let pixelsPerPoint = zoomCanvas.width > 1 ? base.size.width / zoomCanvas.width : 0
+                let drawSize = CGSize(width: base.size.width * zoom, height: base.size.height * zoom)
+                let origin = CGPoint(
+                    x: rect.midX - drawSize.width / 2 + zoomOffset.width * pixelsPerPoint,
+                    y: rect.midY - drawSize.height / 2 + zoomOffset.height * pixelsPerPoint
+                )
+                base.draw(in: CGRect(origin: origin, size: drawSize))
+            } else {
+                base.draw(in: rect)
+            }
             edits?.draw(in: rect)
             overlay?.draw(in: rect)
         }
@@ -147,14 +165,30 @@ enum ShareCardRenderer {
         nonisolated let risePixels: CGFloat
         nonisolated let duration: Double
         nonisolated let animated: Bool
+        nonisolated let zoom: CGFloat
+        nonisolated let zoomOffset: CGSize
+        nonisolated let zoomCanvas: CGSize
 
-        nonisolated init(edits: CIImage?, chrome: CIImage?, sun: CIImage?, risePixels: CGFloat, duration: Double, animated: Bool) {
+        nonisolated init(
+            edits: CIImage?,
+            chrome: CIImage?,
+            sun: CIImage?,
+            risePixels: CGFloat,
+            duration: Double,
+            animated: Bool,
+            zoom: CGFloat,
+            zoomOffset: CGSize,
+            zoomCanvas: CGSize
+        ) {
             self.edits = edits
             self.chrome = chrome
             self.sun = sun
             self.risePixels = risePixels
             self.duration = duration
             self.animated = animated
+            self.zoom = zoom
+            self.zoomOffset = zoomOffset
+            self.zoomCanvas = zoomCanvas
         }
     }
 
@@ -169,6 +203,9 @@ enum ShareCardRenderer {
         username: String,
         attributed: Bool,
         animated: Bool,
+        zoom: CGFloat = 1.0,
+        zoomOffset: CGSize = .zero,
+        zoomCanvas: CGSize = .zero,
         editLayer: ((CGSize) -> UIImage?)? = nil
     ) async -> URL? {
         guard
@@ -198,7 +235,7 @@ enum ShareCardRenderer {
         let chromeCI = chromeImage?.cgImage.map { CIImage(cgImage: $0) }
         let sunCI = sunImage?.cgImage.map { CIImage(cgImage: $0) }
         let editsCI = editLayer?(renderSize)?.cgImage.map { CIImage(cgImage: $0) }
-        guard chromeCI != nil || sunCI != nil || editsCI != nil else { return nil }
+        guard chromeCI != nil || sunCI != nil || editsCI != nil || zoom > 1.001 else { return nil }
 
         let payload = ShareVideoPayload(
             edits: editsCI,
@@ -206,7 +243,10 @@ enum ShareCardRenderer {
             sun: sunCI,
             risePixels: renderSize.width * 0.16,
             duration: riseDuration,
-            animated: animated
+            animated: animated,
+            zoom: zoom,
+            zoomOffset: zoomOffset,
+            zoomCanvas: zoomCanvas
         )
         return await burn(sourceURL: sourceURL, payload: payload)
     }
@@ -221,6 +261,18 @@ enum ShareCardRenderer {
             videoComposition = try await AVVideoComposition.videoComposition(with: asset) { request in
                 let extent = request.sourceImage.extent
                 var output = request.sourceImage
+
+                // The preview's pinch framing reshapes the footage first,
+                // so every layer above composites onto the zoomed frame.
+                if payload.zoom > 1.001 {
+                    output = VideoOverlayExporter.zoomedFrame(
+                        output,
+                        extent: extent,
+                        zoom: payload.zoom,
+                        offset: payload.zoomOffset,
+                        canvas: payload.zoomCanvas
+                    )
+                }
 
                 // The user's edit layer (captions / stickers / drawing)
                 // sits directly on the footage, beneath the chrome.

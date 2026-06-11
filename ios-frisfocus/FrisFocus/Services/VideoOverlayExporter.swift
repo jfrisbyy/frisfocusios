@@ -37,9 +37,15 @@ enum VideoOverlayExporter {
     private final class OverlayPayload: @unchecked Sendable {
         nonisolated let overlay: CIImage?
         nonisolated let tint: CIColor?
-        nonisolated init(overlay: CIImage?, tint: CIColor?) {
+        nonisolated let zoom: CGFloat
+        nonisolated let zoomOffset: CGSize
+        nonisolated let zoomCanvas: CGSize
+        nonisolated init(overlay: CIImage?, tint: CIColor?, zoom: CGFloat, zoomOffset: CGSize, zoomCanvas: CGSize) {
             self.overlay = overlay
             self.tint = tint
+            self.zoom = zoom
+            self.zoomOffset = zoomOffset
+            self.zoomCanvas = zoomCanvas
         }
     }
 
@@ -50,12 +56,20 @@ enum VideoOverlayExporter {
     /// - Parameters:
     ///   - sourceURL: the recorded `.mov` on disk.
     ///   - tint: optional full-frame colour wash matching the editor filter.
+    ///   - zoom: the editor's pinch zoom (1 = untouched). Burned into every
+    ///     frame so the export matches the on-screen framing.
+    ///   - zoomOffset: the pan in canvas points (UIKit y-down).
+    ///   - zoomCanvas: the editor canvas size in points — maps the pan into
+    ///     video pixels via the aspect-fill preview relationship.
     ///   - overlay: builds the transparent overlay image for a given upright
     ///     pixel size. Invoked once, on the main actor, before encoding.
     @MainActor
     static func export(
         sourceURL: URL,
         tint: UIColor?,
+        zoom: CGFloat = 1.0,
+        zoomOffset: CGSize = .zero,
+        zoomCanvas: CGSize = .zero,
         overlay: @MainActor (CGSize) -> UIImage?
     ) async -> URL? {
         guard
@@ -75,10 +89,52 @@ enum VideoOverlayExporter {
         let tintCI = tint.map { CIColor(color: $0) }
 
         // Nothing to composite → let the caller send the original clip.
-        guard overlayCI != nil || tintCI != nil else { return nil }
+        guard overlayCI != nil || tintCI != nil || zoom > 1.001 else { return nil }
 
-        let payload = OverlayPayload(overlay: overlayCI, tint: tintCI)
+        let payload = OverlayPayload(
+            overlay: overlayCI,
+            tint: tintCI,
+            zoom: zoom,
+            zoomOffset: zoomOffset,
+            zoomCanvas: zoomCanvas
+        )
         return await burn(sourceURL: sourceURL, payload: payload)
+    }
+
+    // MARK: - Zoom transform
+
+    /// Scales `frame` about its center by `zoom` and pans it by `offset`
+    /// (canvas points, UIKit y-down), mapped into video pixels via the
+    /// aspect-fill relationship between the canvas and the frame. The
+    /// result is edge-clamped and re-cropped so it always covers the
+    /// extent. Shared with `ShareCardRenderer`.
+    nonisolated static func zoomedFrame(
+        _ frame: CIImage,
+        extent: CGRect,
+        zoom: CGFloat,
+        offset: CGSize,
+        canvas: CGSize
+    ) -> CIImage {
+        guard zoom > 1.001 else { return frame }
+        var dx: CGFloat = 0
+        var dy: CGFloat = 0
+        if canvas.width > 1, canvas.height > 1 {
+            // Points → pixels via the aspect-filled preview: the video is
+            // scaled so it covers the canvas, so one canvas point spans
+            // `extent.width / displayedWidth` pixels.
+            let videoAspect = extent.width / max(extent.height, 1)
+            let displayedWidth = max(canvas.width, canvas.height * videoAspect)
+            let pixelsPerPoint = extent.width / max(displayedWidth, 1)
+            dx = offset.width * pixelsPerPoint
+            dy = -offset.height * pixelsPerPoint // Core Image's y-axis points up
+        }
+        let transform = CGAffineTransform(translationX: extent.midX + dx, y: extent.midY + dy)
+            .scaledBy(x: zoom, y: zoom)
+            .translatedBy(x: -extent.midX, y: -extent.midY)
+        return frame
+            .transformed(by: transform)
+            .clampedToExtent()
+            .cropped(to: extent)
     }
 
     // MARK: - Background encode
@@ -94,6 +150,16 @@ enum VideoOverlayExporter {
             videoComposition = try await AVVideoComposition.videoComposition(with: asset) { request in
                 let extent = request.sourceImage.extent
                 var output = request.sourceImage
+
+                if payload.zoom > 1.001 {
+                    output = zoomedFrame(
+                        output,
+                        extent: extent,
+                        zoom: payload.zoom,
+                        offset: payload.zoomOffset,
+                        canvas: payload.zoomCanvas
+                    )
+                }
 
                 if let tint = payload.tint {
                     output = CIImage(color: tint).cropped(to: extent).composited(over: output)

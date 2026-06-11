@@ -432,6 +432,11 @@ struct CaptureReviewView: View {
     @State private var thumbCache: [CaptureFilter: UIImage] = [:]
     @State private var canvasSize: CGSize = .zero
 
+    /// Pinch-to-zoom framing for the media layer. Captions / stickers /
+    /// drawing stay in screen space on top; the zoom bakes into the
+    /// flattened photo and is burned into exported videos.
+    @State private var mediaZoom: MediaZoom = MediaZoom()
+
     /// Downscaled bases for the live canvas and the filter chips. The
     /// camera hands back a full-resolution photo (often 12MP+);
     /// compositing that texture on every drag frame is what made moving
@@ -493,6 +498,7 @@ struct CaptureReviewView: View {
             || !taskStickers.isEmpty
             || selectedFilter != .original
             || !pkCanvas.drawing.strokes.isEmpty
+            || !mediaZoom.isIdentity
     }
 
     var body: some View {
@@ -630,12 +636,18 @@ struct CaptureReviewView: View {
                     VideoLoopView(url: url, gravity: .resizeAspectFill)
                         .id(url)
                         .frame(width: geo.size.width, height: geo.size.height)
+                        .scaleEffect(mediaZoom.scale)
+                        .offset(mediaZoom.offset)
+                        .frame(width: geo.size.width, height: geo.size.height)
                         .clipped()
                         .allowsHitTesting(false)
                 } else {
                     Image(uiImage: filteredImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .scaleEffect(mediaZoom.scale)
+                        .offset(mediaZoom.offset)
                         .frame(width: geo.size.width, height: geo.size.height)
                         .clipped()
                 }
@@ -689,6 +701,13 @@ struct CaptureReviewView: View {
                         }
                     }
             )
+            // Pinch on open canvas zooms the media; pinching a caption /
+            // sticker still resizes that block (child gestures win).
+            .modifier(MediaZoomGestureModifier(
+                zoom: $mediaZoom,
+                canvasSize: geo.size,
+                isEnabled: !isDrawing && !isEditing
+            ))
             .onAppear { canvasSize = geo.size }
             .onChange(of: geo.size) { _, newSize in
                 canvasSize = newSize
@@ -1834,6 +1853,8 @@ struct CaptureReviewView: View {
     private func overlayImage(at videoSize: CGSize) -> UIImage? {
         let base = canvasSize
         guard base.width > 0, base.height > 0, videoSize.width > 0 else { return nil }
+        // Note: the edit layer is NOT zoomed — blocks live in screen
+        // space above the zoomed media, matching the live canvas.
         let drawingImg = drawingSnapshot()
         let content = ZStack {
             Color.clear
@@ -1875,10 +1896,17 @@ struct CaptureReviewView: View {
     private func resolveVideoData(url: URL) async -> Data? {
         let hasOverlays = !captions.isEmpty || !taskStickers.isEmpty || !pkCanvas.drawing.strokes.isEmpty
         let tint = videoTintColor()
+        let isZoomed = !mediaZoom.isIdentity
 
         var sourceURL = url
-        if hasOverlays || tint != nil {
-            let burned = await VideoOverlayExporter.export(sourceURL: url, tint: tint) { renderSize in
+        if hasOverlays || tint != nil || isZoomed {
+            let burned = await VideoOverlayExporter.export(
+                sourceURL: url,
+                tint: tint,
+                zoom: mediaZoom.scale,
+                zoomOffset: mediaZoom.offset,
+                zoomCanvas: canvasSize
+            ) { renderSize in
                 hasOverlays ? overlayImage(at: renderSize) : nil
             }
             if let burned { sourceURL = burned }
@@ -1905,6 +1933,9 @@ struct CaptureReviewView: View {
                 Image(uiImage: filteredImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .frame(width: size.width, height: size.height)
+                    .scaleEffect(mediaZoom.scale)
+                    .offset(mediaZoom.offset)
                     .frame(width: size.width, height: size.height)
                     .clipped()
 
@@ -1966,7 +1997,7 @@ struct CaptureReviewView: View {
             let duration: Double?
             switch result {
             case .photo:
-                mediaData = (captions.isEmpty && taskStickers.isEmpty && pkCanvas.drawing.strokes.isEmpty)
+                mediaData = (captions.isEmpty && taskStickers.isEmpty && pkCanvas.drawing.strokes.isEmpty && mediaZoom.isIdentity)
                     ? filteredImage.jpegData(compressionQuality: 0.85)
                     : flattenedPhoto()
                 mediaType = .photo
@@ -2057,7 +2088,7 @@ struct CaptureReviewView: View {
     /// it's the keepsake landing in the user's library.
     @MainActor
     private func composedPhotoData() -> Data? {
-        let untouched = captions.isEmpty && taskStickers.isEmpty && pkCanvas.drawing.strokes.isEmpty
+        let untouched = captions.isEmpty && taskStickers.isEmpty && pkCanvas.drawing.strokes.isEmpty && mediaZoom.isIdentity
         return untouched
             ? filteredImage.jpegData(compressionQuality: 0.9)
             : flattenedPhoto()
@@ -2069,8 +2100,15 @@ struct CaptureReviewView: View {
     private func resolveVideoURL(url: URL) async -> URL? {
         let hasOverlays = !captions.isEmpty || !taskStickers.isEmpty || !pkCanvas.drawing.strokes.isEmpty
         let tint = videoTintColor()
-        guard hasOverlays || tint != nil else { return url }
-        let burned = await VideoOverlayExporter.export(sourceURL: url, tint: tint) { renderSize in
+        let isZoomed = !mediaZoom.isIdentity
+        guard hasOverlays || tint != nil || isZoomed else { return url }
+        let burned = await VideoOverlayExporter.export(
+            sourceURL: url,
+            tint: tint,
+            zoom: mediaZoom.scale,
+            zoomOffset: mediaZoom.offset,
+            zoomCanvas: canvasSize
+        ) { renderSize in
             hasOverlays ? overlayImage(at: renderSize) : nil
         }
         return burned ?? url
