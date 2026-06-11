@@ -25,6 +25,8 @@ struct TodoCardView: View {
     let todo: Todo
 
     @State private var showShareCapture: Bool = false
+    @State private var showEdit: Bool = false
+    @State private var showDeleteConfirm: Bool = false
 
     private var isOverdue: Bool {
         guard !todo.isCompleted, let due = todo.dueDate else { return false }
@@ -82,8 +84,48 @@ struct TodoCardView: View {
             Button {
                 showShareCapture = true
             } label: {
-                Label("Share a photo/video", systemImage: "camera")
+                Label("Proof", systemImage: "camera")
             }
+
+            Button {
+                toggle()
+            } label: {
+                Label(
+                    todo.isCompleted ? "Mark incomplete" : "Complete",
+                    systemImage: todo.isCompleted ? "arrow.uturn.backward.circle" : "checkmark.circle"
+                )
+            }
+
+            Divider()
+
+            Button {
+                showEdit = true
+            } label: {
+                Label("Edit to-do", systemImage: "pencil")
+            }
+
+            Button(role: .destructive) {
+                showDeleteConfirm = true
+            } label: {
+                Label("Delete to-do", systemImage: "trash")
+            }
+        }
+        .confirmationDialog(
+            "Delete \u{201C}\(todo.title)\u{201D}?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete to-do", role: .destructive) {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                store.deleteTodo(todo)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Any points it earned are removed too.")
+        }
+        .sheet(isPresented: $showEdit) {
+            NewTodoFormView(editing: todo) { }
+                .environment(store)
         }
         .fullScreenCover(isPresented: $showShareCapture) {
             CaptureView(

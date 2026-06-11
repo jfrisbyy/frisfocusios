@@ -2,10 +2,13 @@
 //  NewTaskFormView.swift
 //  FrisFocus
 //
-//  Full-height form sheet for creating or editing a repeatable Task.
-//  Title, season category, a scoring style (flat / tiered / quantity)
-//  with its details, an optional skip penalty available on any task,
-//  pin-to-today, and the optional Booster + Weekly-limit rules.
+//  Full-height sheet for creating or editing a repeatable Task, in the
+//  app's warm paper style — cream background, white card sections with
+//  quiet eyebrow headers, serif numerals. Title, season category, a
+//  scoring style (flat / tiered / quantity) with its details, an
+//  optional skip penalty, a proper Schedule section (not pinned /
+//  today / specific days / every day plus an optional time window),
+//  and the Weekly-limit rule.
 //
 //  Use the default initializer to create; pass `editing:` to edit an
 //  existing task in place. Saving appends/updates `store.tasks`,
@@ -25,7 +28,7 @@ struct NewTaskFormView: View {
     @State private var title: String
     @State private var category: Category
     @State private var pointValue: Int
-    @State private var pinToToday: Bool
+    @State private var scheduleDraft: ScheduleDraft
 
     // Scoring style
     @State private var scoringType: ScoringType
@@ -52,10 +55,7 @@ struct NewTaskFormView: View {
         _title = State(initialValue: editing?.title ?? "")
         _category = State(initialValue: editing?.category ?? .work)
         _pointValue = State(initialValue: editing?.pointValue ?? 5)
-        _pinToToday = State(initialValue: {
-            guard let t = editing else { return false }
-            return t.isPinnedToday
-        }())
+        _scheduleDraft = State(initialValue: ScheduleDraft(task: editing))
 
         let scoring = editing?.scoring ?? ScoringConfig()
         _scoringType = State(initialValue: scoring.type)
@@ -81,34 +81,57 @@ struct NewTaskFormView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("e.g. Lift — push day", text: $title, axis: .vertical)
-                        .font(.sans(16, weight: .regular))
-                        .lineLimit(1...3)
-                } header: {
-                    Text("Title")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    sectionCard(eyebrow: "Title") {
+                        TextField("e.g. Lift — push day", text: $title, axis: .vertical)
+                            .font(.serif(18, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1...3)
+                    }
+
+                    sectionCard(eyebrow: "Category") {
+                        categoryChips
+                    }
+
+                    sectionCard(eyebrow: "Scoring", footer: scoringType.blurb) {
+                        scoringContent
+                    }
+
+                    sectionCard(
+                        eyebrow: "Schedule",
+                        footer: scheduleFooter
+                    ) {
+                        ScheduleEditorView(draft: $scheduleDraft)
+                    }
+
+                    sectionCard(
+                        eyebrow: "Skip penalty",
+                        footer: "Optional. When on, skipping this task on a day it's pinned pulls points from that day."
+                    ) {
+                        skipPenaltyContent
+                    }
+
+                    sectionCard(
+                        eyebrow: "Weekly limit",
+                        footer: "A gentle, private reduction goal. Points stay off your friends' feeds and only show up in your own weekly total."
+                    ) {
+                        weeklyLimitContent
+                    }
                 }
-
-                categorySection
-                scoringSection
-                skipPenaltySection
-
-                Section {
-                    Toggle("Pin to today", isOn: $pinToToday)
-                } footer: {
-                    Text("Pinned Tasks appear on Today's Plan on the home screen.")
-                }
-
-                weeklyLimitSection
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
             }
             .scrollContentBackground(.hidden)
             .background(Theme.warmWheat)
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle(editing == nil ? "New Task" : "Edit Task")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
+                        .font(.sans(14))
                         .foregroundStyle(Theme.textPrimary.opacity(0.7))
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -117,6 +140,38 @@ struct NewTaskFormView: View {
                         .foregroundStyle(canSave ? Theme.alertGreen : Theme.textPrimary.opacity(0.3))
                         .disabled(!canSave)
                 }
+            }
+        }
+    }
+
+    // MARK: - Section card scaffolding
+
+    @ViewBuilder
+    private func sectionCard<Content: View>(
+        eyebrow: String,
+        footer: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            EyebrowText(text: eyebrow, opacity: 0.55)
+
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+
+            if let footer {
+                Text(footer)
+                    .font(.serifItalic(12))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                    .padding(.horizontal, 2)
             }
         }
     }
@@ -130,55 +185,89 @@ struct NewTaskFormView: View {
         return cats
     }
 
-    private var categorySection: some View {
-        Section {
-            Picker("Category", selection: $category) {
-                ForEach(availableCategories, id: \.self) { cat in
-                    HStack(spacing: 8) {
+    @ViewBuilder
+    private var categoryChips: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 104), spacing: 8)],
+            alignment: .leading,
+            spacing: 8
+        ) {
+            ForEach(availableCategories, id: \.self) { cat in
+                let selected = category == cat
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    category = cat
+                } label: {
+                    HStack(spacing: 7) {
                         Circle()
                             .fill(Color(hex: store.categoryColorHex(cat)))
-                            .frame(width: 8, height: 8)
+                            .frame(width: 7, height: 7)
                         Text(store.categoryDisplayName(cat))
+                            .font(.sans(13, weight: selected ? .semibold : .medium))
+                            .foregroundStyle(selected ? Theme.warmWheat : Theme.textPrimary.opacity(0.75))
+                            .lineLimit(1)
                     }
-                    .tag(cat)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        Capsule().fill(selected ? Theme.textPrimary : Theme.warmWheat)
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(
+                            selected ? Color.clear : Theme.textPrimary.opacity(0.10),
+                            lineWidth: 0.6
+                        )
+                    )
                 }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
-        } header: {
-            Text("Category")
         }
     }
 
-    // MARK: - Scoring style
+    // MARK: - Scoring
 
-    private var scoringSection: some View {
-        Section {
-            Picker("Scoring style", selection: $scoringType.animation(.easeInOut(duration: 0.2))) {
-                ForEach(ScoringType.allCases, id: \.self) { type in
-                    Text(type.displayName).tag(type)
+    @ViewBuilder
+    private var scoringContent: some View {
+        HStack(spacing: 6) {
+            ForEach(ScoringType.allCases, id: \.self) { type in
+                let selected = scoringType == type
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.easeInOut(duration: 0.2)) { scoringType = type }
+                } label: {
+                    Text(type.displayName)
+                        .font(.sans(13, weight: selected ? .semibold : .medium))
+                        .foregroundStyle(selected ? Theme.warmWheat : Theme.textPrimary.opacity(0.7))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(selected ? Theme.textPrimary : Theme.warmWheat)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+
+        switch scoringType {
+        case .flat:
+            Stepper(value: $pointValue, in: 1...100) {
+                HStack {
+                    Text("Worth")
+                        .font(.sans(14, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Text("\(pointValue) pts")
+                        .font(.serif(17, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
                 }
             }
-            .pickerStyle(.segmented)
-
-            switch scoringType {
-            case .flat:
-                Stepper(value: $pointValue, in: 1...100) {
-                    HStack {
-                        Text("Worth")
-                        Spacer()
-                        Text("\(pointValue) pts")
-                            .font(.serif(17, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                }
-            case .tiered:
-                tieredEditor
-            case .quantity:
-                quantityEditor
-            }
-        } header: {
-            Text("Scoring")
-        } footer: {
-            Text(scoringType.blurb)
+        case .tiered:
+            tieredEditor
+        case .quantity:
+            quantityEditor
         }
     }
 
@@ -189,6 +278,7 @@ struct NewTaskFormView: View {
         ForEach($tiers) { $tier in
             HStack(spacing: 10) {
                 Text("At")
+                    .font(.sans(13))
                     .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 TextField("amount", value: $tier.threshold, format: .number)
                     .keyboardType(.decimalPad)
@@ -198,7 +288,9 @@ struct NewTaskFormView: View {
                     .background(Theme.textPrimary.opacity(0.05))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 if !unit.isEmpty {
-                    Text(unit).foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    Text(unit)
+                        .font(.sans(13))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 }
                 Spacer()
                 Stepper("\(tier.points) pts", value: $tier.points, in: 0...100)
@@ -208,7 +300,6 @@ struct NewTaskFormView: View {
                     .frame(width: 52, alignment: .trailing)
             }
         }
-        .onDelete { tiers.remove(atOffsets: $0) }
 
         Button {
             let nextThreshold = (tiers.map(\.threshold).max() ?? 0) + 1
@@ -219,6 +310,7 @@ struct NewTaskFormView: View {
                 .font(.sans(14, weight: .medium))
                 .foregroundStyle(Theme.alertGreen)
         }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -227,34 +319,48 @@ struct NewTaskFormView: View {
 
         HStack {
             Text("Base at")
+                .font(.sans(14, weight: .medium))
             Spacer()
             TextField("amount", value: $baseThreshold, format: .number)
                 .keyboardType(.decimalPad)
                 .frame(width: 64)
                 .multilineTextAlignment(.trailing)
-            if !unit.isEmpty { Text(unit).foregroundStyle(Theme.textPrimary.opacity(0.6)) }
+            if !unit.isEmpty {
+                Text(unit)
+                    .font(.sans(13))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+            }
         }
         Stepper(value: $basePoints, in: 0...100) {
             HStack {
                 Text("Base points")
+                    .font(.sans(14, weight: .medium))
                 Spacer()
                 Text("\(basePoints) pts").font(.serif(16, weight: .medium))
             }
         }
         HStack {
             Text("Then every")
+                .font(.sans(14, weight: .medium))
             Spacer()
             TextField("size", value: $unitSize, format: .number)
                 .keyboardType(.decimalPad)
                 .frame(width: 64)
                 .multilineTextAlignment(.trailing)
-            if !unit.isEmpty { Text(unit).foregroundStyle(Theme.textPrimary.opacity(0.6)) }
+            if !unit.isEmpty {
+                Text(unit)
+                    .font(.sans(13))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+            }
         }
         Stepper(value: $pointsPerUnit, in: 0...50) {
             HStack {
                 Text("Adds")
+                    .font(.sans(14, weight: .medium))
                 Spacer()
-                Text("+\(pointsPerUnit) pts").font(.serif(16, weight: .medium)).foregroundStyle(Theme.alertGreen)
+                Text("+\(pointsPerUnit) pts")
+                    .font(.serif(16, weight: .medium))
+                    .foregroundStyle(Theme.alertGreen)
             }
         }
 
@@ -266,6 +372,8 @@ struct NewTaskFormView: View {
     private func unitField(placeholder: String) -> some View {
         HStack {
             Text("Unit")
+                .font(.sans(14, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
             Spacer()
             TextField(placeholder, text: $unit)
                 .multilineTextAlignment(.trailing)
@@ -282,70 +390,75 @@ struct NewTaskFormView: View {
         return "\(Int(baseThreshold))\(unitLabel) → \(atBase) pts · \(Int(beyond))\(unitLabel) → \(atBeyond) pts"
     }
 
-    // MARK: - Skip penalty (any task)
+    // MARK: - Skip penalty
 
-    private var skipPenaltySection: some View {
-        Section {
-            Toggle("Skip penalty", isOn: $skipPenaltyEnabled.animation(.easeInOut(duration: 0.2)))
-            if skipPenaltyEnabled {
-                Stepper(value: $skipPenalty, in: -20 ... -1) {
-                    HStack {
-                        Text("If skipped")
-                        Spacer()
-                        Text("\(skipPenalty) pts")
-                            .foregroundStyle(Theme.alertRed)
-                    }
+    @ViewBuilder
+    private var skipPenaltyContent: some View {
+        Toggle(isOn: $skipPenaltyEnabled.animation(.easeInOut(duration: 0.2))) {
+            Text("Skip penalty")
+                .font(.sans(14, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
+        }
+        .tint(Theme.alertGreen)
+
+        if skipPenaltyEnabled {
+            Stepper(value: $skipPenalty, in: -20 ... -1) {
+                HStack {
+                    Text("If skipped")
+                        .font(.sans(14, weight: .medium))
+                    Spacer()
+                    Text("\(skipPenalty) pts")
+                        .font(.serif(16, weight: .medium))
+                        .foregroundStyle(Theme.alertRed)
                 }
             }
-        } header: {
-            Text("Skip penalty")
-        } footer: {
-            Text("Optional. When on, skipping this task on a day it's pinned pulls points from that day. Available on any task — no priority tiers.")
         }
     }
 
     // MARK: - Weekly limit
 
-    private var weeklyLimitSection: some View {
-        Section {
-            Toggle("Weekly limit", isOn: $penaltyEnabled.animation(.easeInOut(duration: 0.2)))
-
-            if penaltyEnabled {
-                Picker("Condition", selection: $penaltyCondition) {
-                    Text("More than").tag(PenaltyCondition.moreThan)
-                    Text("Less than").tag(PenaltyCondition.lessThan)
-                }
-                .pickerStyle(.segmented)
-
-                Stepper(value: $penaltyThreshold, in: 0...7) {
-                    HStack {
-                        Text("Times this week")
-                        Spacer()
-                        Text("\(penaltyThreshold)\u{00D7}")
-                            .font(.serif(17, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                }
-
-                Stepper(value: $penaltyPoints, in: 1...100) {
-                    HStack {
-                        Text("Penalty points")
-                        Spacer()
-                        Text("\u{2212}\(penaltyPoints)")
-                            .font(.serif(17, weight: .medium))
-                            .foregroundStyle(Theme.alertAmber)
-                    }
-                }
-
-                Text(penaltyPreviewSentence)
-                    .font(.serifItalic(13))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                    .padding(.top, 2)
-            }
-        } header: {
+    @ViewBuilder
+    private var weeklyLimitContent: some View {
+        Toggle(isOn: $penaltyEnabled.animation(.easeInOut(duration: 0.2))) {
             Text("Weekly limit")
-        } footer: {
-            Text("A gentle, private reduction goal. Points stay off your friends' feeds and only show up in your own weekly total.")
+                .font(.sans(14, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
+        }
+        .tint(Theme.alertGreen)
+
+        if penaltyEnabled {
+            Picker("Condition", selection: $penaltyCondition) {
+                Text("More than").tag(PenaltyCondition.moreThan)
+                Text("Less than").tag(PenaltyCondition.lessThan)
+            }
+            .pickerStyle(.segmented)
+
+            Stepper(value: $penaltyThreshold, in: 0...7) {
+                HStack {
+                    Text("Times this week")
+                        .font(.sans(14, weight: .medium))
+                    Spacer()
+                    Text("\(penaltyThreshold)\u{00D7}")
+                        .font(.serif(17, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                }
+            }
+
+            Stepper(value: $penaltyPoints, in: 1...100) {
+                HStack {
+                    Text("Penalty points")
+                        .font(.sans(14, weight: .medium))
+                    Spacer()
+                    Text("\u{2212}\(penaltyPoints)")
+                        .font(.serif(17, weight: .medium))
+                        .foregroundStyle(Theme.alertAmber)
+                }
+            }
+
+            Text(penaltyPreviewSentence)
+                .font(.serifItalic(13))
+                .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                .padding(.top, 2)
         }
     }
 
@@ -353,6 +466,19 @@ struct NewTaskFormView: View {
 
     private var canSave: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var scheduleFooter: String {
+        switch scheduleDraft.mode {
+        case .notPinned:
+            return "Not on Today's Plan — the task stays in your library."
+        case .today:
+            return "On Today's Plan until the day rolls over."
+        case .specificDays:
+            return "Lands on Today's Plan every week on the chosen days."
+        case .everyDay:
+            return "On Today's Plan every single day."
+        }
     }
 
     private var penaltyPreviewSentence: String {
@@ -395,6 +521,9 @@ struct NewTaskFormView: View {
             )
             : nil
 
+        let schedule = scheduleDraft.resolvedSchedule
+        let window = scheduleDraft.resolvedTimeWindow
+
         if let editing, let idx = store.tasks.firstIndex(where: { $0.id == editing.id }) {
             var updated = store.tasks[idx]
             updated.title = trimmedTitle
@@ -402,13 +531,11 @@ struct NewTaskFormView: View {
             updated.pointValue = resolvedValue
             updated.scoring = config
             updated.skipPenalty = resolvedSkip
-            switch updated.pinSchedule {
-            case .none, .today:
-                updated.pinSchedule = pinToToday ? .today : .none
-            default:
-                if !pinToToday {
-                    updated.pinSchedule = .none
-                }
+            updated.pinSchedule = schedule
+            updated.timeWindow = window
+            // "Not pinned" explicitly clears any one-off pin too.
+            if scheduleDraft.mode == .notPinned {
+                updated.oneOffPinDate = nil
             }
             updated.penalty = penaltyRule
             store.tasks[idx] = updated
@@ -419,7 +546,8 @@ struct NewTaskFormView: View {
                 category: category,
                 pointValue: resolvedValue,
                 skipPenalty: resolvedSkip,
-                pinSchedule: pinToToday ? .today : .none,
+                pinSchedule: schedule,
+                timeWindow: window,
                 penalty: penaltyRule,
                 scoring: config
             )

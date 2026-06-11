@@ -482,6 +482,56 @@ enum PinSchedule: Codable, Equatable {
     case daily
 }
 
+/// An optional daily time window attached to a scheduled Task —
+/// "7:00–8:00 AM". Stored as minutes from local midnight so the value
+/// is calendar-day agnostic and applies to every day the task is
+/// pinned. Used by the task card's quiet time chip and the weekly
+/// schedule's arrange-by-time agenda.
+struct TimeWindow: Codable, Equatable, Hashable {
+    /// Start of the window, minutes from local midnight (0...1439).
+    var startMinutes: Int
+    /// End of the window, minutes from local midnight (0...1439).
+    var endMinutes: Int
+
+    /// `Date` on the given day at `startMinutes`, for pickers/format.
+    func startDate(on day: Date = Date()) -> Date {
+        let cal = Calendar.current
+        return cal.date(byAdding: .minute, value: startMinutes, to: cal.startOfDay(for: day)) ?? day
+    }
+
+    /// `Date` on the given day at `endMinutes`, for pickers/format.
+    func endDate(on day: Date = Date()) -> Date {
+        let cal = Calendar.current
+        return cal.date(byAdding: .minute, value: endMinutes, to: cal.startOfDay(for: day)) ?? day
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
+
+    /// Compact display string — "7:00–8:00 AM". When both ends share
+    /// the same day-period suffix, the first one is dropped.
+    var displayText: String {
+        let start = Self.timeFormatter.string(from: startDate())
+        let end = Self.timeFormatter.string(from: endDate())
+        // Drop a shared trailing " AM"/" PM" from the first time.
+        for suffix in [" AM", " PM", " am", " pm"] {
+            if start.hasSuffix(suffix), end.hasSuffix(suffix) {
+                return "\(start.dropLast(suffix.count))–\(end)"
+            }
+        }
+        return "\(start)–\(end)"
+    }
+
+    /// Start-only display — "7:00 AM". Used by agenda rows.
+    var startText: String {
+        Self.timeFormatter.string(from: startDate())
+    }
+}
+
 // MARK: - Season
 
 struct SeasonCategory: Codable, Identifiable {
@@ -682,6 +732,14 @@ struct FFTask: Codable, Identifiable {
     var skipPenalty: Int?
     var estimatedMinutes: Int?
     var pinSchedule: PinSchedule = .none
+    /// One-shot "pin to today" that layers ON TOP of `pinSchedule`,
+    /// so pinning a recurring task to an extra day never destroys its
+    /// weekly schedule. Day rollover sweeps stale values.
+    var oneOffPinDate: Date? = nil
+    /// Optional daily time window ("7:00–8:00 AM") applied to every
+    /// day this task is pinned. Drives the card's time chip and the
+    /// weekly schedule's agenda ordering.
+    var timeWindow: TimeWindow? = nil
     var booster: BoosterRule? = nil
     var penalty: PenaltyRule? = nil
     /// The scoring shape (flat / tiered / quantity). Defaults to flat so
@@ -693,7 +751,7 @@ struct FFTask: Codable, Identifiable {
     // `booster` / `penalty` / `scoring` still hydrate. Missing keys fall
     // through to the property defaults.
     private enum CodingKeys: String, CodingKey {
-        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, booster, penalty, scoring
+        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, timeWindow, booster, penalty, scoring
     }
 
     init(
@@ -705,6 +763,8 @@ struct FFTask: Codable, Identifiable {
         skipPenalty: Int? = nil,
         estimatedMinutes: Int? = nil,
         pinSchedule: PinSchedule = .none,
+        oneOffPinDate: Date? = nil,
+        timeWindow: TimeWindow? = nil,
         booster: BoosterRule? = nil,
         penalty: PenaltyRule? = nil,
         scoring: ScoringConfig = ScoringConfig()
@@ -717,6 +777,8 @@ struct FFTask: Codable, Identifiable {
         self.skipPenalty = skipPenalty
         self.estimatedMinutes = estimatedMinutes
         self.pinSchedule = pinSchedule
+        self.oneOffPinDate = oneOffPinDate
+        self.timeWindow = timeWindow
         self.booster = booster
         self.penalty = penalty
         self.scoring = scoring
@@ -732,6 +794,8 @@ struct FFTask: Codable, Identifiable {
         self.skipPenalty = try c.decodeIfPresent(Int.self, forKey: .skipPenalty)
         self.estimatedMinutes = try c.decodeIfPresent(Int.self, forKey: .estimatedMinutes)
         self.pinSchedule = try c.decodeIfPresent(PinSchedule.self, forKey: .pinSchedule) ?? .none
+        self.oneOffPinDate = try c.decodeIfPresent(Date.self, forKey: .oneOffPinDate)
+        self.timeWindow = try c.decodeIfPresent(TimeWindow.self, forKey: .timeWindow)
         self.booster = try c.decodeIfPresent(BoosterRule.self, forKey: .booster)
         self.penalty = try c.decodeIfPresent(PenaltyRule.self, forKey: .penalty)
         self.scoring = try c.decodeIfPresent(ScoringConfig.self, forKey: .scoring) ?? ScoringConfig()
@@ -747,6 +811,8 @@ struct FFTask: Codable, Identifiable {
         try c.encodeIfPresent(skipPenalty, forKey: .skipPenalty)
         try c.encodeIfPresent(estimatedMinutes, forKey: .estimatedMinutes)
         try c.encode(pinSchedule, forKey: .pinSchedule)
+        try c.encodeIfPresent(oneOffPinDate, forKey: .oneOffPinDate)
+        try c.encodeIfPresent(timeWindow, forKey: .timeWindow)
         try c.encodeIfPresent(booster, forKey: .booster)
         try c.encodeIfPresent(penalty, forKey: .penalty)
         try c.encode(scoring, forKey: .scoring)
@@ -1019,8 +1085,13 @@ extension Note {
 
 extension FFTask {
     /// True when this Task's schedule pins it to the given calendar day.
+    /// A one-off pin (`oneOffPinDate`) layers on top of the schedule so
+    /// "pin to today" never erases a recurring weekly pattern.
     func isPinnedFor(_ date: Date) -> Bool {
         let cal = Calendar.current
+        if let oneOff = oneOffPinDate, cal.isDate(date, inSameDayAs: oneOff) {
+            return true
+        }
         switch pinSchedule {
         case .none:
             return false

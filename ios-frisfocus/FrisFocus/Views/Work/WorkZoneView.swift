@@ -19,6 +19,7 @@ import UIKit
 struct WorkZoneView: View {
     @Environment(Store.self) private var store
     @State private var showCaptureSheet: Bool = false
+    @State private var showWeekSchedule: Bool = false
     @State private var showFocusStart: Bool = false
     @State private var showFocusMode: Bool = false
     @State private var showFocusTogether: Bool = false
@@ -35,8 +36,11 @@ struct WorkZoneView: View {
                     title: "Today's plan",
                     subline: store.workSubline
                 )
-                focusEntryButton
-                    .offset(y: 4)
+                HStack(spacing: 8) {
+                    weekScheduleButton
+                    focusEntryButton
+                }
+                .offset(y: 4)
             }
             .padding(.top, 28)
 
@@ -87,6 +91,10 @@ struct WorkZoneView: View {
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
         }
+        .sheet(isPresented: $showWeekSchedule) {
+            WeekScheduleView()
+                .environment(store)
+        }
         .sheet(isPresented: $showFocusStart) {
             FocusStartSheet { duration, label, taskId in
                 pendingFocusDuration = duration
@@ -128,6 +136,32 @@ struct WorkZoneView: View {
                 participantFriendIds: pendingGroveFriendIds
             )
         }
+    }
+
+    // MARK: - Week schedule entry
+
+    /// Small calendar button beside FOCUS — opens the weekly schedule
+    /// page showing every task pinned to each day of the week.
+    @ViewBuilder
+    private var weekScheduleButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showWeekSchedule = true
+        } label: {
+            Image(systemName: "calendar")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule().fill(Theme.textPrimary.opacity(0.06))
+                )
+                .overlay(
+                    Capsule().stroke(Theme.textPrimary.opacity(0.15), lineWidth: 0.6)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Weekly schedule")
     }
 
     // MARK: - Focus entry

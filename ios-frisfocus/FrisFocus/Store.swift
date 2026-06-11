@@ -2343,6 +2343,108 @@ extension Store {
         persistAll()
     }
 
+    // MARK: - Task scheduling & lifecycle
+
+    /// One-tap "pin to today" from the hold menu. Sets the one-off pin
+    /// layered on top of the schedule so a recurring weekly pattern is
+    /// never destroyed. Day rollover sweeps it automatically.
+    func pinTaskToToday(_ task: FFTask) {
+        guard let idx = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        tasks[idx].oneOffPinDate = Date()
+        persistAll()
+    }
+
+    /// Remove today's pin. Clears the one-off pin and any `.today` /
+    /// today-dated `.singleDate` schedule; recurring schedules are left
+    /// alone (those are managed through the schedule editor).
+    func unpinTaskFromToday(_ task: FFTask) {
+        guard let idx = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        let cal = Calendar.current
+        if let oneOff = tasks[idx].oneOffPinDate, cal.isDateInToday(oneOff) {
+            tasks[idx].oneOffPinDate = nil
+        }
+        switch tasks[idx].pinSchedule {
+        case .today:
+            tasks[idx].pinSchedule = .none
+        case .singleDate(let date) where cal.isDateInToday(date):
+            tasks[idx].pinSchedule = .none
+        default:
+            break
+        }
+        persistAll()
+    }
+
+    /// Replace a task's recurring schedule and time window in one write.
+    /// Used by the compact scheduling sheet and the weekly schedule page.
+    func setSchedule(_ schedule: PinSchedule, timeWindow: TimeWindow?, forTaskId taskId: UUID) {
+        guard let idx = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        tasks[idx].pinSchedule = schedule
+        tasks[idx].timeWindow = timeWindow
+        persistAll()
+    }
+
+    /// Add one weekday (1 = Sunday … 7 = Saturday) to a task's recurring
+    /// schedule — the "add a task to this day" action on the weekly
+    /// schedule page. Converts non-recurring schedules into
+    /// `.daysOfWeek`, preserving an existing today-pin as a one-off.
+    func addWeekday(_ weekday: Int, toTaskId taskId: UUID) {
+        guard let idx = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        switch tasks[idx].pinSchedule {
+        case .daysOfWeek(var days):
+            days.insert(weekday)
+            tasks[idx].pinSchedule = .daysOfWeek(days)
+        case .daily:
+            break // Already every day.
+        case .today:
+            // Preserve the today-pin as a one-off, then go recurring.
+            tasks[idx].oneOffPinDate = Date()
+            tasks[idx].pinSchedule = .daysOfWeek([weekday])
+        case .none, .singleDate:
+            tasks[idx].pinSchedule = .daysOfWeek([weekday])
+        }
+        persistAll()
+    }
+
+    /// Remove one weekday from a task's recurring `.daysOfWeek` schedule.
+    /// An emptied set collapses to `.none`.
+    func removeWeekday(_ weekday: Int, fromTaskId taskId: UUID) {
+        guard let idx = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        if case .daysOfWeek(var days) = tasks[idx].pinSchedule {
+            days.remove(weekday)
+            tasks[idx].pinSchedule = days.isEmpty ? .none : .daysOfWeek(days)
+            persistAll()
+        }
+    }
+
+    /// Every task pinned to the given calendar day, for the weekly
+    /// schedule page. Ordered: timed tasks by window start, then
+    /// untimed by title.
+    func tasksPinned(on date: Date) -> [FFTask] {
+        tasks.filter { $0.isPinnedFor(date) }
+    }
+
+    /// Permanently delete a Task. History (log entries) is left intact
+    /// so past days keep their scores; boosters that watched ONLY this
+    /// task are removed, and habit-train steps referencing it drop out.
+    func deleteTask(_ task: FFTask) {
+        tasks.removeAll { $0.id == task.id }
+        boosters.removeAll { booster in
+            if case .task(let id) = booster.reference { return id == task.id }
+            return false
+        }
+        for i in habitTrains.indices {
+            habitTrains[i].steps.removeAll { $0.type == .task && $0.taskId == task.id }
+        }
+        persistAll()
+    }
+
+    /// Permanently delete a To-do, removing any score it contributed.
+    func deleteTodo(_ todo: Todo) {
+        todos.removeAll { $0.id == todo.id }
+        logEntries.removeAll { $0.todoId == todo.id }
+        persistAll()
+    }
+
     // MARK: - Day rollover
 
     /// Runs once per local day. Sweeps stale pins (`.today` schedules
@@ -2375,6 +2477,10 @@ extension Store {
                 }
             case .none, .daily, .daysOfWeek:
                 break
+            }
+            // One-off "pin to today" pins from previous days are stale.
+            if let oneOff = tasks[i].oneOffPinDate, cal.startOfDay(for: oneOff) < today {
+                tasks[i].oneOffPinDate = nil
             }
         }
 

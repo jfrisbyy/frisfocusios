@@ -2,12 +2,12 @@
 //  NewTodoFormView.swift
 //  FrisFocus
 //
-//  Full-height form sheet for creating a new To-do — a one-time
+//  Full-height form sheet for creating or editing a To-do — a one-time
 //  item that may or may not be dated, may or may not carry a point
 //  reward. Pointed To-dos due today (or past-due) land in Today's
 //  Plan; everything else lives quietly in the To-do list (a future
 //  screen). No category, no tier — To-dos are deliberately simpler
-//  than Tasks.
+//  than Tasks. Pass `editing:` to update an existing To-do in place.
 //
 
 import SwiftUI
@@ -15,13 +15,24 @@ import SwiftUI
 struct NewTodoFormView: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
+    let editing: Todo?
     let onSave: () -> Void
 
-    @State private var title: String = ""
-    @State private var hasDate: Bool = true
-    @State private var dueDate: Date = Date()
-    @State private var hasPoints: Bool = false
-    @State private var pointValue: Int = 2
+    @State private var title: String
+    @State private var hasDate: Bool
+    @State private var dueDate: Date
+    @State private var hasPoints: Bool
+    @State private var pointValue: Int
+
+    init(editing: Todo? = nil, onSave: @escaping () -> Void) {
+        self.editing = editing
+        self.onSave = onSave
+        _title = State(initialValue: editing?.title ?? "")
+        _hasDate = State(initialValue: editing.map { $0.dueDate != nil } ?? true)
+        _dueDate = State(initialValue: editing?.dueDate ?? Date())
+        _hasPoints = State(initialValue: editing?.pointValue != nil)
+        _pointValue = State(initialValue: editing?.pointValue ?? 2)
+    }
 
     var body: some View {
         NavigationStack {
@@ -74,7 +85,7 @@ struct NewTodoFormView: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.warmWheat)
-            .navigationTitle("New to-do")
+            .navigationTitle(editing == nil ? "New to-do" : "Edit to-do")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -103,12 +114,19 @@ struct NewTodoFormView: View {
         guard canSave else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
-        let todo = Todo(
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            dueDate: hasDate ? dueDate : nil,
-            pointValue: hasPoints ? pointValue : nil
-        )
-        store.todos.append(todo)
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let editing, let idx = store.todos.firstIndex(where: { $0.id == editing.id }) {
+            store.todos[idx].title = trimmedTitle
+            store.todos[idx].dueDate = hasDate ? dueDate : nil
+            store.todos[idx].pointValue = hasPoints ? pointValue : nil
+        } else {
+            let todo = Todo(
+                title: trimmedTitle,
+                dueDate: hasDate ? dueDate : nil,
+                pointValue: hasPoints ? pointValue : nil
+            )
+            store.todos.append(todo)
+        }
         store.persistAll()
 
         dismiss()

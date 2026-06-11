@@ -26,6 +26,9 @@ struct TaskCardView: View {
     @State private var showEdit: Bool = false
     @State private var showShareCapture: Bool = false
     @State private var showLogAmount: Bool = false
+    @State private var showScheduleSheet: Bool = false
+    @State private var showDeleteConfirm: Bool = false
+    @State private var showFocusMode: Bool = false
 
     /// Today's completed entry for this task, if any. Carries the actual
     /// points earned (which, for tiered / quantity tasks, depends on the
@@ -95,6 +98,21 @@ struct TaskCardView: View {
                     Text(metadataString)
                         .font(.sans(11, weight: .regular))
                         .foregroundStyle(ink.opacity(0.6))
+
+                    if let window = task.timeWindow {
+                        HStack(spacing: 3) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 8, weight: .regular))
+                            Text(window.displayText)
+                                .font(.sans(10, weight: .medium))
+                        }
+                        .foregroundStyle(ink.opacity(0.55))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(ink.opacity(onSky ? 0.12 : 0.06))
+                        )
+                    }
                 }
 
                 if !referencingBoosters.isEmpty || penaltyStatus != nil {
@@ -161,16 +179,106 @@ struct TaskCardView: View {
             Button {
                 showShareCapture = true
             } label: {
-                Label("Share a photo/video", systemImage: "camera")
+                Label("Proof", systemImage: "camera")
             }
+
+            // Complete / Log amount / Mark incomplete
+            if isCompleted {
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    store.uncompleteTask(task)
+                } label: {
+                    Label("Mark incomplete", systemImage: "arrow.uturn.backward.circle")
+                }
+            } else if task.requiresQuantityLogging {
+                Button {
+                    showLogAmount = true
+                } label: {
+                    Label("Log amount…", systemImage: "plus.forwardslash.minus")
+                }
+            } else {
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    store.completeTask(task)
+                } label: {
+                    Label("Complete", systemImage: "checkmark.circle")
+                }
+            }
+
+            Divider()
+
+            // Pin to today / Unpin from today
+            if !task.isPinnedToday {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    store.pinTaskToToday(task)
+                } label: {
+                    Label("Pin to today", systemImage: "pin")
+                }
+            } else if canUnpinToday {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    store.unpinTaskFromToday(task)
+                } label: {
+                    Label("Unpin from today", systemImage: "pin.slash")
+                }
+            }
+
+            Button {
+                showScheduleSheet = true
+            } label: {
+                Label("Pin to days…", systemImage: "calendar")
+            }
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showFocusMode = true
+            } label: {
+                Label("Focus on this", systemImage: "leaf")
+            }
+
+            Divider()
+
             Button {
                 showEdit = true
             } label: {
                 Label("Edit task", systemImage: "pencil")
             }
+
+            Button(role: .destructive) {
+                showDeleteConfirm = true
+            } label: {
+                Label("Delete task", systemImage: "trash")
+            }
+        }
+        .confirmationDialog(
+            "Delete \u{201C}\(task.title)\u{201D}?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete task", role: .destructive) {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                store.deleteTask(task)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Past days keep their points. The task and its schedule are removed.")
         }
         .sheet(isPresented: $showEdit) {
             NewTaskFormView(editing: task) { }
+        }
+        .sheet(isPresented: $showScheduleSheet) {
+            TaskScheduleSheet(task: task)
+                .environment(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $showFocusMode) {
+            FocusModeView(
+                sessionLength: 45 * 60,
+                label: task.title,
+                linkedTaskId: task.id
+            )
         }
         .sheet(isPresented: $showLogAmount) {
             LogQuantitySheet(task: task)
@@ -238,6 +346,19 @@ struct TaskCardView: View {
     }
 
     // MARK: - Action
+
+    /// True when today's pin can be removed with one tap — a one-off
+    /// pin, a `.today` schedule, or a today-dated single pin. Recurring
+    /// schedules are managed through "Pin to days…" instead.
+    private var canUnpinToday: Bool {
+        let cal = Calendar.current
+        if let oneOff = task.oneOffPinDate, cal.isDateInToday(oneOff) { return true }
+        switch task.pinSchedule {
+        case .today: return true
+        case .singleDate(let date): return cal.isDateInToday(date)
+        default: return false
+        }
+    }
 
     /// Color anchor for a booster chip on this card: the watched category
     /// for a category booster, otherwise this task's category.
