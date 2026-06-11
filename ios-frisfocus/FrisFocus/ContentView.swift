@@ -26,6 +26,7 @@ struct ContentView: View {
     @Environment(GoldenHourService.self) private var goldenHour
     @Environment(SocialSyncService.self) private var socialSync
     @Environment(FriendGraphService.self) private var friendGraph
+    @Environment(NotesSyncService.self) private var notesSync
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
@@ -69,6 +70,9 @@ struct ContentView: View {
                     // pacts, circles, and grove presence — synced into
                     // the Store and kept live over realtime.
                     await socialSync.start(myUserId: myId, store: store)
+                    // Private journal sync: notes, folders, tags, and
+                    // their media follow the account — offline-first.
+                    await notesSync.start(myUserId: myId, store: store)
                     await notifications.requestAuthorizationIfNeeded()
                     // Esengo link: refresh entitlements + silently credit
                     // any outcomes Cadence recorded while we were away.
@@ -82,6 +86,7 @@ struct ContentView: View {
                     profileStore.clear()
                     moderation.clear()
                     socialSync.stop()
+                    notesSync.stop()
                     await cadence.refresh(myUserId: nil)
                 }
             }
@@ -109,6 +114,12 @@ struct ContentView: View {
                         Task {
                             await socialSync.refreshAll()
                             socialSync.pokeEngine(trigger: "foreground")
+                        }
+                        // Catch up the journal: pull remote edits and
+                        // flush anything queued while offline.
+                        Task {
+                            await notesSync.pullRemote()
+                            await notesSync.flushNow()
                         }
                     }
                 } else if newPhase == .background || newPhase == .inactive {

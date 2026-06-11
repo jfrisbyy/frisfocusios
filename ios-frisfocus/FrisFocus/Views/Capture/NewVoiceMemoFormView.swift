@@ -32,7 +32,7 @@ struct NewVoiceMemoFormView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Theme.paperCream.ignoresSafeArea()
+                RuledPaperBackground().ignoresSafeArea()
 
                 if let completed {
                     previewState(completed: completed)

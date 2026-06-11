@@ -658,6 +658,33 @@ struct NoteFolder: Codable, Identifiable, Equatable, Hashable {
     var id: UUID = UUID()
     var name: String
     var colorKey: FolderColor
+    /// Last local edit — drives latest-wins conflict resolution in
+    /// the notes sync layer. Defaults tolerate pre-sync payloads.
+    var updatedAt: Date = Date()
+}
+
+// Backward-compatible Codable: folders persisted before `updatedAt`
+// existed still decode cleanly (missing key → now).
+extension NoteFolder {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, colorKey, updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.name = try c.decode(String.self, forKey: .name)
+        self.colorKey = try c.decode(FolderColor.self, forKey: .colorKey)
+        self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(colorKey, forKey: .colorKey)
+        try c.encode(updatedAt, forKey: .updatedAt)
+    }
 }
 
 /// Free-form journal entry — text body, voice memo, or both. The voice
@@ -683,6 +710,20 @@ struct NoteVoiceMemo: Codable, Identifiable, Equatable, Hashable {
     }
 }
 
+/// A single photo attached to a Note. The JPEG lives on disk in the
+/// Documents directory under `filename`; resolve via `url`. A note can
+/// carry any number, rendered in `createdAt` order.
+struct NotePhoto: Codable, Identifiable, Equatable, Hashable {
+    var id: UUID = UUID()
+    var filename: String
+    var createdAt: Date = Date()
+
+    var url: URL? {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        return docs?.appendingPathComponent(filename)
+    }
+}
+
 struct Note: Codable, Identifiable {
     var id: UUID = UUID()
     var createdAt: Date = Date()
@@ -691,9 +732,18 @@ struct Note: Codable, Identifiable {
     /// allowed; new takes append. Legacy single-memo notes are migrated
     /// into this array on decode (see Codable conformance below).
     var voiceMemos: [NoteVoiceMemo] = []
+    /// Photos attached to this note, in attach order.
+    var photos: [NotePhoto] = []
+    /// Free-form tags (no leading #; lowercase-insensitive matching is
+    /// handled at the Store level). Only surfaced when the user has
+    /// opted into tags.
+    var tags: [String] = []
     var folderId: UUID?
     var label: String?
     var isPinned: Bool = false
+    /// Last local edit — drives latest-wins conflict resolution in the
+    /// notes sync layer.
+    var updatedAt: Date = Date()
 }
 
 extension Note {
@@ -708,11 +758,11 @@ extension Note {
     /// Resolve the on-disk URL for the first attached voice memo.
     var voiceMemoURL: URL? { voiceMemos.first?.url }
 
-    /// True when either text or audio is attached. Used by the
+    /// True when text, audio, or a photo is attached. Used by the
     /// homepage to skip rendering empty entries defensively.
     var hasContent: Bool {
         let trimmedBody = body?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return !trimmedBody.isEmpty || !voiceMemos.isEmpty
+        return !trimmedBody.isEmpty || !voiceMemos.isEmpty || !photos.isEmpty
     }
 }
 
@@ -724,7 +774,7 @@ extension Note {
 extension Note {
     private enum CodingKeys: String, CodingKey {
         case id, createdAt, body, voiceMemoFilename, voiceMemoDuration,
-             voiceMemos, folderId, label, isPinned
+             voiceMemos, photos, tags, folderId, label, isPinned, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -735,6 +785,9 @@ extension Note {
         self.folderId = try c.decodeIfPresent(UUID.self, forKey: .folderId)
         self.label = try c.decodeIfPresent(String.self, forKey: .label)
         self.isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        self.photos = try c.decodeIfPresent([NotePhoto].self, forKey: .photos) ?? []
+        self.tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? self.createdAt
 
         // Prefer the new array shape; fall back to the legacy single-memo
         // fields so notes persisted before multi-memo support still hydrate.
@@ -760,9 +813,12 @@ extension Note {
         try c.encode(createdAt, forKey: .createdAt)
         try c.encodeIfPresent(body, forKey: .body)
         try c.encode(voiceMemos, forKey: .voiceMemos)
+        try c.encode(photos, forKey: .photos)
+        try c.encode(tags, forKey: .tags)
         try c.encodeIfPresent(folderId, forKey: .folderId)
         try c.encodeIfPresent(label, forKey: .label)
         try c.encode(isPinned, forKey: .isPinned)
+        try c.encode(updatedAt, forKey: .updatedAt)
     }
 }
 

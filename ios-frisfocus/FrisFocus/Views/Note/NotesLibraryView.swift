@@ -24,10 +24,11 @@ struct NotesLibraryView: View {
     @Environment(\.dismiss) private var dismiss
 
     /// Library-level filter. Folder filtering now lives on the
-    /// dedicated folder page, so only the two top-level modes survive.
+    /// dedicated folder page; tags filter in place (when enabled).
     enum Selection: Equatable {
         case all
         case unfiled
+        case tag(String)
     }
 
     @State private var selection: Selection = .all
@@ -51,6 +52,11 @@ struct NotesLibraryView: View {
 
                     filterStrip
                         .padding(.top, 14)
+
+                    if store.noteTagsEnabled && !store.allNoteTags.isEmpty {
+                        tagStrip
+                            .padding(.top, 8)
+                    }
 
                     manageRow
                         .padding(.top, 6)
@@ -200,6 +206,29 @@ struct NotesLibraryView: View {
         .animation(.easeInOut(duration: 0.18), value: isSelected)
     }
 
+    // MARK: - Tag strip
+
+    /// Quiet "#tag" chips below the folder strip — in-place filters,
+    /// matching the understated tag chips on entries. Only rendered
+    /// when the user has opted into tags and at least one exists.
+    @ViewBuilder
+    private var tagStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(store.allNoteTags, id: \.self) { tag in
+                    let isOn = selection == .tag(tag)
+                    Button(action: { setSelection(isOn ? .all : .tag(tag)) }) {
+                        NoteTagChip(tag: tag, isSelected: isOn)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
+        }
+        .scrollClipDisabled()
+    }
+
     /// Folder chip pushes the dedicated `FolderDetailView`. Outline-only
     /// look with the folder's color dot and a small chevron to suggest
     /// navigation.
@@ -274,6 +303,7 @@ struct NotesLibraryView: View {
         switch selection {
         case .all: return .all
         case .unfiled: return .unfiled
+        case .tag(let tag): return .tag(tag)
         }
     }
 
@@ -370,6 +400,7 @@ struct NotesLibraryView: View {
         switch selection {
         case .all: return "Empty"
         case .unfiled: return "Nothing unfiled"
+        case .tag: return "No notes here"
         }
     }
 
@@ -377,6 +408,7 @@ struct NotesLibraryView: View {
         switch selection {
         case .all: return "Tap + below to capture the first one."
         case .unfiled: return "Every note has a home."
+        case .tag(let tag): return "Nothing carries #\(tag) right now."
         }
     }
 }

@@ -911,6 +911,72 @@ export type Database = {
           },
         ]
       }
+      note_folders: {
+        Row: {
+          color_key: string
+          id: string
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          color_key?: string
+          id: string
+          name: string
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          color_key?: string
+          id?: string
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      notes: {
+        Row: {
+          body: string | null
+          created_at: string
+          folder_id: string | null
+          id: string
+          is_pinned: boolean
+          label: string | null
+          photos: Json
+          tags: string[]
+          updated_at: string
+          user_id: string
+          voice_memos: Json
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          folder_id?: string | null
+          id: string
+          is_pinned?: boolean
+          label?: string | null
+          photos?: Json
+          tags?: string[]
+          updated_at?: string
+          user_id?: string
+          voice_memos?: Json
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          folder_id?: string | null
+          id?: string
+          is_pinned?: boolean
+          label?: string | null
+          photos?: Json
+          tags?: string[]
+          updated_at?: string
+          user_id?: string
+          voice_memos?: Json
+        }
+        Relationships: []
+      }
       pact_completions: {
         Row: {
           completed_on: string

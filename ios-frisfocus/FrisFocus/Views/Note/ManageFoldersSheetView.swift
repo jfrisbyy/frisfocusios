@@ -13,6 +13,10 @@
 //  folder" and "delete folder and notes" so destructive intent is
 //  explicit.
 //
+//  A quiet "Tags" section at the bottom holds the opt-in toggle for
+//  the tags layer — off by default, nothing tag-related surfaces
+//  anywhere until it's flipped on here.
+//
 
 import SwiftUI
 import UIKit
@@ -63,6 +67,9 @@ struct ManageFoldersSheetView: View {
                             .buttonStyle(.plain)
                         }
 
+                        tagsSection
+                            .padding(.top, 28)
+
                         Spacer(minLength: 40)
                     }
                 }
@@ -82,6 +89,43 @@ struct ManageFoldersSheetView: View {
                 actions: deleteActions,
                 message: deleteMessage
             )
+        }
+    }
+
+    // MARK: - Tags opt-in
+
+    /// The opt-in switch for the tags layer. Lives here (with the rest
+    /// of the organizing tools) so folders-only users never see it.
+    @ViewBuilder
+    private var tagsSection: some View {
+        @Bindable var store = store
+        VStack(alignment: .leading, spacing: 10) {
+            EyebrowText(text: "Tags", opacity: 0.5)
+                .padding(.horizontal, 22)
+
+            Rectangle()
+                .fill(Theme.sunWarm.opacity(0.4))
+                .frame(height: 0.5)
+                .padding(.horizontal, 22)
+
+            Toggle(isOn: $store.noteTagsEnabled) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Enable tags")
+                        .font(.sans(15, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Add #tags to notes alongside folders — filter and search by them in the library.")
+                        .font(.serifItalic(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .tint(Theme.alertGreen)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 8)
+            .onChange(of: store.noteTagsEnabled) { _, _ in
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                store.persistAll()
+            }
         }
     }
 

@@ -30,6 +30,10 @@ struct FrisFocusApp: App {
     /// realtime, so request banners and the unseen-request dot work on
     /// every screen — not just while the Friends page is open.
     @State private var friendGraph = FriendGraphService()
+    /// Private journal sync: notes, folders, tags, voice memos, and
+    /// photos mirror to the user's own cloud space — offline-first,
+    /// latest-wins.
+    @State private var notesSync = NotesSyncService()
 
     var body: some Scene {
         WindowGroup {
@@ -43,6 +47,7 @@ struct FrisFocusApp: App {
                 .environment(goldenHour)
                 .environment(socialSync)
                 .environment(friendGraph)
+                .environment(notesSync)
                 .environment(appDelegate.notifications)
                 .preferredColorScheme(.light)
                 .statusBarHidden(false)

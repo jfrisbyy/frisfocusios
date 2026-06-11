@@ -3,22 +3,19 @@
 //  FrisFocus
 //
 //  Full-page editor for an existing Note. Reached by tapping any
-//  entry on the homepage or in the Notes library. The screen reuses
-//  the ruled-paper background so it still feels like a journal —
-//  the text field is the focus, and the folder / label / delete
-//  controls sit underneath as a quiet toolbar.
+//  entry on the homepage or in the Notes library. The screen mirrors
+//  the New Note composer — ruled paper, serif body, photos and voice
+//  memos inline, and a quiet tool strip of small icons (mic, photo,
+//  folder, tags, label) instead of stacked form rows.
 //
 //  Autosave: every edit is mirrored to local `@State` and persisted
 //  to the Store automatically. Textual edits debounce (0.5s) so we
 //  don't thrash the disk on every keystroke; structural edits (folder
-//  pick, voice memo add/remove, pin toggle) commit immediately.
-//
-//  Voice memos: a note can carry any number of takes. The editor lists
-//  them in order, with a per-memo remove control, and an "Add voice
-//  memo" button that always appears so users can stack additional
-//  recordings on the same note.
+//  pick, memo/photo add/remove, tag edits, pin toggle) commit
+//  immediately.
 //
 
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -32,12 +29,19 @@ struct NoteDetailEditView: View {
     @State private var label: String = ""
     @State private var selectedFolderId: UUID?
     @State private var voiceMemos: [NoteVoiceMemo] = []
+    @State private var photos: [NotePhoto] = []
+    @State private var tags: [String] = []
 
     @State private var initialized: Bool = false
     @State private var showFolderPicker: Bool = false
+    @State private var showTagPicker: Bool = false
     @State private var showRecorder: Bool = false
     @State private var showDeleteConfirm: Bool = false
     @State private var showCaptureSheet: Bool = false
+    @State private var showLabelField: Bool = false
+    @State private var photoItems: [PhotosPickerItem] = []
+
+    @FocusState private var labelFocused: Bool
 
     /// Debounce token for textual autosave. Bumped on every keystroke;
     /// the trailing task only fires the persist when it's still current.
@@ -59,18 +63,35 @@ struct NoteDetailEditView: View {
                 .ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 20) {
                     header
 
                     bodyField
 
+                    if !photos.isEmpty {
+                        NotePhotoGridView(photos: photos, onRemove: removePhoto)
+                    }
+
                     voiceMemoBlock
 
-                    folderRow
+                    if store.noteTagsEnabled && !tags.isEmpty {
+                        Button(action: openTagPicker) {
+                            NoteTagChipsView(tags: tags)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Edit tags")
+                    }
 
-                    labelField
+                    if showLabelField || !label.isEmpty {
+                        labelField
+                    }
 
-                    deleteButton
+                    toolStrip
+                        .padding(.top, 6)
+
+                    deleteRow
+                        .padding(.top, 10)
 
                     Spacer(minLength: 80)
                 }
@@ -113,6 +134,10 @@ struct NoteDetailEditView: View {
             FolderPickerSheetView(selectedFolderId: $selectedFolderId)
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showTagPicker, onDismiss: persistNow) {
+            TagPickerSheetView(selectedTags: $tags)
+                .presentationDetents([.medium, .large])
+        }
         .sheet(isPresented: $showRecorder) {
             VoiceMemoRecorderSheet { completed in
                 appendVoiceMemo(completed)
@@ -138,6 +163,10 @@ struct NoteDetailEditView: View {
         .onChange(of: noteText) { _, _ in scheduleAutosave() }
         .onChange(of: label) { _, _ in scheduleAutosave() }
         .onChange(of: selectedFolderId) { _, _ in persistNow() }
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
+            Task { await importPhotos(items) }
+        }
         .onDisappear {
             // Flush any pending textual autosave when the screen closes so
             // a fast back-tap never loses the last keystroke.
@@ -198,7 +227,7 @@ struct NoteDetailEditView: View {
 
     @ViewBuilder
     private var header: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 8) {
             EyebrowText(text: createdString, opacity: 0.5)
             HStack(spacing: 8) {
                 if let folder = currentFolder {
@@ -224,6 +253,11 @@ struct NoteDetailEditView: View {
                     }
                 }
             }
+
+            Rectangle()
+                .fill(Theme.sunWarm.opacity(0.45))
+                .frame(height: 0.5)
+                .padding(.top, 2)
         }
     }
 
@@ -245,14 +279,14 @@ struct NoteDetailEditView: View {
     @ViewBuilder
     private var bodyField: some View {
         TextField(
-            "Write a thought…",
+            "What wants to be written?",
             text: $noteText,
             axis: .vertical
         )
         .font(.serifItalic(17, weight: .regular))
         .lineSpacing(6)
         .foregroundStyle(Theme.textPrimary)
-        .frame(minHeight: 180, alignment: .topLeading)
+        .frame(minHeight: 160, alignment: .topLeading)
         .padding(.vertical, 4)
     }
 
@@ -260,18 +294,8 @@ struct NoteDetailEditView: View {
 
     @ViewBuilder
     private var voiceMemoBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !voiceMemos.isEmpty {
-                HStack(spacing: 6) {
-                    EyebrowText(
-                        text: voiceMemos.count == 1
-                            ? "Voice memo"
-                            : "Voice memos · \(voiceMemos.count)",
-                        opacity: 0.5
-                    )
-                    Spacer()
-                }
-
+        if !voiceMemos.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(voiceMemos) { memo in
                     if let url = memo.url {
                         VoiceMemoStripView(
@@ -282,102 +306,139 @@ struct NoteDetailEditView: View {
                     }
                 }
             }
-
-            Button(action: { showRecorder = true }) {
-                HStack(spacing: 8) {
-                    Image(systemName: voiceMemos.isEmpty ? "mic" : "plus")
-                        .font(.system(size: 13))
-                    Text(voiceMemos.isEmpty ? "Add voice memo" : "Add another voice memo")
-                        .font(.sans(13, weight: .regular))
-                    Spacer()
-                }
-                .foregroundStyle(Theme.textPrimary.opacity(0.6))
-                .padding(.vertical, 12)
-                .padding(.horizontal, 14)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(
-                            Theme.textPrimary.opacity(0.18),
-                            style: StrokeStyle(lineWidth: 1, dash: [3, 3])
-                        )
-                )
-            }
-            .buttonStyle(.plain)
         }
     }
 
-    // MARK: - Folder + label
-
-    @ViewBuilder
-    private var folderRow: some View {
-        Button(action: { showFolderPicker = true }) {
-            HStack(spacing: 10) {
-                Text("Folder")
-                    .font(.sans(13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                Spacer()
-                if let folder = currentFolder {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(folder.colorKey.dotColor)
-                            .frame(width: 8, height: 8)
-                        Text(folder.name)
-                            .font(.sans(13, weight: .regular))
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                } else {
-                    Text("None")
-                        .font(.sans(13, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.4))
-                }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
-            .background(Color.white.opacity(0.55))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-    }
+    // MARK: - Label field
 
     @ViewBuilder
     private var labelField: some View {
-        TextField("Label (e.g. morning pages)", text: $label)
-            .font(.sans(14, weight: .regular))
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
-            .background(Color.white.opacity(0.55))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-            )
+        HStack(spacing: 8) {
+            Image(systemName: "bookmark")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.45))
+            TextField("label (e.g. morning pages)", text: $label)
+                .focused($labelFocused)
+                .font(.serifItalic(14, weight: .regular))
+                .foregroundStyle(Theme.textPrimary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.white.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+        )
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // MARK: - Tool strip
+
+    /// The same quiet icon row as the composer — small understated
+    /// controls separated from the page by a gold hairline.
+    @ViewBuilder
+    private var toolStrip: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle()
+                .fill(Theme.sunWarm.opacity(0.35))
+                .frame(height: 0.5)
+
+            HStack(spacing: 4) {
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showRecorder = true
+                }) {
+                    toolIcon("mic", active: !voiceMemos.isEmpty)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add voice memo")
+
+                PhotosPicker(
+                    selection: $photoItems,
+                    maxSelectionCount: 6,
+                    matching: .images,
+                    photoLibrary: .shared()
+                ) {
+                    toolIcon("photo.on.rectangle", active: !photos.isEmpty)
+                }
+                .accessibilityLabel("Attach photos")
+
+                folderTool
+
+                if store.noteTagsEnabled {
+                    Button(action: openTagPicker) {
+                        toolIcon("number", active: !tags.isEmpty)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Tags")
+                }
+
+                Button(action: toggleLabelField) {
+                    toolIcon("bookmark", active: showLabelField || !label.isEmpty)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Label")
+
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     @ViewBuilder
-    private var deleteButton: some View {
+    private var folderTool: some View {
+        Button(action: {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showFolderPicker = true
+        }) {
+            if let folder = currentFolder {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(folder.colorKey.dotColor)
+                        .frame(width: 6, height: 6)
+                    Text(folder.name)
+                        .font(.sans(12, weight: .medium))
+                        .foregroundStyle(folder.colorKey.pillText)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(folder.colorKey.pillBackground)
+                .clipShape(Capsule())
+                .frame(height: 44)
+            } else {
+                toolIcon("folder", active: false)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Folder")
+    }
+
+    @ViewBuilder
+    private func toolIcon(_ systemName: String, active: Bool) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 15, weight: .regular))
+            .foregroundStyle(
+                active ? Theme.sunShadow : Theme.textPrimary.opacity(0.55)
+            )
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+    }
+
+    /// Quiet text-only delete — destructive intent stays available but
+    /// no longer shouts from a filled red card.
+    @ViewBuilder
+    private var deleteRow: some View {
         Button(role: .destructive, action: { showDeleteConfirm = true }) {
             HStack(spacing: 6) {
                 Image(systemName: "trash")
-                    .font(.system(size: 12))
+                    .font(.system(size: 11))
                 Text("Delete note")
-                    .font(.sans(13, weight: .medium))
+                    .font(.sans(12, weight: .regular))
             }
-            .foregroundStyle(Theme.alertRed.opacity(0.85))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(Theme.alertRed.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Theme.alertRed.opacity(0.18), lineWidth: 0.5)
-            )
+            .foregroundStyle(Theme.alertRed.opacity(0.7))
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -397,6 +458,8 @@ struct NoteDetailEditView: View {
         label = note.label ?? ""
         selectedFolderId = note.folderId
         voiceMemos = note.voiceMemos
+        photos = note.photos
+        tags = note.tags
         initialized = true
     }
 
@@ -406,6 +469,23 @@ struct NoteDetailEditView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         persistNow()
         dismiss()
+    }
+
+    private func openTagPicker() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showTagPicker = true
+    }
+
+    private func toggleLabelField() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showLabelField.toggle()
+        }
+        if showLabelField {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                labelFocused = true
+            }
+        }
     }
 
     private func appendVoiceMemo(_ completed: AudioRecorderService.Completed) {
@@ -427,6 +507,28 @@ struct NoteDetailEditView: View {
         persistNow()
     }
 
+    private func importPhotos(_ items: [PhotosPickerItem]) async {
+        for item in items {
+            if let data = try? await item.loadTransferable(type: Data.self),
+               let image = UIImage(data: data),
+               let photo = NotePhotoStore.save(image) {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    photos.append(photo)
+                }
+            }
+        }
+        photoItems = []
+        persistNow()
+    }
+
+    private func removePhoto(_ photo: NotePhoto) {
+        NotePhotoStore.delete(photo)
+        withAnimation(.easeInOut(duration: 0.18)) {
+            photos.removeAll { $0.id == photo.id }
+        }
+        persistNow()
+    }
+
     // MARK: - Autosave
 
     /// Debounced textual autosave. Each keystroke bumps a token; after
@@ -444,7 +546,8 @@ struct NoteDetailEditView: View {
     }
 
     /// Flush local edits to the Store immediately. Used by structural
-    /// changes (memo add/remove, folder pick, leaving the screen).
+    /// changes (memo/photo add/remove, folder pick, tag edits, leaving
+    /// the screen).
     private func persistNow() {
         guard initialized else { return }
         guard let live = liveNote else { return }
@@ -459,7 +562,9 @@ struct NoteDetailEditView: View {
         if live.body == nextBody,
            live.label == nextLabel,
            live.folderId == selectedFolderId,
-           live.voiceMemos == voiceMemos {
+           live.voiceMemos == voiceMemos,
+           live.photos == photos,
+           live.tags == tags {
             return
         }
 
@@ -468,6 +573,8 @@ struct NoteDetailEditView: View {
         updated.label = nextLabel
         updated.folderId = selectedFolderId
         updated.voiceMemos = voiceMemos
+        updated.photos = photos
+        updated.tags = tags
         store.updateNote(updated)
 
         flashSaved()
@@ -483,13 +590,18 @@ struct NoteDetailEditView: View {
 
     private func delete() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        // Clean any takes added in this session that the persisted note
-        // doesn't yet reference — Store.deleteNote handles the rest.
+        // Clean any takes/photos added in this session that the
+        // persisted note doesn't yet reference — Store.deleteNote
+        // handles the rest.
         let persistedFilenames = Set(note.voiceMemos.map(\.filename))
         for memo in voiceMemos where !persistedFilenames.contains(memo.filename) {
             if let url = memo.url {
                 try? FileManager.default.removeItem(at: url)
             }
+        }
+        let persistedPhotos = Set(note.photos.map(\.filename))
+        for photo in photos where !persistedPhotos.contains(photo.filename) {
+            NotePhotoStore.delete(photo)
         }
         store.deleteNote(note)
         dismiss()

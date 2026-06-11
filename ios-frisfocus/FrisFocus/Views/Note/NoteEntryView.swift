@@ -4,10 +4,10 @@
 //
 //  A single journal entry, rendered on the paper background. Shows
 //  the created-at time, the folder dot + label (if either is set),
-//  the serif italic body, and a quiet read-only voice-memo badge if
-//  an audio clip is attached. The whole row is wrapped in a
-//  `NavigationLink` so tapping anywhere on it pushes the
-//  `NoteDetailEditView`.
+//  the serif italic body, photo thumbnails, tag chips, and a quiet
+//  read-only voice-memo badge if an audio clip is attached. The whole
+//  row is wrapped in a `NavigationLink` so tapping anywhere on it
+//  pushes the `NoteDetailEditView`.
 //
 
 import SwiftUI
@@ -45,8 +45,18 @@ struct NoteEntryView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if !note.photos.isEmpty {
+                photoRow
+                    .padding(.top, 2)
+            }
+
             if note.voiceMemoFilename != nil {
                 VoiceMemoLabelView(duration: note.voiceMemoDuration ?? 0)
+                    .padding(.top, 2)
+            }
+
+            if store.noteTagsEnabled && !note.tags.isEmpty {
+                NoteTagChipsView(tags: note.tags)
                     .padding(.top, 2)
             }
         }
@@ -89,6 +99,29 @@ struct NoteEntryView: View {
                 }
             }
 
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Compact read-only photo strip — up to three small rounded
+    /// thumbnails with a quiet "+n" overflow badge. Tapping the row
+    /// still navigates to the editor where the full grid lives.
+    @ViewBuilder
+    private var photoRow: some View {
+        HStack(spacing: 6) {
+            ForEach(note.photos.prefix(3)) { photo in
+                NotePhotoThumbView(photo: photo)
+                    .frame(width: 72, height: 72)
+                    .allowsHitTesting(false)
+            }
+            if note.photos.count > 3 {
+                Text("+\(note.photos.count - 3)")
+                    .font(.sans(12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                    .frame(width: 36, height: 72)
+                    .background(Color.white.opacity(0.45))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
             Spacer(minLength: 0)
         }
     }

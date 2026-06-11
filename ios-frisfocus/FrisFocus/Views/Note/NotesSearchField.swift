@@ -24,7 +24,7 @@ struct NotesSearchField: View {
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(isFocused ? 0.75 : 0.45))
 
-            TextField("search notes, folders, thoughts…", text: $query)
+            TextField("search notes, folders, tags…", text: $query)
                 .focused($isFocused)
                 .font(.serifItalic(14, weight: .regular))
                 .foregroundStyle(Theme.textPrimary)

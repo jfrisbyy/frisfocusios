@@ -68,6 +68,16 @@ final class Store {
     /// to Supabase (and realtime keeps this Store mirrored back).
     @ObservationIgnored weak var social: SocialSyncService?
 
+    /// The private notes sync bridge. Wired at sign-in by
+    /// `NotesSyncService`; note/folder mutations notify it so personal
+    /// journal data writes through to the user's own cloud space.
+    @ObservationIgnored weak var notesSync: NotesSyncService?
+
+    /// Whether the user opted into tags on notes. Off by default —
+    /// nothing about tags surfaces anywhere until this is flipped in
+    /// the manage-folders sheet.
+    var noteTagsEnabled: Bool = false { didSet { markDirty(.settings) } }
+
     // MARK: - Avoidance (penalties)
 
     /// User-defined behaviors to reduce. Standalone, not tied to a
@@ -248,6 +258,7 @@ final class Store {
         static let cadenceInviteDismissed = "cadenceInviteDismissed"
         static let cadenceSurfacePointsSocially = "cadenceSurfacePointsSocially"
         static let reminderValueThreshold = "reminderValueThreshold"
+        static let noteTagsEnabled = "noteTagsEnabled"
 
         // Legacy keys cleared by the DEBUG migration below.
         static let legacyOneShots = "oneShots"
@@ -392,6 +403,7 @@ final class Store {
             self.cadenceConnected = userDefaults.bool(forKey: Keys.cadenceConnected)
             self.cadenceInviteDismissed = userDefaults.bool(forKey: Keys.cadenceInviteDismissed)
             self.cadenceSurfacePointsSocially = userDefaults.bool(forKey: Keys.cadenceSurfacePointsSocially)
+            self.noteTagsEnabled = userDefaults.bool(forKey: Keys.noteTagsEnabled)
             if userDefaults.object(forKey: Keys.reminderValueThreshold) != nil {
                 self.reminderValueThreshold = userDefaults.integer(forKey: Keys.reminderValueThreshold)
             }
@@ -618,6 +630,7 @@ final class Store {
             userDefaults.set(cadenceInviteDismissed, forKey: Keys.cadenceInviteDismissed)
             userDefaults.set(cadenceSurfacePointsSocially, forKey: Keys.cadenceSurfacePointsSocially)
             userDefaults.set(reminderValueThreshold, forKey: Keys.reminderValueThreshold)
+            userDefaults.set(noteTagsEnabled, forKey: Keys.noteTagsEnabled)
         }
     }
 
@@ -1127,6 +1140,25 @@ extension Store {
         case all
         case folder(UUID)
         case unfiled
+        case tag(String)
+    }
+
+    /// Every distinct tag across all notes, sorted alphabetically
+    /// (case-insensitive). Drives the tag picker and the library's
+    /// tag filter chips when tags are enabled.
+    var allNoteTags: [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for note in notes {
+            for tag in note.tags {
+                let key = tag.lowercased()
+                if !seen.contains(key) {
+                    seen.insert(key)
+                    result.append(tag)
+                }
+            }
+        }
+        return result.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     /// Group every note matching `selection` by start-of-day, with the
@@ -1183,12 +1215,18 @@ extension Store {
         case .all: return notes
         case .folder(let id): return notes.filter { $0.folderId == id }
         case .unfiled: return notes.filter { $0.folderId == nil }
+        case .tag(let tag):
+            let key = tag.lowercased()
+            return notes.filter { note in
+                note.tags.contains { $0.lowercased() == key }
+            }
         }
     }
 
     private func matches(note: Note, query lowercaseQuery: String) -> Bool {
         if let body = note.body, body.lowercased().contains(lowercaseQuery) { return true }
         if let label = note.label, label.lowercased().contains(lowercaseQuery) { return true }
+        if note.tags.contains(where: { $0.lowercased().contains(lowercaseQuery) }) { return true }
         if let folder = folder(for: note),
            folder.name.lowercased().contains(lowercaseQuery) {
             return true
@@ -2129,8 +2167,11 @@ extension Store {
     /// Append a brand-new Note and persist. Caller is responsible for
     /// any side-effects (e.g. recording → file written) before calling.
     func addNote(_ note: Note) {
-        notes.append(note)
+        var stamped = note
+        stamped.updatedAt = Date()
+        notes.append(stamped)
         persistAll()
+        notesSync?.noteSaved(stamped)
     }
 
     /// Replace an existing Note in place. If the id doesn't match, the
@@ -2138,20 +2179,33 @@ extension Store {
     /// corrupt the array.
     func updateNote(_ note: Note) {
         guard let idx = notes.firstIndex(where: { $0.id == note.id }) else { return }
-        notes[idx] = note
+        var stamped = note
+        stamped.updatedAt = Date()
+        notes[idx] = stamped
         persistAll()
+        notesSync?.noteSaved(stamped)
     }
 
-    /// Remove a Note. Also deletes the attached voice memo file on
-    /// disk so the Documents directory doesn't accumulate orphans.
+    /// Remove a Note. Also deletes the attached voice memo and photo
+    /// files on disk so the Documents directory doesn't accumulate
+    /// orphans.
     func deleteNote(_ note: Note) {
+        var mediaFilenames: [String] = []
         for memo in note.voiceMemos {
+            mediaFilenames.append(memo.filename)
             if let url = memo.url {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        for photo in note.photos {
+            mediaFilenames.append(photo.filename)
+            if let url = photo.url {
                 try? FileManager.default.removeItem(at: url)
             }
         }
         notes.removeAll { $0.id == note.id }
         persistAll()
+        notesSync?.noteDeleted(id: note.id, mediaFilenames: mediaFilenames)
     }
 
     /// Flip a note's pinned state and persist immediately. Pinning is
@@ -2160,7 +2214,9 @@ extension Store {
     func togglePinned(_ note: Note) {
         guard let idx = notes.firstIndex(where: { $0.id == note.id }) else { return }
         notes[idx].isPinned.toggle()
+        notes[idx].updatedAt = Date()
         persistAll()
+        notesSync?.noteSaved(notes[idx])
     }
 
     // MARK: - Folder actions
@@ -2173,6 +2229,7 @@ extension Store {
         let folder = NoteFolder(name: trimmed, colorKey: colorKey)
         folders.append(folder)
         persistAll()
+        notesSync?.folderSaved(folder)
         return folder
     }
 
@@ -2180,36 +2237,52 @@ extension Store {
     func renameFolder(_ folder: NoteFolder, to newName: String) {
         guard let idx = folders.firstIndex(where: { $0.id == folder.id }) else { return }
         folders[idx].name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        folders[idx].updatedAt = Date()
         persistAll()
+        notesSync?.folderSaved(folders[idx])
     }
 
     /// Change a folder's tint to one of the eight palette options.
     func recolorFolder(_ folder: NoteFolder, to colorKey: FolderColor) {
         guard let idx = folders.firstIndex(where: { $0.id == folder.id }) else { return }
         folders[idx].colorKey = colorKey
+        folders[idx].updatedAt = Date()
         persistAll()
+        notesSync?.folderSaved(folders[idx])
     }
 
     /// Delete a folder. When `deleteNotes` is `true`, every note in
-    /// the folder is also removed (audio cleaned up). Otherwise the
-    /// notes are kept but moved to "no folder".
+    /// the folder is also removed (audio + photos cleaned up).
+    /// Otherwise the notes are kept but moved to "no folder".
     func deleteFolder(_ folder: NoteFolder, deleteNotes: Bool) {
         if deleteNotes {
             for note in notes where note.folderId == folder.id {
+                var mediaFilenames: [String] = []
                 for memo in note.voiceMemos {
+                    mediaFilenames.append(memo.filename)
                     if let url = memo.url {
                         try? FileManager.default.removeItem(at: url)
                     }
                 }
+                for photo in note.photos {
+                    mediaFilenames.append(photo.filename)
+                    if let url = photo.url {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                }
+                notesSync?.noteDeleted(id: note.id, mediaFilenames: mediaFilenames)
             }
             notes.removeAll { $0.folderId == folder.id }
         } else {
             for i in notes.indices where notes[i].folderId == folder.id {
                 notes[i].folderId = nil
+                notes[i].updatedAt = Date()
+                notesSync?.noteSaved(notes[i])
             }
         }
         folders.removeAll { $0.id == folder.id }
         persistAll()
+        notesSync?.folderDeleted(id: folder.id)
     }
 
     /// Flip a To-do's completion state. When completing a pointed To-do
