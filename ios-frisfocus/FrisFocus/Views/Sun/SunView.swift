@@ -24,6 +24,10 @@
 //  The view is sized at 600 × 600 to give the rays + bleed room to
 //  spill outward. The parent positions it via `.position()`.
 //
+//  Perf: the halo breath is a repeat-forever scale animation composited
+//  by Core Animation. No TimelineView — the blurred radial gradients
+//  are rasterized only when score/palette change, not 30× per second.
+//
 
 import SwiftUI
 
@@ -59,15 +63,14 @@ struct SunView: View {
         return max(0.0, min(1.0, raw - 1.0))
     }
 
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            // ~6 s full breath cycle for the halo
-            let breath01 = (sin(time * 1.047) + 1.0) / 2.0
-            let haloBreath = 1.0 + breath01 * 0.035
-            let coreColor = Color.lerpHSL(palette.sunCore, .white, t: whiteMix)
+    @State private var isBreathing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-            ZStack {
+    var body: some View {
+        let haloBreath: CGFloat = isBreathing ? 1.035 : 1.0
+        let coreColor = Color.lerpHSL(palette.sunCore, .white, t: whiteMix)
+
+        return ZStack {
                 // 1. Atmospheric bleed — widest, softest, sits behind
                 //    everything to tie the sun to the horizon glow.
                 //    Fades in entirely with score.
@@ -160,12 +163,17 @@ struct SunView: View {
                     .frame(width: 36 * scale, height: 36 * scale)
                     .blur(radius: 6)
                     .offset(x: -14 * scale, y: -10 * scale)
-            }
-            .frame(width: frameSize, height: frameSize)
-            .animation(.easeOut(duration: 0.6), value: progress)
-            .animation(.easeOut(duration: 0.6), value: scale)
         }
         .frame(width: frameSize, height: frameSize)
+        .animation(.easeOut(duration: 0.6), value: progress)
+        .animation(.easeOut(duration: 0.6), value: scale)
+        .onAppear {
+            guard !reduceMotion else { return }
+            // ~6 s full breath cycle for the halo.
+            withAnimation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true)) {
+                isBreathing = true
+            }
+        }
     }
 }
 

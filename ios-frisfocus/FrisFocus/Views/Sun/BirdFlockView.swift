@@ -77,8 +77,20 @@ struct BirdFlockView: View {
         Member(dx: -30, dy: -12,  size: CGSize(width: 7,  height: 3), lineWidth: 0.75, opacity: 0.42, wobbleOffset: 2.30)
     ]
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+        if reduceMotion {
+            EmptyView()
+        } else {
+            flock
+        }
+    }
+
+    /// 15 fps is plenty — the flock crosses the zone at ~11 pt/s and the
+    /// bob is 1.3 pt. Tiny strokes, no blur, so each tick is cheap.
+    private var flock: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 15.0)) { context in
             let time = context.date.timeIntervalSinceReferenceDate
             GeometryReader { proxy in
                 let cycle = ((time / cycleSeconds))

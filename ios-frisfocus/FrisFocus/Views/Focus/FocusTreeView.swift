@@ -502,24 +502,31 @@ struct FocusTreeView: View {
 
 // MARK: - Sway
 
-/// Gentle low-amplitude canopy sway. Uses TimelineView so it ticks at
-/// a calm cadence and not on every parent re-render.
+/// Gentle low-amplitude canopy sway. A repeat-forever offset animation
+/// composited by Core Animation — no per-frame body evaluation, so the
+/// canopy isn't re-rendered 30× per second.
 private struct SwayModifier: ViewModifier {
     let enabled: Bool
     let amplitude: CGFloat
 
+    @State private var isSwaying = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         if !enabled || reduceMotion {
             content
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { ctx in
-                let t = ctx.date.timeIntervalSinceReferenceDate
-                let dx = CGFloat(sin(t * 0.35)) * amplitude
-                let dy = CGFloat(cos(t * 0.22)) * (amplitude * 0.3)
-                content.offset(x: dx, y: dy)
-            }
+            content
+                .offset(
+                    x: isSwaying ? amplitude : -amplitude,
+                    y: isSwaying ? amplitude * 0.3 : -amplitude * 0.3
+                )
+                .onAppear {
+                    // Half-period of the old sin(t × 0.35) sway (~18 s cycle).
+                    withAnimation(.easeInOut(duration: 9.0).repeatForever(autoreverses: true)) {
+                        isSwaying = true
+                    }
+                }
         }
     }
 }

@@ -6,11 +6,15 @@
 //  the locked design — enough to add atmosphere without competing with
 //  the new score headline. The brightest two twinkle very slowly.
 //
+//  Perf: stars are static views; the two twinklers animate opacity with
+//  a repeat-forever ease, which Core Animation composites on the GPU.
+//  No TimelineView — zero per-frame CPU work.
+//
 
 import SwiftUI
 
 struct StarFieldView: View {
-    private struct Star: Hashable {
+    fileprivate struct Star: Hashable {
         let x: CGFloat
         let y: CGFloat
         let size: CGFloat
@@ -33,29 +37,55 @@ struct StarFieldView: View {
     ]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            GeometryReader { proxy in
-                ZStack(alignment: .topLeading) {
-                    ForEach(stars, id: \.self) { star in
-                        let twinkleAmount = star.twinkles
-                            ? sin(time * star.twinkleSpeed + star.twinklePhase) * 0.22
-                            : 0.0
-                        let opacity = max(0.0, min(1.0, star.baseOpacity + twinkleAmount))
-
-                        Circle()
-                            .fill(Theme.textCream.opacity(opacity))
-                            .frame(width: star.size, height: star.size)
-                            .blur(radius: star.size > 1.8 ? 0.4 : 0)
-                            .position(
-                                x: star.x * proxy.size.width,
-                                y: star.y * proxy.size.height
-                            )
-                    }
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                ForEach(stars, id: \.self) { star in
+                    StarDot(star: star)
+                        .position(
+                            x: star.x * proxy.size.width,
+                            y: star.y * proxy.size.height
+                        )
                 }
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// A single star. Twinklers animate opacity on a repeat-forever ease —
+/// GPU-composited, no per-frame body evaluation.
+private struct StarDot: View {
+    let star: StarFieldView.Star
+
+    @State private var isBright = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let twinkleRange = 0.22
+        let opacity: Double = {
+            guard star.twinkles, !reduceMotion else { return star.baseOpacity }
+            return isBright
+                ? min(1.0, star.baseOpacity + twinkleRange)
+                : max(0.0, star.baseOpacity - twinkleRange)
+        }()
+
+        Circle()
+            .fill(Theme.textCream)
+            .frame(width: star.size, height: star.size)
+            .blur(radius: star.size > 1.8 ? 0.4 : 0)
+            .opacity(opacity)
+            .onAppear {
+                guard star.twinkles, !reduceMotion else { return }
+                // Half-period of the old sine twinkle: π / speed.
+                let halfPeriod = Double.pi / max(0.1, star.twinkleSpeed)
+                withAnimation(
+                    .easeInOut(duration: halfPeriod)
+                        .repeatForever(autoreverses: true)
+                        .delay(star.twinklePhase)
+                ) {
+                    isBright = true
+                }
+            }
     }
 }
 

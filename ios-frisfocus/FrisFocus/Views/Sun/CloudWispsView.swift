@@ -3,9 +3,13 @@
 //  FrisFocus
 //
 //  Three or four thin, painterly horizontal wisps drifting across the
-//  sky on a ~2 minute cycle. Each wisp fades in/out at its endpoints so
+//  sky on a ~2 minute cycle. Each wisp's gradient fades at its tips so
 //  the loop is invisible. Tint comes from the SkyPalette so the wisps
 //  read warm at dusk and cream-cool at midday.
+//
+//  Perf: each wisp drifts via a repeat-forever linear position
+//  animation (GPU-composited). No TimelineView — the blurred capsule
+//  is rasterized once, not 30× per second.
 //
 
 import SwiftUI
@@ -15,7 +19,7 @@ struct CloudWispsView: View {
     /// palette's halo for a warmer tinted look.
     var tint: Color = Theme.textCream
 
-    private struct Wisp {
+    fileprivate struct Wisp {
         let yRelative: CGFloat
         let widthPt: CGFloat
         let heightPt: CGFloat
@@ -32,41 +36,65 @@ struct CloudWispsView: View {
     ]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            GeometryReader { proxy in
-                ZStack {
-                    ForEach(Array(wisps.enumerated()), id: \.offset) { _, wisp in
-                        let cycle = ((time * wisp.speed) + wisp.phase)
-                            .truncatingRemainder(dividingBy: 1.0)
-                        let totalDistance = proxy.size.width + wisp.widthPt * 2
-                        let xPosition = -wisp.widthPt + cycle * totalDistance
-
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: Color.clear, location: 0.0),
-                                        .init(color: tint.opacity(wisp.opacity * 0.55), location: 0.18),
-                                        .init(color: tint.opacity(wisp.opacity), location: 0.50),
-                                        .init(color: tint.opacity(wisp.opacity * 0.65), location: 0.82),
-                                        .init(color: Color.clear, location: 1.0)
-                                    ],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: wisp.widthPt, height: wisp.heightPt)
-                            .blur(radius: 2.5)
-                            .position(
-                                x: xPosition + wisp.widthPt / 2,
-                                y: wisp.yRelative * proxy.size.height
-                            )
-                    }
+        GeometryReader { proxy in
+            ZStack {
+                ForEach(Array(wisps.enumerated()), id: \.offset) { _, wisp in
+                    WispView(wisp: wisp, tint: tint, containerSize: proxy.size)
                 }
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// One drifting wisp. Travels off-screen-left → off-screen-right on a
+/// repeat-forever linear animation; a short stagger delay keeps the
+/// wisps from marching in lockstep.
+private struct WispView: View {
+    let wisp: CloudWispsView.Wisp
+    let tint: Color
+    let containerSize: CGSize
+
+    @State private var isDrifting = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let startX = -wisp.widthPt / 2
+        let endX = containerSize.width + wisp.widthPt * 1.5
+        let y = wisp.yRelative * containerSize.height
+        let staticX = containerSize.width * CGFloat(0.15 + wisp.phase * 0.7)
+
+        Capsule()
+            .fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.clear, location: 0.0),
+                        .init(color: tint.opacity(wisp.opacity * 0.55), location: 0.18),
+                        .init(color: tint.opacity(wisp.opacity), location: 0.50),
+                        .init(color: tint.opacity(wisp.opacity * 0.65), location: 0.82),
+                        .init(color: Color.clear, location: 1.0)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(width: wisp.widthPt, height: wisp.heightPt)
+            .blur(radius: 2.5)
+            .position(
+                x: reduceMotion ? staticX : (isDrifting ? endX : startX),
+                y: y
+            )
+            .onAppear {
+                guard !reduceMotion else { return }
+                let duration = 1.0 / max(0.0001, wisp.speed)
+                withAnimation(
+                    .linear(duration: duration)
+                        .repeatForever(autoreverses: false)
+                        .delay(wisp.phase * 18.0)
+                ) {
+                    isDrifting = true
+                }
+            }
     }
 }
 

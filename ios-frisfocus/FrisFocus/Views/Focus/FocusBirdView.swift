@@ -19,35 +19,46 @@ struct FocusBirdView: View {
             EmptyView()
         } else {
             GeometryReader { geo in
-                TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { ctx in
-                    let t = ctx.date.timeIntervalSinceReferenceDate
-                    // A cycle of ~180s where the bird is on-screen
-                    // briefly (~14s) inside each cycle, then gone for
-                    // the rest of the period.
+                // Outer 1 s tick decides whether the bird is in its
+                // transit window; the 24 fps inner timeline only runs
+                // during the ~15 s transit, not all the time.
+                TimelineView(.periodic(from: .now, by: 1.0)) { outer in
                     let cyclePeriod: Double = 180
                     let cycleOffset = 23.0
-                    let phase = ((t + cycleOffset).truncatingRemainder(dividingBy: cyclePeriod)) / cyclePeriod
-                    // On-screen when phase is between 0 and ~0.08.
                     let visibleSpan = 0.085
-                    if phase < visibleSpan {
-                        let p = phase / visibleSpan  // 0...1 across this transit
-                        let xUnit = -0.1 + p * 1.2
-                        // Subtle arc: parabolic dip then rise.
-                        let yUnit = 0.18 + 0.05 * sin(p * .pi)
-                        let wingPhase = sin(t * 4.6)
-                        FocusBirdShape(wingPhase: wingPhase)
-                            .stroke(
-                                Color(hex: 0x4A4137).opacity(0.7),
-                                style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round)
-                            )
-                            .frame(width: 26, height: 14)
-                            .position(
-                                x: geo.size.width * CGFloat(xUnit),
-                                y: geo.size.height * CGFloat(yUnit)
-                            )
-                            .opacity(birdOpacity(p: p))
+                    let outerT = outer.date.timeIntervalSinceReferenceDate
+                    let outerPhase = ((outerT + cycleOffset).truncatingRemainder(dividingBy: cyclePeriod)) / cyclePeriod
+
+                    if outerPhase < visibleSpan {
+                        birdTransit(geo: geo, cyclePeriod: cyclePeriod, cycleOffset: cycleOffset, visibleSpan: visibleSpan)
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func birdTransit(geo: GeometryProxy, cyclePeriod: Double, cycleOffset: Double, visibleSpan: Double) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            let phase = ((t + cycleOffset).truncatingRemainder(dividingBy: cyclePeriod)) / cyclePeriod
+            if phase < visibleSpan {
+                let p = phase / visibleSpan  // 0...1 across this transit
+                let xUnit = -0.1 + p * 1.2
+                // Subtle arc: parabolic dip then rise.
+                let yUnit = 0.18 + 0.05 * sin(p * .pi)
+                let wingPhase = sin(t * 4.6)
+                FocusBirdShape(wingPhase: wingPhase)
+                    .stroke(
+                        Color(hex: 0x4A4137).opacity(0.7),
+                        style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round)
+                    )
+                    .frame(width: 26, height: 14)
+                    .position(
+                        x: geo.size.width * CGFloat(xUnit),
+                        y: geo.size.height * CGFloat(yUnit)
+                    )
+                    .opacity(birdOpacity(p: p))
             }
         }
     }

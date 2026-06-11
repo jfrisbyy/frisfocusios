@@ -10,6 +10,10 @@
 //  Drawn as `Path`s relative to the parent's frame; the parent positions
 //  this view so its centre sits at the sun's current centre.
 //
+//  Perf: the fan is rendered once and the slow drift is a repeat-forever
+//  rotation that Core Animation composites on the GPU. No TimelineView —
+//  the blurred wedges are never re-rasterized per frame.
+//
 
 import SwiftUI
 
@@ -34,26 +38,32 @@ struct SunRaysView: View {
         Ray(angle:  1.52, halfWidth: 0.36, peakOpacity: 0.070)
     ]
 
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            // Very slow rotation — ~80 s for a full sweep
-            let drift = sin(time * 0.078) * 0.06
+    @State private var isDrifting = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-            ZStack {
-                ForEach(Array(rays.enumerated()), id: \.offset) { _, ray in
-                    rayShape(ray: ray, drift: drift)
-                }
+    var body: some View {
+        ZStack {
+            ForEach(Array(rays.enumerated()), id: \.offset) { _, ray in
+                rayShape(ray: ray)
             }
-            .blendMode(.plusLighter)
-            .allowsHitTesting(false)
+        }
+        // Slow ±3.4° sway, GPU-composited — replaces the old per-frame
+        // path recompute.
+        .rotationEffect(.radians(isDrifting ? 0.06 : -0.06))
+        .blendMode(.plusLighter)
+        .allowsHitTesting(false)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 40).repeatForever(autoreverses: true)) {
+                isDrifting = true
+            }
         }
     }
 
     @ViewBuilder
-    private func rayShape(ray: Ray, drift: Double) -> some View {
+    private func rayShape(ray: Ray) -> some View {
         WedgeShape(
-            angle: ray.angle + drift,
+            angle: ray.angle,
             halfWidth: ray.halfWidth,
             length: reach
         )
@@ -65,7 +75,7 @@ struct SunRaysView: View {
                     .init(color: Color.clear, location: 1.0)
                 ],
                 startPoint: .center,
-                endPoint: rayEndpoint(angle: ray.angle + drift)
+                endPoint: rayEndpoint(angle: ray.angle)
             )
         )
         .blur(radius: 8)

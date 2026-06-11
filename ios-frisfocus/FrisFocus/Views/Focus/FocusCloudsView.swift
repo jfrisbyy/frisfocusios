@@ -39,7 +39,9 @@ struct FocusCloudsView: View {
                     }
                 }
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: false)) { ctx in
+                // Clouds move ~1.6 pt/s — a 2 fps tick is indistinguishable
+                // from 20 fps and cuts CPU by 10×.
+                TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
                     let t = ctx.date.timeIntervalSinceReferenceDate
                     ZStack {
                         ForEach(0..<clouds.count, id: \.self) { i in
@@ -63,6 +65,7 @@ struct FocusCloudsView: View {
                                 )
                         }
                     }
+                    .animation(.linear(duration: 0.5), value: t)
                 }
             }
         }
