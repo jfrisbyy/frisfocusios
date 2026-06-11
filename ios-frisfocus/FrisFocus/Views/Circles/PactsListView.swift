@@ -127,7 +127,7 @@ struct PactsListView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left")
                         .font(.sans(15, weight: .medium))
-                    Text("Circles")
+                    Text("People")
                         .font(.sans(14, weight: .regular))
                 }
                 .foregroundStyle(Theme.textCream)
@@ -136,7 +136,7 @@ struct PactsListView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Back to Circles")
+            .accessibilityLabel("Back to People")
 
             Spacer()
         }

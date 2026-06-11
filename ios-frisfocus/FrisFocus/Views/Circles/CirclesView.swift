@@ -2,27 +2,23 @@
 //  CirclesView.swift
 //  FrisFocus
 //
-//  The "looking outward at night" room. Reached by tapping the
-//  sundial's Circles destination. C3a built the static shell (hero,
-//  rail, sundial); C3b + C3c filled the body with Friends and Circles
-//  sections; C3d turns the static layout into a fully interactive page:
+//  The "People" page — the social room reached from the sundial.
+//  ("Circles" now refers exclusively to the groups feature inside it.)
 //
-//   • Collapsible Friends / Your circles headers (animated chevrons,
-//     light haptic on toggle, the rest of the page slides up to fill).
-//   • "View N more friends" expands the friend list inline.
-//   • Illumination-based tap routing — a friend with a fresh story
-//     opens the story viewer first; a plain or quiet friend opens the
-//     friend detail directly. Stubs today; real destinations land in
-//     C6 / C9.
-//   • Circle taps route to detail / group story / creation stubs.
-//   • Side rail snaps between sections via a `ScrollViewReader`, and
-//     tracks which section is currently in view so the active mark
-//     follows the user as they scroll.
+//  Structure, top to bottom:
+//   • Slim header — "People" in the serif face, send icon + the
+//     user's gold-ringed avatar at right. No hero block.
+//   • Story row — previews fill the ring (thumbnail discs, bright
+//     season ring unwatched / thin grey watched / ring-less plain).
+//   • Hairline divider.
+//   • "TODAY" — every friend as a hairline row: goal-ratio ring
+//     avatar, templated privacy-safe status, inline proof/message
+//     pill actions.
+//   • "Your circles" — the groups feature, unchanged mechanics.
 //
-//  The palette is deliberately the inverse of the homepage: deep
-//  indigo/violet sky with a soft cream moon, faint scattered stars,
-//  and the page body painted in warm wheat below the hero. The Sundial
-//  paints `.circles` active here.
+//  The page sits on warm parchment with a whisper of a vertical
+//  gradient (lighter at top). The side rail snaps between TODAY and
+//  CIRCLES; the Sundial paints `.circles` active here.
 //
 
 import SwiftUI
@@ -36,7 +32,6 @@ struct CirclesView: View {
 
     // MARK: - Section + rail state
 
-    @State private var friendsExpanded: Bool = true
     @State private var circlesExpanded: Bool = true
     @State private var activeRail: CirclesRailSection = .friends
     @State private var sectionTops: [CirclesRailSection: CGFloat] = [:]
@@ -52,6 +47,7 @@ struct CirclesView: View {
     @State private var showMyStory: Bool = false
     @State private var showDirect: Bool = false
     @State private var showAddFriends: Bool = false
+    @State private var threadFriend: Friend?
     @State private var route: CirclesRoute?
 
     /// The app-wide messaging backend — drives the paper-plane's unread
@@ -69,33 +65,43 @@ struct CirclesView: View {
     @Namespace private var storyZoom
 
     /// Anchor ids for the section headers; the rail scrolls to these.
-    private let friendsAnchor = "circles.friends"
-    private let circlesAnchor = "circles.circles"
-    private let scrollSpace = "circlesScroll"
+    private let friendsAnchor = "people.today"
+    private let circlesAnchor = "people.circles"
+    private let scrollSpace = "peopleScroll"
 
     var body: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottom) {
+                pageBackground
+                    .ignoresSafeArea()
+
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        moonlitHero
+                        header
+                            .padding(.top, 8)
 
-                        CirclesFriendsSection(
-                            isExpanded: $friendsExpanded,
-                            directUnreadCount: directUnread,
+                        PeopleStoryRow(
+                            userInitials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
+                            userPhotoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL,
                             zoomNamespace: storyZoom,
-                            onHeaderTap: { toggleFriends() },
-                            onFriendTap: { friend, isFresh in
-                                handleFriendTap(friend: friend, isFresh: isFresh)
+                            onFriendTap: { friend, hasStories in
+                                handleStoryTap(friend: friend, hasStories: hasStories)
                             },
                             onYouTap: { handleYouTap() },
                             onYouAddTap: { handleYouAddTap() },
-                            onDirectTap: { handleDirectTap() },
-                            onMessageTap: { friend in handleMessageTap(friend) },
                             onAddFriendTap: { handleAddFriendTap() }
                         )
+                        .padding(.top, 18)
                         .id(friendsAnchor)
                         .background(sectionTopTracker(.friends))
+
+                        hairline
+                            .padding(.top, 16)
+
+                        PeopleTodayList(
+                            onRowTap: { friend in handleRowTap(friend) },
+                            onActionTap: { friend in handleActionTap(friend) }
+                        )
 
                         CirclesGroupsSection(
                             isExpanded: $circlesExpanded,
@@ -109,14 +115,12 @@ struct CirclesView: View {
                         .id(circlesAnchor)
                         .background(sectionTopTracker(.circles))
 
-                        // Tail so future content can scroll above the sundial.
+                        // Tail so content can scroll above the sundial.
                         Color.clear.frame(height: 140)
                     }
                 }
                 .refreshable { await loadMessages() }
                 .coordinateSpace(.named(scrollSpace))
-                .background(Theme.warmWheat)
-                .ignoresSafeArea(edges: .top)
                 .onPreferenceChange(CirclesSectionTopsPreferenceKey.self) { tops in
                     sectionTops = tops
                     updateActiveRailFromScroll()
@@ -184,6 +188,12 @@ struct CirclesView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
+            .sheet(item: $threadFriend) { friend in
+                DirectThreadView(friend: friend)
+                    .environment(store)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
             .sheet(isPresented: $showAddFriends) {
                 NavigationStack {
                     FriendsView()
@@ -241,6 +251,78 @@ struct CirclesView: View {
         }
     }
 
+    // MARK: - Header
+
+    /// One airy line: "People" in the serif face, send icon + the
+    /// user's avatar at right. No hero, no eyebrow.
+    private var header: some View {
+        HStack(alignment: .center, spacing: 16) {
+            Text("People")
+                .font(.serif(30, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
+
+            Spacer()
+
+            sendButton
+
+            ProfileAvatarButton(
+                initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
+                photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL
+            ) {
+                showProfileSheet = true
+            }
+        }
+        .padding(.horizontal, Theme.pageHorizontalPadding)
+    }
+
+    /// Paper-plane entry to the proofs/messages inbox, with a quiet dot
+    /// when something is waiting.
+    private var sendButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showDirect = true
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "paperplane")
+                    .font(.sans(17, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                    .frame(width: 38, height: 38)
+
+                if directUnread > 0 {
+                    Circle()
+                        .fill(Theme.alertRed)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.5))
+                        .offset(x: -4, y: 4)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(directUnread > 0 ? "Messages, \(directUnread) new" : "Messages")
+    }
+
+    /// Warm parchment with a very subtle vertical gradient — slightly
+    /// lighter at the top so the page breathes.
+    private var pageBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(hex: 0xFDF8EB),
+                Theme.warmWheat,
+                Theme.warmWheat
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(Theme.textPrimary.opacity(0.08))
+            .frame(height: 1)
+            .padding(.horizontal, Theme.pageHorizontalPadding)
+    }
+
     // MARK: - Live messaging (unread dot)
 
     /// Refresh of the shared messaging window — realtime keeps it live;
@@ -251,20 +333,13 @@ struct CirclesView: View {
     }
 
     /// Total unread proofs/notes across every real conversation — drives
-    /// the paper-plane dot on the Friends section and the sundial badge.
+    /// the paper-plane dot and the sundial badge.
     private var directUnread: Int {
         guard let myId = auth.user?.id else { return 0 }
         return messageGraph.totalUnread(myUserId: myId)
     }
 
     // MARK: - Section toggling
-
-    private func toggleFriends() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.easeInOut(duration: 0.28)) {
-            friendsExpanded.toggle()
-        }
-    }
 
     private func toggleCircles() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -275,12 +350,25 @@ struct CirclesView: View {
 
     // MARK: - Tap routing
 
-    private func handleFriendTap(friend: Friend, isFresh: Bool) {
+    /// Story bubbles: any active story (watched or not) opens the
+    /// viewer; a story-less bubble opens the friend's detail.
+    private func handleStoryTap(friend: Friend, hasStories: Bool) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        // Illumination-based routing: a fresh story opens the story
-        // viewer first (C9); plain / quiet goes straight to the
-        // friend detail (C6).
-        route = isFresh ? .friendStory(friend.id) : .friendDetail(friend.id)
+        route = hasStories ? .friendStory(friend.id) : .friendDetail(friend.id)
+    }
+
+    /// TODAY rows always open the friend detail — story viewing lives
+    /// in the story row, the detail is the relationship hub.
+    private func handleRowTap(_ friend: Friend) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        route = .friendDetail(friend.id)
+    }
+
+    /// The inline pill / quiet glyph — straight into the 1:1 thread.
+    /// Opening the thread marks it read, which reverts the pill to the
+    /// quiet glyph.
+    private func handleActionTap(_ friend: Friend) {
+        threadFriend = friend
     }
 
     private func handleYouTap() {
@@ -302,21 +390,9 @@ struct CirclesView: View {
         showStoryCapture = true
     }
 
-    private func handleDirectTap() {
-        showDirect = true
-    }
-
     private func handleAddFriendTap() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         showAddFriends = true
-    }
-
-    /// The seeded "Friends today" people are a visual demo; their
-    /// message buttons lead into the one real inbox so there's a single,
-    /// coherent messaging system.
-    private func handleMessageTap(_ friend: Friend) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        showDirect = true
     }
 
     private func handlePactTap(_ pact: Pact) {
@@ -358,7 +434,7 @@ struct CirclesView: View {
                 StoryPlayerView(mode: .friend(friend), onShowFriendProfile: { tapped in
                     // Pop the player, then push the friend's full
                     // profile onto the same nav stack so back lands
-                    // on the Circles page rather than the closed
+                    // on the People page rather than the closed
                     // story.
                     self.route = nil
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -417,15 +493,8 @@ struct CirclesView: View {
     /// animation so the page actively chases the finger.
     private func handleRailScrub(_ section: CirclesRailSection, proxy: ScrollViewProxy) {
         activeRail = section
-        switch section {
-        case .friends:
-            if !friendsExpanded {
-                withAnimation(.easeInOut(duration: 0.28)) { friendsExpanded = true }
-            }
-        case .circles:
-            if !circlesExpanded {
-                withAnimation(.easeInOut(duration: 0.28)) { circlesExpanded = true }
-            }
+        if section == .circles, !circlesExpanded {
+            withAnimation(.easeInOut(duration: 0.28)) { circlesExpanded = true }
         }
         let anchor = section == .friends ? friendsAnchor : circlesAnchor
         withAnimation(.easeOut(duration: 0.22)) {
@@ -439,15 +508,8 @@ struct CirclesView: View {
 
         // Ensure the target section is expanded before we scroll there
         // so the user always lands on visible content.
-        switch section {
-        case .friends:
-            if !friendsExpanded {
-                withAnimation(.easeInOut(duration: 0.28)) { friendsExpanded = true }
-            }
-        case .circles:
-            if !circlesExpanded {
-                withAnimation(.easeInOut(duration: 0.28)) { circlesExpanded = true }
-            }
+        if section == .circles, !circlesExpanded {
+            withAnimation(.easeInOut(duration: 0.28)) { circlesExpanded = true }
         }
 
         let anchor = section == .friends ? friendsAnchor : circlesAnchor
@@ -457,7 +519,7 @@ struct CirclesView: View {
     }
 
     /// The active rail mark follows whichever section header most
-    /// recently crossed the top of the viewport. Falls back to friends
+    /// recently crossed the top of the viewport. Falls back to TODAY
     /// when both sections sit below the fold (e.g. at the very top of
     /// the page).
     private func updateActiveRailFromScroll() {
@@ -490,134 +552,11 @@ struct CirclesView: View {
             )
         }
     }
-
-    // MARK: - Moonlit hero
-
-    @ViewBuilder
-    private var moonlitHero: some View {
-        ZStack(alignment: .bottomLeading) {
-            // Night-sky gradient.
-            LinearGradient(
-                colors: [
-                    Color(hex: 0x1A1830),
-                    Color(hex: 0x2A2438),
-                    Color(hex: 0x5A4868)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-
-            // Soft moon glow in the upper-right.
-            GeometryReader { proxy in
-                let glowRadius: CGFloat = 110
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                Theme.textCream.opacity(0.42),
-                                Theme.textCream.opacity(0.18),
-                                Theme.textCream.opacity(0.0)
-                            ],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: glowRadius
-                        )
-                    )
-                    .frame(width: glowRadius * 2, height: glowRadius * 2)
-                    .position(
-                        x: proxy.size.width - 30,
-                        y: 70
-                    )
-                    .blur(radius: 6)
-                    .allowsHitTesting(false)
-            }
-
-            // Stars — faint, scattered.
-            starsLayer
-                .allowsHitTesting(false)
-
-            // Title block — bottom-left.
-            VStack(alignment: .leading, spacing: 6) {
-                Text("YOUR PEOPLE")
-                    .font(.sans(10, weight: .medium))
-                    .tracking(2)
-                    .foregroundStyle(Theme.textCream.opacity(0.75))
-
-                Text("Circles")
-                    .font(.serif(28, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .padding(.leading, Theme.pageHorizontalPadding)
-            .padding(.bottom, 22)
-
-            // Avatar — top-right, fully clear of the status bar /
-            // Dynamic Island (the hero ignores the top safe area, so
-            // the inset has to be applied manually from the window).
-            VStack {
-                HStack {
-                    Spacer()
-                    ProfileAvatarButton(
-                        initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
-                        photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL
-                    ) {
-                        showProfileSheet = true
-                    }
-                }
-                .padding(.top, heroAvatarTopPadding)
-                .padding(.trailing, Theme.pageHorizontalPadding)
-                Spacer()
-            }
-        }
-        .frame(height: 200)
-        .clipped()
-    }
-
-    /// Top padding for the hero's avatar: the key window's actual top
-    /// safe-area inset plus a small breathing gap, with a floor for
-    /// older notch-less simulators. Keeps the avatar's full 44 pt hit
-    /// target out of the status-bar gesture zone on every device.
-    private var heroAvatarTopPadding: CGFloat {
-        let inset = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap { $0.windows }
-            .first(where: { $0.isKeyWindow })?
-            .safeAreaInsets.top ?? 0
-        return max(inset, 47) + 8
-    }
-
-    /// A handful of star dots scattered across the hero. Positions
-    /// are deterministic so the field doesn't shuffle on every
-    /// re-render.
-    @ViewBuilder
-    private var starsLayer: some View {
-        GeometryReader { proxy in
-            let w = proxy.size.width
-            let h = proxy.size.height
-            ZStack {
-                star(at: CGPoint(x: w * 0.08, y: h * 0.30), size: 1.6, opacity: 0.55)
-                star(at: CGPoint(x: w * 0.18, y: h * 0.62), size: 1.2, opacity: 0.40)
-                star(at: CGPoint(x: w * 0.30, y: h * 0.18), size: 2.0, opacity: 0.70)
-                star(at: CGPoint(x: w * 0.44, y: h * 0.42), size: 1.0, opacity: 0.35)
-                star(at: CGPoint(x: w * 0.58, y: h * 0.25), size: 1.4, opacity: 0.50)
-                star(at: CGPoint(x: w * 0.66, y: h * 0.58), size: 1.0, opacity: 0.32)
-                star(at: CGPoint(x: w * 0.78, y: h * 0.36), size: 1.8, opacity: 0.60)
-                star(at: CGPoint(x: w * 0.86, y: h * 0.72), size: 1.2, opacity: 0.42)
-                star(at: CGPoint(x: w * 0.92, y: h * 0.22), size: 1.0, opacity: 0.36)
-            }
-        }
-    }
-
-    private func star(at point: CGPoint, size: CGFloat, opacity: Double) -> some View {
-        Circle()
-            .fill(Theme.textCream.opacity(opacity))
-            .frame(width: size, height: size)
-            .position(point)
-    }
 }
 
 // MARK: - Routes
 
-/// Navigation destinations reachable from the Circles page. Each case
+/// Navigation destinations reachable from the People page. Each case
 /// stores the UUID of the underlying record so the destination can
 /// re-fetch the live model on render rather than capturing stale data.
 enum CirclesRoute: Hashable {

@@ -2,8 +2,8 @@
 //  CirclesSideRailView.swift
 //  FrisFocus
 //
-//  The floating right-edge rail on the Circles page. Two stacked
-//  entries — FRIENDS and CIRCLES — each rendered as a thin vertical
+//  The floating right-edge rail on the People page. Two stacked
+//  entries — TODAY and CIRCLES — each rendered as a thin vertical
 //  uppercase label paired with a short bar. The active entry gets a
 //  taller, fully-opaque bar; the inactive entry is muted.
 //
@@ -16,7 +16,7 @@ import SwiftUI
 import UIKit
 
 enum CirclesRailSection: String, CaseIterable, Identifiable {
-    case friends = "FRIENDS"
+    case friends = "TODAY"
     case circles = "CIRCLES"
 
     var id: String { rawValue }

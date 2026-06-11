@@ -57,6 +57,11 @@ struct FriendDetailView: View {
 
     private var tier: VisibilityTier { friend.sharesWithMe.tier }
     private var day: FriendDay { store.friendDay(for: friend) }
+
+    /// The live friend record — `friend` is captured at navigation time,
+    /// so permission state (exact points) reads from the store to stay
+    /// current while the page is open.
+    private var liveFriend: Friend { store.friend(by: friend.id) ?? friend }
     private var texture: ConnectionTexture { store.connectionTexture(for: friend) }
     private var accent: Color { Color(hex: friend.accentColorHex) }
 
@@ -257,14 +262,14 @@ struct FriendDetailView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left").font(.sans(15, weight: .medium))
-                    Text("Friends").font(.sans(14, weight: .regular))
+                    Text("People").font(.sans(14, weight: .regular))
                 }
                 .foregroundStyle(Theme.textCream)
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Back to Friends")
+            .accessibilityLabel("Back to People")
 
             Spacer()
 
@@ -428,6 +433,7 @@ struct FriendDetailView: View {
             }
 
             if tier != .quiet {
+                exactPointsRow
                 rhythmFooter
             }
         }
@@ -706,6 +712,86 @@ struct FriendDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
+    }
+
+    // MARK: - Exact points (behind explicit permission)
+
+    /// Point values are private calibration — they encode what's
+    /// personally hard for someone — so they never surface by default.
+    /// This row is the explicit ask: locked → asked → shared.
+    @ViewBuilder
+    private var exactPointsRow: some View {
+        switch liveFriend.pointsAccess {
+        case .granted:
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "lock.open")
+                    .font(.sans(14, weight: .medium))
+                    .foregroundStyle(Theme.alertGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(day.todayLogged) points today")
+                        .font(.serif(17, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("\(friend.displayName) shares exact points with you")
+                        .font(.sans(11.5, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(card)
+            .transition(.opacity)
+            .accessibilityLabel("\(friend.displayName) logged \(day.todayLogged) points today")
+
+        case .requested:
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "hourglass")
+                    .font(.sans(14, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                Text("Asked to see exact points · waiting on \(friend.displayName)")
+                    .font(.sans(12.5, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(card)
+            .transition(.opacity)
+            .accessibilityLabel("Waiting on \(friend.displayName) to share exact points")
+
+        case nil:
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "lock")
+                    .font(.sans(14, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                Text("Exact points are private")
+                    .font(.sans(13, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                Spacer(minLength: 8)
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        store.requestExactPoints(friendId: friend.id)
+                    }
+                } label: {
+                    Text("Ask to see")
+                        .font(.sans(12.5, weight: .semibold))
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule(style: .continuous)
+                                .strokeBorder(accent.opacity(0.45), lineWidth: 1)
+                        )
+                        .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Ask \(friend.displayName) to see exact points")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(card)
+        }
     }
 
     // MARK: - Reframed rhythm footer

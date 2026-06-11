@@ -2871,6 +2871,56 @@ extension Store {
         return mediaAssets.first { $0.id == id }
     }
 
+    /// Lookup a media asset by id.
+    func media(by id: UUID) -> MediaAsset? {
+        mediaAssets.first { $0.id == id }
+    }
+
+    /// The media behind a friend's most recent active story — fills the
+    /// story-row ring with a real preview. Prefers the newest unwatched
+    /// post so the thumbnail matches what tapping will play first.
+    func storyThumbMedia(forFriendId friendId: UUID) -> MediaAsset? {
+        let posts = activeFriendStories.filter { $0.authorId == friendId }
+        let pick = posts.first { !viewedStoryPostIds.contains($0.id) } ?? posts.first
+        guard let mediaId = pick?.mediaId else { return nil }
+        return media(by: mediaId)
+    }
+
+    /// The media behind the user's own newest active story — fills the
+    /// "Your story" bubble once something is posted.
+    var myStoryThumbMedia: MediaAsset? {
+        guard let mediaId = activeMyStories.last?.mediaId else { return nil }
+        return media(by: mediaId)
+    }
+
+    // MARK: - Exact-points permission
+
+    /// Ask a friend to share their exact point values. Point values are
+    /// private calibration — they only ever surface behind this explicit
+    /// ask. Full-tier friends (who already share their whole day) say
+    /// yes shortly after; everyone else leaves the ask pending.
+    func requestExactPoints(friendId: UUID) {
+        guard let idx = friends.firstIndex(where: { $0.id == friendId }),
+              friends[idx].pointsAccess == nil else { return }
+        friends[idx].pointsAccess = .requested
+        persistAll()
+
+        if friends[idx].sharesWithMe.tier == .full {
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2.4))
+                self?.grantExactPoints(friendId: friendId)
+            }
+        }
+    }
+
+    /// The friend said yes — their exact points are now visible to me.
+    func grantExactPoints(friendId: UUID) {
+        guard let idx = friends.firstIndex(where: { $0.id == friendId }),
+              friends[idx].pointsAccess == .requested else { return }
+        friends[idx].pointsAccess = .granted
+        persistAll()
+    }
+
     /// "To Maya" / "To Morning Run" / "From Aaron" — the counterpart
     /// label for a direct share, from the current user's point of view.
     func directShareCounterpartLabel(_ share: DirectShare) -> String {
