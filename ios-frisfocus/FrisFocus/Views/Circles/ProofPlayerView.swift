@@ -30,6 +30,9 @@ struct ProofPlayerView: View {
     /// Shared thread presence — lets the sender see "watching your
     /// proof…" live while this player is up.
     var presence: ThreadPresenceService? = nil
+    /// Tapping the friend's photo/name dismisses the player and asks
+    /// the host to open their profile. Nil leaves the header static.
+    var onOpenProfile: (() -> Void)? = nil
 
     // MARK: Load + playback state
 
@@ -216,15 +219,29 @@ struct ProofPlayerView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(friend.displayName)
-                    .font(.sans(15, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-                    .lineLimit(1)
-                Text(DirectShareFormat.elapsed(from: proof.createdAt))
-                    .font(.sans(11, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.75))
+            Button {
+                guard let onOpenProfile else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                dismiss()
+                onOpenProfile()
+            } label: {
+                HStack(spacing: 10) {
+                    RemoteAvatarView(profile: friend, size: 36)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(friend.displayName)
+                            .font(.sans(15, weight: .semibold))
+                            .foregroundStyle(Theme.textCream)
+                            .lineLimit(1)
+                        Text(DirectShareFormat.elapsed(from: proof.createdAt))
+                            .font(.sans(11, weight: .regular))
+                            .foregroundStyle(Theme.textCream.opacity(0.75))
+                    }
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(onOpenProfile == nil)
+            .accessibilityLabel("Open \(friend.displayName)'s profile")
 
             Spacer()
 

@@ -32,6 +32,10 @@ private struct CommentsSheetTarget: Identifiable {
 
 struct FriendDetailView: View {
     @Environment(Store.self) private var store
+    @Environment(AuthManager.self) private var auth
+    @Environment(ModerationService.self) private var moderation
+    @Environment(MessageGraphService.self) private var messageGraph
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -69,7 +73,19 @@ struct FriendDetailView: View {
     private var sharedPacts: [Pact] { store.sharedPacts(withFriendId: friend.id) }
     private var togetherCount: Int { sharedCircles.count + sharedPacts.count }
 
-    private var unreadFromFriend: Int { store.unreadCount(fromFriendId: friend.id) }
+    private var myUserId: String? { auth.user?.id }
+
+    /// The friend's real account profile — lets the Proof and Message
+    /// actions land in the live synced 1:1 thread instead of the old
+    /// local-only pipeline.
+    private var remoteProfile: RemoteProfile? { socialSync.profile(forLocal: friend.id) }
+
+    private var unreadFromFriend: Int {
+        if let remote = remoteProfile, let myId = myUserId {
+            return messageGraph.unreadCount(fromFriendId: remote.id, myUserId: myId)
+        }
+        return store.unreadCount(fromFriendId: friend.id)
+    }
     private var hasUnviewedStories: Bool { store.hasUnviewedStories(forFriendId: friend.id) }
     private var hasAnyStories: Bool { store.hasAnyActiveStories(forFriendId: friend.id) }
     private var unviewedStoryCount: Int {
@@ -140,10 +156,23 @@ struct FriendDetailView: View {
             }
         }
         .sheet(isPresented: $showThread) {
-            DirectThreadView(friend: friend)
-                .environment(store)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+            // The real synced conversation — the same thread the Proofs
+            // inbox opens. Falls back to the local view only when this
+            // person has no resolved account (previews, offline seeds).
+            if let remote = remoteProfile, let myId = myUserId {
+                ProofThreadView(friend: remote, message: messageGraph, myUserId: myId)
+                    .environment(store)
+                    .environment(auth)
+                    .environment(moderation)
+                    .environment(socialSync)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            } else {
+                DirectThreadView(friend: friend)
+                    .environment(store)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
         }
         .fullScreenCover(isPresented: $showStories) {
             StoryPlayerView(mode: .friend(friend))
@@ -151,7 +180,28 @@ struct FriendDetailView: View {
                 .environment(store)
         }
         .fullScreenCover(isPresented: $showSendProof) {
-            CaptureView(mode: .generalPost, initialDirectFriendId: friend.id).environment(store)
+            // Send through the live pipeline: the proof uploads to the
+            // private bucket, lands in the real 1:1 thread instantly,
+            // and pushes the friend — identical to sending from chat.
+            if let remote = remoteProfile, let myId = myUserId {
+                CaptureView(
+                    mode: .generalPost,
+                    liveProofRecipientName: remote.displayName,
+                    onSendLiveProof: { data, isVideo, duration, caption in
+                        await messageGraph.sendProof(
+                            to: remote.id,
+                            data: data,
+                            mediaKind: isVideo ? .video : .photo,
+                            durationSeconds: duration,
+                            caption: caption,
+                            myUserId: myId
+                        )
+                    }
+                )
+                .environment(store)
+            } else {
+                CaptureView(mode: .generalPost, initialDirectFriendId: friend.id).environment(store)
+            }
         }
         .fullScreenCover(isPresented: $showProposePact) {
             ProposePactView(preselectedFriendId: friend.id).environment(store)
@@ -303,12 +353,18 @@ struct FriendDetailView: View {
         } label: {
             ZStack {
                 ZStack {
-                    Circle().fill(accent)
-                    Text(friend.initials)
-                        .font(.sans(26, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
+                    if let url = friend.avatarURL {
+                        CachedImage(url: url) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            initialsAvatar
+                        }
+                    } else {
+                        initialsAvatar
+                    }
                 }
                 .frame(width: 76, height: 76)
+                .clipShape(Circle())
                 .padding(5)
                 .overlay { ringOverlay }
             }
@@ -318,6 +374,17 @@ struct FriendDetailView: View {
         .disabled(!hasAnyStories)
         .matchedTransitionSource(id: "frienddetail-story", in: storyZoom)
         .accessibilityLabel(hasUnviewedStories ? "\(friend.displayName), \(unviewedStoryCount) new stories" : friend.displayName)
+    }
+
+    /// Initials on the signature color — the fallback when this person
+    /// has no profile photo (or while it loads).
+    private var initialsAvatar: some View {
+        ZStack {
+            Circle().fill(accent)
+            Text(friend.initials)
+                .font(.sans(26, weight: .medium))
+                .foregroundStyle(Theme.textCream)
+        }
     }
 
     @ViewBuilder

@@ -59,6 +59,10 @@ struct CirclesView: View {
     /// the count here is always live.
     @Environment(MessageGraphService.self) private var messageGraph
 
+    /// The app-wide friend graph — its unseen-request state paints the
+    /// red dot on the header avatar.
+    @Environment(FriendGraphService.self) private var friendGraph
+
     /// Golden Hour: the orb's tap target. The banner itself only exists
     /// while a moment is live or its wall is still draining.
     @Environment(GoldenHourService.self) private var goldenHour
@@ -299,7 +303,8 @@ struct CirclesView: View {
 
             ProfileAvatarButton(
                 initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
-                photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL
+                photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL,
+                showDot: friendGraph.hasUnseenRequests
             ) {
                 showProfileSheet = true
             }

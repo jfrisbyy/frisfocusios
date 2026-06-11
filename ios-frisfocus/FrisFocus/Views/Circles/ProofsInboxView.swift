@@ -90,7 +90,8 @@ struct ProofsInboxView: View {
     /// Home, Circles, this inbox, and every thread.
     @Environment(MessageGraphService.self) private var message
     /// The real friend graph — powers the new-conversation picker.
-    @State private var friendGraph = FriendGraphService()
+    /// App-wide, so it shares live state with the banners and dots.
+    @Environment(FriendGraphService.self) private var friendGraph
 
     /// The friend whose 1:1 thread is open full-screen, if any.
     @State private var openFriend: RemoteProfile?
@@ -462,6 +463,15 @@ private struct ProofConversationRow: View {
     private var latest: DirectMessage { summary.latest }
     private var isUnread: Bool { summary.unreadCount > 0 }
 
+    /// "Opened" / "Seen" when my last send has been viewed — the quiet
+    /// inbox mirror of the thread's receipt line.
+    private var sentReceipt: String? {
+        guard isMine else { return nil }
+        if latest.isProof, latest.watchedAt != nil { return "Opened" }
+        if latest.readAt != nil { return "Seen" }
+        return nil
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             RemoteAvatarView(profile: friend, size: 52)
@@ -529,6 +539,17 @@ private struct ProofConversationRow: View {
                 .font(.sans(13, weight: isUnread ? .medium : .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(isUnread ? 0.92 : 0.65))
                 .lineLimit(1)
+
+            if let sentReceipt {
+                HStack(spacing: 3) {
+                    Image(systemName: sentReceipt == "Opened" ? "play.circle.fill" : "checkmark.circle.fill")
+                        .font(.sans(9, weight: .semibold))
+                    Text(sentReceipt)
+                        .font(.sans(11, weight: .medium))
+                }
+                .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                .layoutPriority(1)
+            }
         }
     }
 

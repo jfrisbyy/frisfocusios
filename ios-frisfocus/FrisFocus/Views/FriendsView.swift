@@ -18,7 +18,9 @@ struct FriendsView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(ModerationService.self) private var moderation
     @Environment(SocialSyncService.self) private var socialSync
-    @State private var service = FriendGraphService()
+    /// The app-wide friend graph — shared with the banners and avatar
+    /// dot, so accepting here clears the alerts everywhere instantly.
+    @Environment(FriendGraphService.self) private var service
     @State private var discover = DiscoverService()
     @State private var query: String = ""
     @State private var hasSearched: Bool = false
@@ -48,7 +50,6 @@ struct FriendsView: View {
         .toolbarBackground(Theme.warmWheat, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .task { await reload() }
-        .onDisappear { service.stopRealtime() }
         .refreshable { await reload() }
         .alert("Something went wrong", isPresented: $service.showError) {
             Button("OK") { }
@@ -480,6 +481,9 @@ struct FriendsView: View {
         guard let myId else { return }
         await service.load(myUserId: myId)
         service.startRealtime(myUserId: myId)
+        // The user is looking at the request list now — clear the
+        // unseen dot on the home avatar and quick-card tile.
+        service.markRequestsSeen()
         await discover.refresh(myUserId: myId, graph: service)
     }
 

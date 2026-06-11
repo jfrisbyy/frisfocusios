@@ -26,6 +26,10 @@ struct FrisFocusApp: App {
     /// cheers, pacts, circles, and grove presence between Supabase and
     /// the local Store, app-wide.
     @State private var socialSync = SocialSyncService()
+    /// One app-wide friend graph: live friends + pending requests with
+    /// realtime, so request banners and the unseen-request dot work on
+    /// every screen — not just while the Friends page is open.
+    @State private var friendGraph = FriendGraphService()
 
     var body: some Scene {
         WindowGroup {
@@ -38,6 +42,7 @@ struct FrisFocusApp: App {
                 .environment(messageGraph)
                 .environment(goldenHour)
                 .environment(socialSync)
+                .environment(friendGraph)
                 .environment(appDelegate.notifications)
                 .preferredColorScheme(.light)
                 .statusBarHidden(false)

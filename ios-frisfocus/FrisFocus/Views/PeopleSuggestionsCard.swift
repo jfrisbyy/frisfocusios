@@ -36,7 +36,9 @@ struct PeopleSuggestionsCard: View {
     @Environment(ModerationService.self) private var moderation
     @Environment(SocialSyncService.self) private var socialSync
 
-    @State private var graph = FriendGraphService()
+    /// The app-wide friend graph — shared so relationship state here
+    /// matches the Friends page, banners, and dots in real time.
+    @Environment(FriendGraphService.self) private var graph
     @State private var discover = DiscoverService()
     @State private var preview: DiscoverSuggestion?
     @State private var showAllPeople = false
@@ -95,7 +97,9 @@ struct PeopleSuggestionsCard: View {
         .task {
             guard let myId else { return }
             if !discover.hasLoaded {
-                await graph.load(myUserId: myId)
+                if graph.friends.isEmpty && graph.incoming.isEmpty && graph.outgoing.isEmpty {
+                    await graph.load(myUserId: myId)
+                }
                 await discover.refresh(myUserId: myId, graph: graph)
             }
             withAnimation { appeared = true }

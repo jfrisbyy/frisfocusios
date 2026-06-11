@@ -21,6 +21,7 @@ struct ProofThreadView: View {
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
     @Environment(ModerationService.self) private var moderation
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
 
     let friend: RemoteProfile
@@ -37,6 +38,9 @@ struct ProofThreadView: View {
     /// The proof open full-screen in the player, if any.
     @State private var playerProof: DirectMessage?
     @State private var reportTarget: ReportTarget?
+    /// The friend's profile page, opened by tapping their photo or name
+    /// in the header (or inside the proof player).
+    @State private var profileFriend: Friend?
     /// Live presence for this pair — here / typing / watching cues.
     @State private var presence = ThreadPresenceService()
     /// Zoom-transition namespace: the player grows out of the exact
@@ -45,6 +49,30 @@ struct ProofThreadView: View {
 
     private var thread: [DirectMessage] {
         message.thread(withFriendId: friend.id, myUserId: myUserId)
+    }
+
+    /// The local mirror of this person — the doorway to their profile
+    /// hub. Nil only when the social mirror hasn't resolved them yet.
+    private var localFriend: Friend? {
+        store.friend(by: socialSync.localId(forRemote: friend.id))
+    }
+
+    /// My newest delivered message — the one that carries the receipt
+    /// line (Sent → Seen / Opened), exactly like Messages.
+    private var receiptMessageId: UUID? {
+        thread.last { $0.isMine(myUserId) && !message.isPending($0.id) && !message.isFailed($0.id) }?.id
+    }
+
+    /// The receipt label for one of my messages, or nil when it isn't
+    /// the receipt carrier.
+    private func receipt(for item: DirectMessage) -> String? {
+        guard item.id == receiptMessageId else { return nil }
+        if item.isProof {
+            if item.watchedAt != nil { return "Opened" }
+            if item.readAt != nil { return "Seen" }
+            return "Sent"
+        }
+        return item.readAt != nil ? "Seen" : "Sent"
     }
 
     var body: some View {
@@ -91,11 +119,25 @@ struct ProofThreadView: View {
                 friend: friend,
                 message: message,
                 myUserId: myUserId,
-                presence: presence
+                presence: presence,
+                onOpenProfile: localFriend == nil ? nil : {
+                    // Let the player's dismissal finish before raising
+                    // the profile cover so the transitions don't fight.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                        openProfile()
+                    }
+                }
             )
             .navigationTransition(.zoom(sourceID: "proof-\(proof.id.uuidString)", in: proofZoom))
             .environment(auth)
             .environment(moderation)
+        }
+        .fullScreenCover(item: $profileFriend) { local in
+            FriendDetailView(friend: local)
+                .environment(store)
+                .environment(auth)
+                .environment(moderation)
+                .environment(socialSync)
         }
         .sheet(item: $reportTarget) { target in
             ReportSheet(
@@ -131,32 +173,41 @@ struct ProofThreadView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 12) {
-                ZStack(alignment: .bottomTrailing) {
-                    RemoteAvatarView(profile: friend, size: 40)
-                    if presence.friendIsHere {
-                        Circle()
-                            .fill(Theme.alertGreen)
-                            .frame(width: 11, height: 11)
-                            .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 2))
-                            .transition(.scale.combined(with: .opacity))
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                openProfile()
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack(alignment: .bottomTrailing) {
+                        RemoteAvatarView(profile: friend, size: 40)
+                        if presence.friendIsHere {
+                            Circle()
+                                .fill(Theme.alertGreen)
+                                .frame(width: 11, height: 11)
+                                .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 2))
+                                .transition(.scale.combined(with: .opacity))
+                        }
+                    }
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: presence.friendIsHere)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(presenceEyebrow)
+                            .font(.sans(9, weight: .medium))
+                            .tracking(2)
+                            .foregroundStyle(presenceEyebrowColor)
+                            .contentTransition(.opacity)
+                            .animation(.easeInOut(duration: 0.2), value: presenceEyebrow)
+                        Text(friend.displayName)
+                            .font(.serif(20, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
                     }
                 }
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: presence.friendIsHere)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(presenceEyebrow)
-                        .font(.sans(9, weight: .medium))
-                        .tracking(2)
-                        .foregroundStyle(presenceEyebrowColor)
-                        .contentTransition(.opacity)
-                        .animation(.easeInOut(duration: 0.2), value: presenceEyebrow)
-                    Text(friend.displayName)
-                        .font(.serif(20, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(localFriend == nil)
+            .accessibilityLabel("Open \(friend.displayName)'s profile")
 
             Spacer()
 
@@ -234,6 +285,7 @@ struct ProofThreadView: View {
                             isPending: message.isPending(item.id),
                             isFailed: message.isFailed(item.id),
                             uploadProgress: (message.isPending(item.id) && item.isProof) ? message.uploadProgress : nil,
+                            receipt: item.isMine(myUserId) ? receipt(for: item) : nil,
                             zoomNamespace: proofZoom,
                             onOpenProof: { openProof(item) },
                             onReplyWithProof: { replyWithProof() },
@@ -455,6 +507,12 @@ struct ProofThreadView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         showCapture = true
     }
+
+    /// Open this person's profile hub, when the social mirror knows them.
+    private func openProfile() {
+        guard let local = localFriend else { return }
+        profileFriend = local
+    }
 }
 
 // MARK: - Bubble
@@ -469,6 +527,9 @@ private struct ProofThreadBubble: View {
     var isFailed: Bool = false
     /// Live byte progress (0...1) while this proof's media uploads.
     var uploadProgress: Double? = nil
+    /// "Sent" / "Seen" / "Opened" — carried only by my newest delivered
+    /// message, updating live as the friend reads or watches.
+    var receipt: String? = nil
     var zoomNamespace: Namespace.ID? = nil
     let onOpenProof: () -> Void
     let onReplyWithProof: () -> Void
@@ -523,8 +584,29 @@ private struct ProofThreadBubble: View {
                             .monospacedDigit()
                     }
                     .padding(.horizontal, 4)
+                } else if isPending {
+                    Text("sending\u{2026}")
+                        .font(.sans(10, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                        .padding(.horizontal, 4)
+                        .contentTransition(.opacity)
+                } else if let receipt {
+                    // The receipt line: Sent → Seen / Opened, live.
+                    HStack(spacing: 4) {
+                        if receipt != "Sent" {
+                            Image(systemName: receipt == "Opened" ? "play.circle.fill" : "checkmark.circle.fill")
+                                .font(.sans(9, weight: .semibold))
+                        }
+                        Text("\(receipt) \u{00B7} \(ProofThreadFormat.elapsed(from: message.createdAt))")
+                            .font(.sans(10, weight: receipt == "Sent" ? .regular : .medium))
+                    }
+                    .foregroundStyle(receipt == "Sent" ? Theme.textPrimary.opacity(0.4) : Theme.textPrimary.opacity(0.55))
+                    .padding(.horizontal, 4)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: receipt)
+                    .accessibilityLabel("\(receipt)")
                 } else {
-                    Text(isPending ? "sending\u{2026}" : ProofThreadFormat.elapsed(from: message.createdAt))
+                    Text(ProofThreadFormat.elapsed(from: message.createdAt))
                         .font(.sans(10, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.4))
                         .padding(.horizontal, 4)

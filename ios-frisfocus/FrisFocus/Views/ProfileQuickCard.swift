@@ -92,6 +92,7 @@ private struct ProfileQuickCardOverlay: View {
 
     @Environment(AuthManager.self) private var auth
     @Environment(ProfileStore.self) private var profileStore
+    @Environment(FriendGraphService.self) private var friendGraph
 
     @State private var shown = false
     @State private var drag: CGSize = .zero
@@ -271,7 +272,7 @@ private struct ProfileQuickCardOverlay: View {
     private var shortcuts: some View {
         HStack(spacing: 6) {
             shortcutTile(.editProfile, icon: "person.crop.circle", title: "Profile")
-            shortcutTile(.friends, icon: "person.2.fill", title: "Add")
+            shortcutTile(.friends, icon: "person.2.fill", title: "Add", showDot: friendGraph.hasUnseenRequests)
             shortcutTile(.circles, icon: "circle.hexagongrid.fill", title: "Friends")
             shortcutTile(.proofs, icon: "paperplane.fill", title: "Proofs", showDot: unreadCount > 0)
         }

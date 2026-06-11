@@ -22,6 +22,7 @@ struct HomeView: View {
     @Environment(NotificationManager.self) private var notifications
     @Environment(MessageGraphService.self) private var messageGraph
     @Environment(GoldenHourService.self) private var goldenHour
+    @Environment(FriendGraphService.self) private var friendGraph
     @State private var locationService = LocationService()
     @State private var activeZone: HomeZone = .sun
     @State private var zoneFrames: [HomeZone: CGRect] = [:]
@@ -40,6 +41,8 @@ struct HomeView: View {
     @State private var showCircles: Bool = false
     /// The circle whose Golden Hour surface the golden orb opens.
     @State private var goldenTarget: GoldenHourTarget?
+    /// A tapped friend-request banner opens the Friends page here.
+    @State private var showFriendsFromBanner: Bool = false
 
     private let scrollSpace = "frisFocusScroll"
 
@@ -82,6 +85,17 @@ struct HomeView: View {
                 .environment(auth)
         }
         .profileQuickCard(isPresented: $showProfileSheet)
+        .sheet(isPresented: $showFriendsFromBanner) {
+            NavigationStack {
+                FriendsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showFriendsFromBanner = false }
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                    }
+            }
+        }
     }
 
     /// Unread direct messages — live from the app-wide messaging
@@ -195,6 +209,12 @@ struct HomeView: View {
             }
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
+                    // Live friend-graph moments — a request just arrived,
+                    // or someone accepted yours. Tap opens Friends.
+                    FriendRequestBanner {
+                        showFriendsFromBanner = true
+                    }
+
                     // Golden Hour orb — exists only while a moment is live
                     // (pulsing banner) or its wall is still open (draining
                     // chip). Gone the rest of the day.

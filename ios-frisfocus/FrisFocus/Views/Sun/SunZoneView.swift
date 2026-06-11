@@ -49,6 +49,7 @@ struct SunZoneView: View {
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
     @Environment(ProfileStore.self) private var profileStore
+    @Environment(FriendGraphService.self) private var friendGraph
 
     @State private var showDaySheet: Bool = false
     @State private var daySheetDate: Date = Date()
@@ -308,6 +309,7 @@ struct SunZoneView: View {
                     ProfileAvatarButton(
                         initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
                         photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL,
+                        showDot: friendGraph.hasUnseenRequests,
                         action: onProfileTap
                     )
                 }

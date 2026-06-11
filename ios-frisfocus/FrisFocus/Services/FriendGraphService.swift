@@ -125,6 +125,23 @@ nonisolated enum FriendRelationship: Sendable {
     case isMe, friends, requestSent, requestReceived, none
 }
 
+/// A live friend-graph moment worth surfacing in-app: a request just
+/// arrived, or someone accepted yours. Identifiable so the banner
+/// overlay can animate per-event.
+struct FriendBannerEvent: Identifiable, Equatable {
+    enum Kind { case requestReceived, requestAccepted }
+    let id = UUID()
+    let kind: Kind
+    let profile: RemoteProfile
+
+    var message: String {
+        switch kind {
+        case .requestReceived: return "\(profile.displayName) sent you a friend request"
+        case .requestAccepted: return "You and \(profile.displayName) are now friends"
+        }
+    }
+}
+
 // MARK: - Service
 
 @Observable
@@ -141,8 +158,49 @@ final class FriendGraphService {
     var searchResults: [RemoteProfile] = []
     var isSearching = false
 
+    /// The most recent live event (request arrived / accepted), surfaced
+    /// as an in-app banner by the home shell. Cleared by the banner.
+    var banner: FriendBannerEvent?
+
     @ObservationIgnored private var channel: RealtimeChannelV2?
     @ObservationIgnored private var realtimeTask: Task<Void, Never>?
+
+    // MARK: Change detection (banners + unseen dot)
+
+    /// Snapshots from the previous load — nil until the first load lands
+    /// so a cold start never fires a banner for old state.
+    @ObservationIgnored private var knownIncomingIds: Set<UUID>?
+    @ObservationIgnored private var knownFriendIds: Set<String>?
+    /// People we had a pending outgoing request to — a new friendship
+    /// with one of them means they accepted.
+    @ObservationIgnored private var knownOutgoingTargets: Set<String> = []
+
+    private static let seenRequestsKey = "friendgraph.seenRequestIds"
+
+    /// Incoming request ids the user has already laid eyes on (the
+    /// Friends page marks them). Persisted so the dot survives relaunch.
+    @ObservationIgnored private var seenRequestIds: Set<String> = Set(
+        UserDefaults.standard.stringArray(forKey: FriendGraphService.seenRequestsKey) ?? []
+    )
+
+    /// True while a request is waiting that the user hasn't seen yet —
+    /// drives the red dot on the home avatar and the quick-card tile.
+    var hasUnseenRequests: Bool {
+        incoming.contains { !seenRequestIds.contains($0.id.uuidString) }
+    }
+
+    /// The Friends page calls this once its request list is on screen —
+    /// clears the dot everywhere.
+    func markRequestsSeen() {
+        guard hasUnseenRequests else { return }
+        for request in incoming { seenRequestIds.insert(request.id.uuidString) }
+        // Trim the persisted set to ids that still matter.
+        let live = Set(incoming.map { $0.id.uuidString })
+        seenRequestIds = seenRequestIds.intersection(live).union(live)
+        UserDefaults.standard.set(Array(seenRequestIds), forKey: Self.seenRequestsKey)
+        // Touch an observed property so dots refresh immediately.
+        incoming = incoming
+    }
 
     /// Pull the whole graph for the signed-in user: accepted friends plus
     /// pending requests in both directions, with each counterpart's profile
@@ -183,8 +241,29 @@ final class FriendGraphService {
             outgoing = requestRows
                 .filter { $0.requesterId == myUserId && !friendIds.contains($0.addresseeId) }
                 .compactMap { row in profilesById[row.addresseeId].map { PendingFriendRequest(id: row.id, profile: $0) } }
+
+            detectLiveChanges()
         } catch {
             fail("Couldn't load your friends.", error)
+        }
+    }
+
+    /// Diff this load against the previous snapshot and raise a banner
+    /// for anything that just happened: a fresh incoming request, or an
+    /// outgoing request that became a friendship (an accept).
+    private func detectLiveChanges() {
+        defer {
+            knownIncomingIds = Set(incoming.map(\.id))
+            knownFriendIds = Set(friends.map(\.id))
+            knownOutgoingTargets = Set(outgoing.map { $0.profile.id })
+        }
+        // First load of the session — establish the baseline quietly.
+        guard let previousIncoming = knownIncomingIds, let previousFriends = knownFriendIds else { return }
+
+        if let accepted = friends.first(where: { !previousFriends.contains($0.id) && knownOutgoingTargets.contains($0.id) }) {
+            banner = FriendBannerEvent(kind: .requestAccepted, profile: accepted)
+        } else if let fresh = incoming.first(where: { !previousIncoming.contains($0.id) }) {
+            banner = FriendBannerEvent(kind: .requestReceived, profile: fresh.profile)
         }
     }
 

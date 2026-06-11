@@ -16,6 +16,9 @@ import UIKit
 struct ProfileAvatarButton: View {
     let initials: String
     var photoURL: URL? = nil
+    /// A small alert dot at the disc's top-trailing corner — unseen
+    /// friend requests waiting behind the profile surfaces.
+    var showDot: Bool = false
     let action: () -> Void
 
     /// Expands the tap target to ~50 pt — well past Apple's 44 pt
@@ -49,13 +52,22 @@ struct ProfileAvatarButton: View {
                 Circle()
                     .stroke(Theme.sunWarm, lineWidth: 1.5)
             )
+            .overlay(alignment: .topTrailing) {
+                if showDot {
+                    Circle()
+                        .fill(Theme.alertRed)
+                        .frame(width: 9, height: 9)
+                        .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.9), lineWidth: 1.2))
+                        .offset(x: 1.5, y: -1.5)
+                }
+            }
             .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
             .padding(hitSlop)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .padding(-hitSlop)
-        .accessibilityLabel("Profile")
+        .accessibilityLabel(showDot ? "Profile, new friend requests waiting" : "Profile")
         .accessibilityHint("Open profile, settings, and season management")
     }
 
