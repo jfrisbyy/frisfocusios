@@ -18,6 +18,10 @@ struct FrisFocusApp: App {
     /// the inbox, and every thread — and the unread badge never goes
     /// stale just because a particular screen wasn't open.
     @State private var messageGraph = MessageGraphService()
+    /// One app-wide Golden Hour service: deterministic fire moments,
+    /// synchronized local notifications, posts, and the sweep — so the
+    /// golden orb is accurate on every surface.
+    @State private var goldenHour = GoldenHourService()
 
     var body: some Scene {
         WindowGroup {
@@ -28,6 +32,7 @@ struct FrisFocusApp: App {
                 .environment(moderationService)
                 .environment(cadenceLink)
                 .environment(messageGraph)
+                .environment(goldenHour)
                 .environment(appDelegate.notifications)
                 .preferredColorScheme(.light)
                 .statusBarHidden(false)

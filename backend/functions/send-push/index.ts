@@ -41,7 +41,8 @@ type PushType =
   | "circle_invite"
   | "circle_task"
   | "circle_progress"
-  | "circle_mode";
+  | "circle_mode"
+  | "golden_post";
 
 interface PushRequest {
   recipientId: string;
@@ -150,6 +151,16 @@ function buildCopy(
           ? `${senderName} switched ${circleName} to ${p}`
           : `${senderName} changed what ${circleName} is doing together`,
         data: { route: "circle", circleId: circleId ?? "" },
+      };
+    case "golden_post":
+      // Golden Hour is its own ephemeral module — the push routes to the
+      // golden surface (camera while live, wall during the hour), never
+      // to stories or threads. `preview` carries the time remaining
+      // (e.g. "3:12 left"), built by the poster's device.
+      return {
+        title: `Golden Hour · ${circleName}`,
+        body: p ? `${senderName} made Golden Hour — ${p}` : `${senderName} made Golden Hour`,
+        data: { route: "golden", circleId: circleId ?? "" },
       };
   }
 }

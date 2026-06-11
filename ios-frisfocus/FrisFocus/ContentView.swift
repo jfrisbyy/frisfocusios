@@ -23,6 +23,7 @@ struct ContentView: View {
     @Environment(NotificationManager.self) private var notifications
     @Environment(CadenceLinkService.self) private var cadence
     @Environment(MessageGraphService.self) private var messageGraph
+    @Environment(GoldenHourService.self) private var goldenHour
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
@@ -51,6 +52,10 @@ struct ContentView: View {
                     // live on every screen — not just inside Circles.
                     await messageGraph.load(myUserId: myId)
                     messageGraph.startRealtime(myUserId: myId)
+                    // Golden Hour: settings + today's moment + synchronized
+                    // local notifications, live across the whole app.
+                    await goldenHour.load(myUserId: myId)
+                    goldenHour.startRealtime(myUserId: myId)
                     await profileStore.load(myUserId: myId)
                     await moderation.loadBlocks(myUserId: myId)
                     await notifications.requestAuthorizationIfNeeded()
@@ -61,6 +66,7 @@ struct ContentView: View {
                 } else {
                     notifications.setUserId(nil)
                     messageGraph.stopRealtime()
+                    goldenHour.clear()
                     profileStore.clear()
                     moderation.clear()
                     await cadence.refresh(myUserId: nil)
@@ -81,6 +87,9 @@ struct ContentView: View {
                         // Catch up on anything that arrived while the
                         // socket was suspended in the background.
                         Task { await messageGraph.load(myUserId: myId) }
+                        // Re-resolve today's Golden Hour moment (a turns-mode
+                        // pick may have landed) and refresh the alerts.
+                        Task { await goldenHour.load(myUserId: myId) }
                     }
                 } else if newPhase == .background || newPhase == .inactive {
                     // Safety net: flush any debounced, not-yet-written

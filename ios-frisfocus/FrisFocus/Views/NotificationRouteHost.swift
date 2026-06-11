@@ -62,6 +62,17 @@ struct NotificationRouteHost: View {
             } else {
                 RouteFallback(message: "This circle link is no longer valid.") { dismiss() }
             }
+
+        case .golden(let circleId):
+            // Golden Hour notifications land on the golden surface itself:
+            // the countdown camera while live, the wall during the hour,
+            // and only the residue card after — never a story or thread.
+            if let uuid = UUID(uuidString: circleId) {
+                GoldenHourHostView(circleId: uuid)
+                    .environment(auth)
+            } else {
+                RouteFallback(message: "This Golden Hour link is no longer valid.") { dismiss() }
+            }
         }
     }
 

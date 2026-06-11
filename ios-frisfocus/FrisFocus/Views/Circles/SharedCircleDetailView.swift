@@ -44,6 +44,13 @@ struct SharedCircleDetailView: View {
     @State private var friendService = FriendGraphService()
     @FocusState private var contributionFocused: Bool
 
+    /// Golden Hour — the circle's daily synchronized moment. The service
+    /// is app-wide; this view only opens the settings sheet and the
+    /// golden surface.
+    @Environment(GoldenHourService.self) private var goldenHour
+    @State private var showGoldenSettings = false
+    @State private var showGoldenHour = false
+
     private var circle: SharedCircle? { service.circles.first { $0.id == circleId } }
     private var isOwner: Bool { circle?.ownerId == myUserId }
     private var canManage: Bool { circle?.canManageTasks(myUserId) ?? false }
@@ -101,6 +108,19 @@ struct SharedCircleDetailView: View {
                 SharedCircleStoryView(circle: circle)
             }
         }
+        .sheet(isPresented: $showGoldenSettings) {
+            GoldenHourSettingsSheet(
+                circleId: circleId,
+                circleName: circle?.name ?? "This circle",
+                myUserId: myUserId,
+                canManage: canManage
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $showGoldenHour) {
+            GoldenHourHostView(circleId: circleId)
+        }
         .sheet(isPresented: $showInvite) {
             if let circle {
                 InviteToCircleSheet(
@@ -138,6 +158,7 @@ struct SharedCircleDetailView: View {
                     if canManage {
                         sharedGoalsSection(circle)
                     }
+                    goldenHourSection(circle)
                     membershipFooter(circle)
                 }
                 .padding(.horizontal, Theme.pageHorizontalPadding)
@@ -260,6 +281,98 @@ struct SharedCircleDetailView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Our story")
+        }
+    }
+
+    // MARK: - Golden Hour
+
+    /// The circle's Golden Hour card — the module's only foothold inside
+    /// the circle detail. Opens the golden surface while a moment is
+    /// live/viewing; otherwise opens the settings sheet.
+    private func goldenHourSection(_ circle: SharedCircle) -> some View {
+        let now = Date()
+        let settings = goldenHour.settingsByCircle[circle.id]
+        let moment = goldenHour.currentMoment(for: circle.id, now: now)
+        let phase = moment?.phase(at: now)
+        let isActive = phase == .live || phase == .viewing
+        let streak = goldenHour.streak(circleId: circle.id, userId: myUserId, now: now)
+
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if isActive {
+                showGoldenHour = true
+            } else {
+                showGoldenSettings = true
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "sun.max.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(GoldenTheme.ink)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(GoldenTheme.goldGradient))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Golden Hour")
+                            .font(.sans(15, weight: .semibold))
+                            .foregroundStyle(GoldenTheme.cream)
+                        if phase == .live {
+                            Text("LIVE")
+                                .font(.sans(9, weight: .bold))
+                                .tracking(1)
+                                .foregroundStyle(GoldenTheme.ink)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(GoldenTheme.gold))
+                        }
+                    }
+                    Text(goldenStatusLine(settings: settings, phase: phase))
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(GoldenTheme.cream.opacity(0.62))
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                if streak > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("\(streak)")
+                            .font(.sans(12, weight: .bold))
+                    }
+                    .foregroundStyle(GoldenTheme.gold)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(GoldenTheme.gold.opacity(0.7))
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(GoldenTheme.ink)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(GoldenTheme.gold.opacity(isActive ? 0.6 : 0.25), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isActive ? "Golden Hour is live. Open it." : "Golden Hour settings")
+    }
+
+    private func goldenStatusLine(settings: GoldenHourSettings?, phase: GoldenHourPhase?) -> String {
+        guard let settings, settings.enabled else {
+            return canManage ? "Off — set up the daily moment" : "Off for this circle"
+        }
+        switch phase {
+        case .live: return "Capture window is open right now"
+        case .viewing: return "The wall is open — it disappears soon"
+        case .over: return "Done for today · \(settings.mode.title)"
+        default: return "On · \(settings.mode.title)"
         }
     }
 

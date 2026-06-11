@@ -59,6 +59,11 @@ struct CirclesView: View {
     /// the count here is always live.
     @Environment(MessageGraphService.self) private var messageGraph
 
+    /// Golden Hour: the orb's tap target. The banner itself only exists
+    /// while a moment is live or its wall is still draining.
+    @Environment(GoldenHourService.self) private var goldenHour
+    @State private var goldenTarget: GoldenHourTarget?
+
     /// Zoom-transition namespace: story players grow out of the exact
     /// avatar / strip that opened them and shrink back into it.
     @Namespace private var storyZoom
@@ -141,6 +146,17 @@ struct CirclesView: View {
                     circlesBadgeCount: directUnread
                 )
                 .ignoresSafeArea(edges: .bottom)
+            }
+            .overlay(alignment: .top) {
+                GoldenHourBanner { circleId in
+                    goldenTarget = GoldenHourTarget(circleId: circleId)
+                }
+                .padding(.top, 6)
+            }
+            .fullScreenCover(item: $goldenTarget) { target in
+                GoldenHourHostView(circleId: target.circleId)
+                    .environment(goldenHour)
+                    .environment(auth)
             }
             .navigationBarBackButtonHidden(true)
             .toolbar(.hidden, for: .navigationBar)

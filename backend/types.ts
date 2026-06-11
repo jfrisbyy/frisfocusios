@@ -618,6 +618,126 @@ export type Database = {
           },
         ]
       }
+      golden_hour_picks: {
+        Row: {
+          circle_id: string
+          created_at: string
+          day: string
+          fire_minute: number
+          id: string
+          picker_id: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          day: string
+          fire_minute: number
+          id?: string
+          picker_id: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          day?: string
+          fire_minute?: number
+          id?: string
+          picker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "golden_hour_picks_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      golden_hour_posts: {
+        Row: {
+          circle_id: string
+          day: string
+          fired_at: string
+          id: string
+          media_duration: number | null
+          media_kind: string
+          media_path: string | null
+          posted_at: string
+          seconds_to_spare: number | null
+          user_id: string
+        }
+        Insert: {
+          circle_id: string
+          day: string
+          fired_at: string
+          id?: string
+          media_duration?: number | null
+          media_kind?: string
+          media_path?: string | null
+          posted_at?: string
+          seconds_to_spare?: number | null
+          user_id: string
+        }
+        Update: {
+          circle_id?: string
+          day?: string
+          fired_at?: string
+          id?: string
+          media_duration?: number | null
+          media_kind?: string
+          media_path?: string | null
+          posted_at?: string
+          seconds_to_spare?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "golden_hour_posts_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      golden_hour_settings: {
+        Row: {
+          circle_id: string
+          enabled: boolean
+          fire_minute: number
+          mode: string
+          time_zone: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          circle_id: string
+          enabled?: boolean
+          fire_minute?: number
+          mode?: string
+          time_zone?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          circle_id?: string
+          enabled?: boolean
+          fire_minute?: number
+          mode?: string
+          time_zone?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "golden_hour_settings_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: true
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null

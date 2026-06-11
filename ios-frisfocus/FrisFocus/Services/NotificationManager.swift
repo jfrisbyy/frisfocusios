@@ -39,6 +39,10 @@ enum DeepLinkRoute: Identifiable, Equatable {
     case circles
     /// Open a specific circle's detail (a partner checked off / logged progress).
     case circle(circleId: String)
+    /// Open a circle's Golden Hour surface — the countdown camera while
+    /// the 5-minute window is live, the ephemeral wall during the hour,
+    /// and only the attendance residue after.
+    case golden(circleId: String)
 
     var id: String {
         switch self {
@@ -46,6 +50,7 @@ enum DeepLinkRoute: Identifiable, Equatable {
         case .friends: return "friends"
         case .circles: return "circles"
         case .circle(let circleId): return "circle:\(circleId)"
+        case .golden(let circleId): return "golden:\(circleId)"
         }
     }
 
@@ -64,6 +69,9 @@ enum DeepLinkRoute: Identifiable, Equatable {
         case "circle":
             guard let circleId = userInfo["circleId"] as? String, !circleId.isEmpty else { return nil }
             self = .circle(circleId: circleId)
+        case "golden":
+            guard let circleId = userInfo["circleId"] as? String, !circleId.isEmpty else { return nil }
+            self = .golden(circleId: circleId)
         default:
             return nil
         }

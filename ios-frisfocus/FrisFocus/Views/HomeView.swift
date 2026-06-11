@@ -21,6 +21,7 @@ struct HomeView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(NotificationManager.self) private var notifications
     @Environment(MessageGraphService.self) private var messageGraph
+    @Environment(GoldenHourService.self) private var goldenHour
     @State private var locationService = LocationService()
     @State private var activeZone: HomeZone = .sun
     @State private var zoneFrames: [HomeZone: CGRect] = [:]
@@ -37,6 +38,8 @@ struct HomeView: View {
     @State private var showCamera: Bool = false
     /// Swipe-right destination — the messages inbox, one gesture away.
     @State private var showMessages: Bool = false
+    /// The circle whose Golden Hour surface the golden orb opens.
+    @State private var goldenTarget: GoldenHourTarget?
 
     private let scrollSpace = "frisFocusScroll"
 
@@ -80,6 +83,11 @@ struct HomeView: View {
         .fullScreenCover(isPresented: $showMessages) {
             ProofsInboxView()
                 .environment(store)
+                .environment(auth)
+        }
+        .fullScreenCover(item: $goldenTarget) { target in
+            GoldenHourHostView(circleId: target.circleId)
+                .environment(goldenHour)
                 .environment(auth)
         }
         .profileQuickCard(isPresented: $showProfileSheet)
@@ -188,6 +196,13 @@ struct HomeView: View {
             }
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
+                    // Golden Hour orb — exists only while a moment is live
+                    // (pulsing banner) or its wall is still open (draining
+                    // chip). Gone the rest of the day.
+                    GoldenHourBanner { circleId in
+                        goldenTarget = GoldenHourTarget(circleId: circleId)
+                    }
+
                     BoosterAwardToast(
                         award: store.pendingBoosterAward,
                         onDismiss: { store.clearPendingBoosterAward() }
