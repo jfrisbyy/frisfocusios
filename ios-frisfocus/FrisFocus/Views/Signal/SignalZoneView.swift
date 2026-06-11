@@ -8,9 +8,14 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct SignalZoneView: View {
     @Environment(Store.self) private var store
+
+    /// Find-friends doorway — a sheet straight into the Friends hub,
+    /// reachable from the no-friend quiet card and the footer line.
+    @State private var showFindFriends: Bool = false
 
     /// Up to three of the freshest friend stories, shaped into the
     /// card model this zone has always rendered.
@@ -77,17 +82,7 @@ struct SignalZoneView: View {
                 .padding(.top, 28)
 
                 if entries.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Quiet out there for now.")
-                            .font(.serifItalic(15))
-                            .foregroundStyle(Theme.textCream.opacity(0.85))
-                        Text("When friends post a moment, it shows up here.")
-                            .font(.sans(12, weight: .regular))
-                            .foregroundStyle(Theme.textCream.opacity(0.6))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(18)
-                    .background(Theme.textCream.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+                    quietCard
                 } else {
                     VStack(spacing: 10) {
                         ForEach(entries) { entry in
@@ -101,11 +96,28 @@ struct SignalZoneView: View {
 
                 // Footer row
                 HStack {
-                    Text(store.friends.isEmpty
-                         ? "Add friends to light this zone up"
-                         : "\(store.friends.count) friend\(store.friends.count == 1 ? "" : "s") connected")
-                        .font(.sans(11, weight: .regular))
-                        .foregroundStyle(Theme.textCream.opacity(0.75))
+                    if store.friends.isEmpty {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            showFindFriends = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("Add friends to light this zone up")
+                                    .font(.sans(11, weight: .medium))
+                                    .underline()
+                                Image(systemName: "person.badge.plus")
+                                    .font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundStyle(Theme.textCream.opacity(0.85))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Add friends")
+                    } else {
+                        Text("\(store.friends.count) friend\(store.friends.count == 1 ? "" : "s") connected")
+                            .font(.sans(11, weight: .regular))
+                            .foregroundStyle(Theme.textCream.opacity(0.75))
+                    }
 
                     Spacer()
 
@@ -124,6 +136,61 @@ struct SignalZoneView: View {
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
         }
+        .sheet(isPresented: $showFindFriends) {
+            NavigationStack {
+                FriendsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showFindFriends = false }
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                    }
+            }
+        }
+    }
+
+    /// The empty-feed card. With friends it stays the calm one-liner;
+    /// with zero friends it becomes actionable — suggested real people
+    /// to add right here, plus the find-friends doorway.
+    private var quietCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(store.friends.isEmpty ? "No one out there yet." : "Quiet out there for now.")
+                    .font(.serifItalic(15))
+                    .foregroundStyle(Theme.textCream.opacity(0.85))
+                Text(store.friends.isEmpty
+                     ? "Add a friend or two and their moments will light this zone up."
+                     : "When friends post a moment, it shows up here.")
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(Theme.textCream.opacity(0.6))
+            }
+
+            if store.friends.isEmpty {
+                PeopleSuggestionsCard(palette: .dusk, maxCount: 3, showsSeeMore: false)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showFindFriends = true
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "person.badge.plus")
+                            .font(.sans(12, weight: .semibold))
+                        Text("Find friends")
+                            .font(.sans(13, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.duskDeep)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Capsule(style: .continuous).fill(Theme.textCream))
+                    .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Find friends")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Theme.textCream.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 

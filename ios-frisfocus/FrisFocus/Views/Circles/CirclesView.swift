@@ -50,6 +50,7 @@ struct CirclesView: View {
     @State private var showMyStory: Bool = false
     @State private var showDirect: Bool = false
     @State private var showAddFriends: Bool = false
+    @State private var showInvite: Bool = false
     @State private var threadFriend: Friend?
     @State private var route: CirclesRoute?
 
@@ -103,10 +104,17 @@ struct CirclesView: View {
                         hairline
                             .padding(.top, 16)
 
-                        PeopleTodayList(
-                            onRowTap: { friend in handleRowTap(friend) },
-                            onActionTap: { friend in handleActionTap(friend) }
-                        )
+                        // With zero friends there is no "Today" to list —
+                        // a warm welcome block with real people to add
+                        // takes its place until the first friend lands.
+                        if store.friends.isEmpty {
+                            friendsWelcomeBlock
+                        } else {
+                            PeopleTodayList(
+                                onRowTap: { friend in handleRowTap(friend) },
+                                onActionTap: { friend in handleActionTap(friend) }
+                            )
+                        }
 
                         CirclesGroupsSection(
                             isExpanded: $circlesExpanded,
@@ -199,6 +207,17 @@ struct CirclesView: View {
                     .environment(store)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $showInvite) {
+                NavigationStack {
+                    InviteFriendsView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") { showInvite = false }
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                        }
+                }
             }
             .sheet(isPresented: $showAddFriends) {
                 NavigationStack {
@@ -334,6 +353,52 @@ struct CirclesView: View {
             .fill(Theme.textPrimary.opacity(0.08))
             .frame(height: 1)
             .padding(.horizontal, Theme.pageHorizontalPadding)
+    }
+
+    // MARK: - Zero-friend welcome
+
+    /// What lives under "Your story" before the first friend: a short
+    /// line about what this page becomes, real people to add right
+    /// here, and the invite doorway.
+    private var friendsWelcomeBlock: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("It's just you so far.")
+                    .font(.serif(20, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("This page becomes your people — their stories up top, their days below. Add a friend or two and it comes alive.")
+                    .font(.sans(13, weight: .regular))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            PeopleSuggestionsCard(palette: .parchment, maxCount: 4)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showInvite = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.sans(13, weight: .semibold))
+                    Text("Invite friends")
+                        .font(.sans(14, weight: .semibold))
+                }
+                .foregroundStyle(Theme.textCream)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Theme.textPrimary)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Invite friends")
+        }
+        .padding(.horizontal, Theme.pageHorizontalPadding)
+        .padding(.top, 20)
+        .padding(.bottom, 6)
     }
 
     // MARK: - Live messaging (unread dot)

@@ -101,6 +101,9 @@ struct ProofsInboxView: View {
     @State private var pendingThreadFriend: RemoteProfile?
     /// The friend a press-and-hold targeted — drives the camera cover.
     @State private var proofFriend: RemoteProfile?
+    /// With zero friends, the compose flow routes here instead of an
+    /// empty picker — a sheet straight into the Friends hub.
+    @State private var showFindFriends: Bool = false
     /// Ensures a push-delivered `initialPeerId` only auto-opens once.
     @State private var didTryInitialPeer: Bool = false
     /// The message id handed to the auto-opened thread, consumed once.
@@ -111,6 +114,13 @@ struct ProofsInboxView: View {
     private var conversations: [DirectConversationSummary] {
         guard let myId else { return [] }
         return message.conversations(myUserId: myId).filter { !moderation.isBlocked($0.friend.id) }
+    }
+
+    /// True once the graph has answered and there's genuinely no one to
+    /// message — flips the empty state from "start a conversation" to
+    /// "find a friend first".
+    private var hasNoFriends: Bool {
+        !friendGraph.isLoading && friendGraph.friends.filter { !moderation.isBlocked($0.id) }.isEmpty
     }
 
     var body: some View {
@@ -212,6 +222,17 @@ struct ProofsInboxView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showFindFriends) {
+            NavigationStack {
+                FriendsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showFindFriends = false }
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                    }
+            }
+        }
         .alert("Something went wrong", isPresented: $message.showError) {
             Button("OK") { }
         } message: {
@@ -266,7 +287,13 @@ struct ProofsInboxView: View {
 
     private func startNew() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        showPicker = true
+        // No friends means an empty picker — route to finding people
+        // instead so the tap always leads somewhere useful.
+        if hasNoFriends {
+            showFindFriends = true
+        } else {
+            showPicker = true
+        }
     }
 
     /// Press-and-hold on a conversation card — jump straight to the
@@ -349,10 +376,12 @@ struct ProofsInboxView: View {
                     .font(.system(size: 24, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(0.35))
             }
-            Text("No proofs yet")
+            Text(hasNoFriends ? "Proofs are for friends" : "No proofs yet")
                 .font(.serif(19, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Send a friend a proof of a real moment, or a quiet note. Your conversations live here.")
+            Text(hasNoFriends
+                 ? "Add a friend first — then trade proofs of real moments and quiet notes, privately."
+                 : "Send a friend a proof of a real moment, or a quiet note. Your conversations live here.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 .multilineTextAlignment(.center)
@@ -360,8 +389,10 @@ struct ProofsInboxView: View {
 
             Button(action: startNew) {
                 HStack(spacing: 7) {
-                    Image(systemName: "square.and.pencil").font(.sans(13, weight: .semibold))
-                    Text("Start a conversation").font(.sans(14, weight: .semibold))
+                    Image(systemName: hasNoFriends ? "person.badge.plus" : "square.and.pencil")
+                        .font(.sans(13, weight: .semibold))
+                    Text(hasNoFriends ? "Find friends" : "Start a conversation")
+                        .font(.sans(14, weight: .semibold))
                 }
                 .foregroundStyle(Theme.textCream)
                 .padding(.horizontal, 18)

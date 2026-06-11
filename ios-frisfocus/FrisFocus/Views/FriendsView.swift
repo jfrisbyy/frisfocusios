@@ -28,6 +28,13 @@ struct FriendsView: View {
 
     private var myId: String? { auth.user?.id }
 
+    /// True once the graph has answered with zero friends — Discover
+    /// jumps to the top so the first thing a new user sees is people to
+    /// add, not an empty "Your friends" box.
+    private var hasNoFriends: Bool {
+        !service.isLoading && service.friends.isEmpty
+    }
+
     var body: some View {
         @Bindable var service = service
         @Bindable var moderation = moderation
@@ -85,10 +92,11 @@ struct FriendsView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 26) {
                     inviteRow
+                    if hasNoFriends, !discoverSuggestions.isEmpty { discoverSection }
                     addSection
                     if !service.incoming.isEmpty { incomingSection }
                     if !service.outgoing.isEmpty { outgoingSection }
-                    if !discoverSuggestions.isEmpty { discoverSection }
+                    if !hasNoFriends, !discoverSuggestions.isEmpty { discoverSection }
                     friendsSection
                 }
                 .padding(.horizontal, 20)
@@ -310,7 +318,8 @@ struct FriendsView: View {
                             await service.sendRequest(to: suggestion.profile, myUserId: myId)
                             socialSync.pokeEngine(trigger: "friend")
                         }
-                    }
+                    },
+                    prominent: hasNoFriends
                 )
             }
         }

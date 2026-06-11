@@ -21,8 +21,13 @@ struct DiscoverPersonRow: View {
     let onOpen: () -> Void
     /// Tap on Add → send the real friend request.
     let onAdd: () -> Void
+    /// Slightly larger treatment — used when Discover leads the page
+    /// for a zero-friend user.
+    var prominent: Bool = false
 
     private var profile: RemoteProfile { suggestion.profile }
+
+    private var avatarSize: CGFloat { prominent ? 52 : 44 }
 
     private var secondaryText: String? {
         var parts: [String] = []
@@ -42,12 +47,12 @@ struct DiscoverPersonRow: View {
                     avatar
                     VStack(alignment: .leading, spacing: 2) {
                         Text(profile.displayName)
-                            .font(.sans(15, weight: .medium))
+                            .font(.sans(prominent ? 16 : 15, weight: .medium))
                             .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
                         if let secondaryText {
                             Text(secondaryText)
-                                .font(.sans(12, weight: .regular))
+                                .font(.sans(prominent ? 13 : 12, weight: .regular))
                                 .foregroundStyle(Theme.textSecondary)
                                 .lineLimit(1)
                         }
@@ -62,9 +67,9 @@ struct DiscoverPersonRow: View {
             trailing
                 .animation(.spring(response: 0.3, dampingFraction: 0.8), value: relationship)
         }
-        .padding(12)
+        .padding(prominent ? 14 : 12)
         .background(Theme.paperCream)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .clipShape(RoundedRectangle(cornerRadius: prominent ? 16 : 14))
     }
 
     @ViewBuilder
@@ -103,7 +108,7 @@ struct DiscoverPersonRow: View {
                 initialsDisc
             }
         }
-        .frame(width: 44, height: 44)
+        .frame(width: avatarSize, height: avatarSize)
         .clipShape(Circle())
         .overlay(Circle().stroke(Theme.textPrimary.opacity(0.06), lineWidth: 1))
     }
@@ -112,7 +117,7 @@ struct DiscoverPersonRow: View {
         ZStack {
             Theme.textPrimary
             Text(profile.initials)
-                .font(.sans(15, weight: .semibold))
+                .font(.sans(prominent ? 17 : 15, weight: .semibold))
                 .foregroundStyle(Theme.textCream)
         }
     }

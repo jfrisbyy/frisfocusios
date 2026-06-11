@@ -260,9 +260,13 @@ struct CreateSharedCircleView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionEyebrow(selectedFriendIds.isEmpty ? "INVITE" : "INVITE · \(selectedFriendIds.count) PICKED")
             if friends.isEmpty {
-                Text("Add friends first to invite them to a circle.")
-                    .font(.serifItalic(14, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("No friends yet — add someone right here, and invite them once they accept.")
+                        .font(.serifItalic(14, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                    PeopleSuggestionsCard(palette: .parchment, maxCount: 3)
+                }
             } else {
                 VStack(spacing: 8) {
                     ForEach(friends) { friend in

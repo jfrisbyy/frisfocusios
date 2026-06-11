@@ -19,6 +19,9 @@ struct PactsListView: View {
 
     @State private var showPropose: Bool = false
     @State private var selectedPactId: UUID?
+    /// With zero friends there's no one to pact with — the empty state
+    /// routes here, a sheet straight into the Friends hub.
+    @State private var showFindFriends: Bool = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -70,6 +73,17 @@ struct PactsListView: View {
         .sheet(isPresented: $showPropose) {
             ProposePactView()
                 .environment(store)
+        }
+        .sheet(isPresented: $showFindFriends) {
+            NavigationStack {
+                FriendsView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showFindFriends = false }
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                    }
+            }
         }
         .navigationDestination(item: $selectedPactId) { id in
             if let pact = store.pact(by: id) {
@@ -200,10 +214,34 @@ struct PactsListView: View {
             Text("No pacts yet")
                 .font(.serif(18, weight: .medium))
                 .foregroundStyle(Theme.textPrimary.opacity(0.8))
-            Text("Make one with a friend — same window, same commitment, no winner. You finish together.")
+            Text(store.friends.isEmpty
+                 ? "A pact takes two — find your first friend, then make one together. Same window, same commitment, no winner."
+                 : "Make one with a friend — same window, same commitment, no winner. You finish together.")
                 .font(.serifItalic(14, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)
+
+            if store.friends.isEmpty {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showFindFriends = true
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "person.badge.plus")
+                            .font(.sans(12, weight: .semibold))
+                        Text("Find a friend to pact with")
+                            .font(.sans(13, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.textCream)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Capsule(style: .continuous).fill(Theme.textPrimary))
+                    .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 6)
+                .accessibilityLabel("Find a friend to pact with")
+            }
         }
         .padding(.vertical, 10)
     }
