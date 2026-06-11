@@ -23,6 +23,9 @@ import UIKit
 struct TodoCardView: View {
     @Environment(Store.self) private var store
     let todo: Todo
+    /// Glass-on-sky appearance for the season detail — mirrors
+    /// `TaskCardView`'s `onSky` so the two card types always match.
+    var onSky: Bool = false
 
     @State private var showShareCapture: Bool = false
     @State private var showEdit: Bool = false
@@ -34,6 +37,8 @@ struct TodoCardView: View {
         return cal.startOfDay(for: due) < cal.startOfDay(for: Date())
     }
 
+    private var ink: Color { onSky ? Theme.textCream : Theme.textPrimary }
+
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             checkbox
@@ -41,8 +46,8 @@ struct TodoCardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(todo.title)
                     .font(.sans(15, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(todo.isCompleted ? 0.5 : 1.0))
-                    .strikethrough(todo.isCompleted, color: Theme.textPrimary.opacity(0.6))
+                    .foregroundStyle(ink.opacity(todo.isCompleted ? 0.5 : 1.0))
+                    .strikethrough(todo.isCompleted, color: ink.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 6) {
@@ -61,16 +66,19 @@ struct TodoCardView: View {
             if let points = todo.pointValue {
                 Text("+\(points)")
                     .font(.serif(22, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(todo.isCompleted ? 0.4 : 1.0))
+                    .foregroundStyle(ink.opacity(todo.isCompleted ? 0.4 : 1.0))
                     .padding(.top, 2)
             }
         }
         .padding(14)
-        .background(Color.white)
+        .background(onSky ? Color.white.opacity(0.10) : Color.white)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+                .strokeBorder(
+                    onSky ? Color.white.opacity(0.16) : Theme.textPrimary.opacity(0.08),
+                    lineWidth: 0.5
+                )
         )
         .animation(.easeInOut(duration: 0.25), value: todo.isCompleted)
         .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
@@ -139,8 +147,8 @@ struct TodoCardView: View {
     /// Calendar icon + date tint. Overdue items go full alert red;
     /// everything else uses the standard 60 % textPrimary.
     private var metadataColor: Color {
-        if isOverdue { return Theme.alertRed }
-        return Theme.textPrimary.opacity(0.6)
+        if isOverdue { return onSky ? Color(hex: 0xFF9B8A) : Theme.alertRed }
+        return ink.opacity(0.6)
     }
 
     @ViewBuilder
@@ -148,11 +156,11 @@ struct TodoCardView: View {
         ZStack {
             if todo.isCompleted {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Theme.alertGreen)
+                    .fill(onSky ? Color(hex: 0x9BC25B) : Theme.alertGreen)
                     .frame(width: 22, height: 22)
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Theme.warmWheat)
+                    .foregroundStyle(onSky ? Color(hex: 0x1E3007) : Theme.warmWheat)
             } else {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .stroke(checkboxStroke, lineWidth: 1.5)
@@ -165,8 +173,8 @@ struct TodoCardView: View {
     }
 
     private var checkboxStroke: Color {
-        if isOverdue { return Theme.alertRed.opacity(0.45) }
-        return Theme.textPrimary.opacity(0.35)
+        if isOverdue { return (onSky ? Color(hex: 0xFF9B8A) : Theme.alertRed).opacity(0.45) }
+        return ink.opacity(0.35)
     }
 
     private func toggle() {

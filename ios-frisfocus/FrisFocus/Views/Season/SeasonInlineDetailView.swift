@@ -218,6 +218,12 @@ struct SeasonInlineDetailView: View {
                         )
                     }
 
+                    // Due to-dos — the same ones Today's Plan shows, so
+                    // the season detail and the plan never disagree.
+                    if selectedCategory == nil && !store.dueTodosToday.isEmpty {
+                        todosSection
+                    }
+
                     // Passive Cadence outcomes — absent unless linked.
                     CadenceEarnedSection()
                 }
@@ -329,14 +335,67 @@ struct SeasonInlineDetailView: View {
     }
 
     private var titleStripStatus: String {
-        let pinned = store.tasks.filter { $0.isPinnedToday }
+        let pinned = store.planTasksToday
+        let dueTodos = store.dueTodosToday
         let done = pinned.filter { store.hasLogEntryToday(forTaskId: $0.id) }.count
-        let open = pinned.count - done
+            + dueTodos.filter(\.isCompleted).count
+        let open = pinned.count + dueTodos.count - done
 
         var parts: [String] = []
         if done > 0 { parts.append("\(done) done") }
         if open > 0 { parts.append("\(open) open") }
         if parts.isEmpty { return "no tasks pinned" }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - To-dos section
+
+    /// Pointed to-dos due today (or overdue) — rendered with the same
+    /// glass-on-sky card the plan's to-dos use, so completing one here
+    /// flows through the identical Store action.
+    private var todosSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.white.opacity(0.12))
+                        .frame(width: 30, height: 30)
+                    Image(systemName: "calendar")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textCream.opacity(0.85))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("To-dos")
+                        .font(.serif(16, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                    Text(todosStatusLine)
+                        .font(.sans(11, weight: .regular))
+                        .foregroundStyle(Theme.textCream.opacity(0.6))
+                }
+
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 22)
+            .padding(.bottom, 12)
+
+            VStack(spacing: 6) {
+                ForEach(store.dueTodosToday) { todo in
+                    TodoCardView(todo: todo, onSky: true)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.top, 22)
+    }
+
+    private var todosStatusLine: String {
+        let todos = store.dueTodosToday
+        let done = todos.filter(\.isCompleted).count
+        let open = todos.count - done
+        var parts: [String] = []
+        if done > 0 { parts.append("\(done) done") }
+        if open > 0 { parts.append("\(open) open") }
         return parts.joined(separator: " · ")
     }
 
@@ -354,7 +413,7 @@ struct SeasonInlineDetailView: View {
                     selectedCategory = nil
                 }
 
-                ForEach(seasonCategoriesInTierOrder, id: \.self) { cat in
+                ForEach(allDisplayCategories, id: \.self) { cat in
                     pillView(
                         label: store.categoryDisplayName(cat),
                         accentColor: cat,
@@ -705,6 +764,24 @@ struct SeasonInlineDetailView: View {
         }
     }
 
+    /// Categories outside the season's rubric that still have tasks
+    /// pinned today. Appended after the season's own categories so every
+    /// task on Today's Plan appears here too — nothing is silently
+    /// dropped just because its category isn't part of the season.
+    private var extraCategoriesWithPins: [Category] {
+        let seasonSet = Set(seasonCategoriesInTierOrder)
+        return Category.allCases.filter { cat in
+            !seasonSet.contains(cat)
+                && store.planTasksToday.contains { $0.category == cat }
+        }
+    }
+
+    /// The full pill/section order: season categories first (by tier),
+    /// then any out-of-season categories with pinned tasks today.
+    private var allDisplayCategories: [Category] {
+        seasonCategoriesInTierOrder + extraCategoriesWithPins
+    }
+
     /// Categories to render right now, accounting for the category filter
     /// pill AND for emptiness (categories with no pinned tasks today are
     /// dropped so the zone doesn't fill with hollow headers).
@@ -713,16 +790,17 @@ struct SeasonInlineDetailView: View {
         if let selected = selectedCategory {
             base = [selected]
         } else {
-            base = seasonCategoriesInTierOrder
+            base = allDisplayCategories
         }
         return base.filter { !tasksForCategory($0).isEmpty }
     }
 
     /// Pinned-for-today Tasks in `category`, optionally narrowed by the
-    /// active mode filters.
+    /// active mode filters. Reads the Store's central `planTasksToday`
+    /// so this list always matches Today's Plan and the proof picker.
     private func tasksForCategory(_ category: Category) -> [FFTask] {
-        store.tasks.filter { task in
-            guard task.category == category, task.isPinnedToday else { return false }
+        store.planTasksToday.filter { task in
+            guard task.category == category else { return false }
             if showOpenOnly, store.hasLogEntryToday(forTaskId: task.id) { return false }
             if showHighValueOnly, task.nominalValue < store.reminderValueThreshold { return false }
             return true
@@ -739,8 +817,8 @@ struct SeasonInlineDetailView: View {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let taskIds = Set(
-            store.tasks
-                .filter { $0.category == category && $0.isPinnedToday }
+            store.planTasksToday
+                .filter { $0.category == category }
                 .map(\.id)
         )
         return store.logEntries

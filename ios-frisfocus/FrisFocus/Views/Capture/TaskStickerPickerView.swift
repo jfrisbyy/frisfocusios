@@ -3,10 +3,12 @@
 //  FrisFocus
 //
 //  A dark, searchable picker presented from the capture editor's
-//  "Add task" tool. Lists every repeatable Task and every active
-//  (not-yet-done) To-do, grouped and filterable by title. Choosing one
-//  hands a ready-made `TaskStickerBlock` back to the editor, which drops
-//  it onto the canvas. Attaching never mutates the underlying item.
+//  "Add task" tool. Reads the SAME central Store data as Today's Plan
+//  and the season detail: the plan's tasks and due to-dos lead, then
+//  the rest of the task library and remaining active to-dos follow.
+//  Choosing one hands a ready-made `TaskStickerBlock` back to the
+//  editor, which drops it onto the canvas. Attaching never mutates the
+//  underlying item.
 //
 
 import SwiftUI
@@ -24,21 +26,37 @@ struct TaskStickerPickerView: View {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var filteredTasks: [FFTask] {
-        guard !trimmedQuery.isEmpty else { return store.tasks }
-        return store.tasks.filter { $0.title.localizedCaseInsensitiveContains(trimmedQuery) }
+    /// Tasks on Today's Plan — the Store's central definition, so this
+    /// list always matches the home plan and the season detail.
+    private var planTasks: [FFTask] {
+        applyQuery(store.planTasksToday, title: \.title)
     }
 
-    /// Active = not completed. A done one-time to-do has nothing left to
-    /// document, so it's left out of the picker.
-    private var filteredTodos: [Todo] {
-        let active = store.todos.filter { !$0.isCompleted }
-        guard !trimmedQuery.isEmpty else { return active }
-        return active.filter { $0.title.localizedCaseInsensitiveContains(trimmedQuery) }
+    /// Due to-dos on Today's Plan (not yet completed — a done one-time
+    /// to-do has nothing left to document).
+    private var planTodos: [Todo] {
+        applyQuery(store.dueTodosToday.filter { !$0.isCompleted }, title: \.title)
+    }
+
+    /// The rest of the task library — everything not pinned today.
+    private var libraryTasks: [FFTask] {
+        applyQuery(store.tasks.filter { !$0.isPinnedToday }, title: \.title)
+    }
+
+    /// Remaining active to-dos that aren't on today's plan.
+    private var libraryTodos: [Todo] {
+        let planIds = Set(store.dueTodosToday.map(\.id))
+        let active = store.todos.filter { !$0.isCompleted && !planIds.contains($0.id) }
+        return applyQuery(active, title: \.title)
+    }
+
+    private func applyQuery<T>(_ items: [T], title: KeyPath<T, String>) -> [T] {
+        guard !trimmedQuery.isEmpty else { return items }
+        return items.filter { $0[keyPath: title].localizedCaseInsensitiveContains(trimmedQuery) }
     }
 
     private var isEmpty: Bool {
-        filteredTasks.isEmpty && filteredTodos.isEmpty
+        planTasks.isEmpty && planTodos.isEmpty && libraryTasks.isEmpty && libraryTodos.isEmpty
     }
 
     var body: some View {
@@ -133,43 +151,61 @@ struct TaskStickerPickerView: View {
     private var listBody: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 4) {
-                if !filteredTasks.isEmpty {
-                    sectionLabel("TASKS")
-                    ForEach(filteredTasks) { task in
-                        row(
-                            title: task.title,
-                            isTask: true,
-                            isMust: false,
-                            isChecked: store.hasLogEntryToday(forTaskId: task.id),
-                            subtitle: store.categoryDisplayName(task.category)
-                        ) {
-                            pick(
-                                TaskStickerBlock(
-                                    task: task,
-                                    isChecked: store.hasLogEntryToday(forTaskId: task.id)
-                                )
-                            )
-                        }
+                if !planTasks.isEmpty || !planTodos.isEmpty {
+                    sectionLabel("TODAY'S PLAN")
+                    ForEach(planTasks) { task in
+                        taskRow(task)
+                    }
+                    ForEach(planTodos) { todo in
+                        todoRow(todo)
                     }
                 }
 
-                if !filteredTodos.isEmpty {
+                if !libraryTasks.isEmpty {
+                    sectionLabel("ALL TASKS")
+                    ForEach(libraryTasks) { task in
+                        taskRow(task)
+                    }
+                }
+
+                if !libraryTodos.isEmpty {
                     sectionLabel("TO-DOS")
-                    ForEach(filteredTodos) { todo in
-                        row(
-                            title: todo.title,
-                            isTask: false,
-                            isMust: false,
-                            isChecked: todo.isCompleted,
-                            subtitle: todo.dueText
-                        ) {
-                            pick(TaskStickerBlock(todo: todo))
-                        }
+                    ForEach(libraryTodos) { todo in
+                        todoRow(todo)
                     }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 28)
+        }
+    }
+
+    private func taskRow(_ task: FFTask) -> some View {
+        row(
+            title: task.title,
+            isTask: true,
+            isMust: false,
+            isChecked: store.hasLogEntryToday(forTaskId: task.id),
+            subtitle: store.categoryDisplayName(task.category)
+        ) {
+            pick(
+                TaskStickerBlock(
+                    task: task,
+                    isChecked: store.hasLogEntryToday(forTaskId: task.id)
+                )
+            )
+        }
+    }
+
+    private func todoRow(_ todo: Todo) -> some View {
+        row(
+            title: todo.title,
+            isTask: false,
+            isMust: false,
+            isChecked: todo.isCompleted,
+            subtitle: todo.dueText
+        ) {
+            pick(TaskStickerBlock(todo: todo))
         }
     }
 

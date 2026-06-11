@@ -934,13 +934,34 @@ extension Store {
         }
     }
 
+    /// THE single definition of "a Task on today's plan" — every
+    /// surface that lists today's tasks (the home plan, the season
+    /// detail, the proof picker) reads this so they can never drift
+    /// apart. A task qualifies when its pin schedule matches today.
+    var planTasksToday: [FFTask] {
+        tasks.filter { $0.isPinnedToday }
+    }
+
+    /// The To-do half of today's plan: pointed To-dos due today or
+    /// overdue. Shared by the same surfaces as `planTasksToday`.
+    var dueTodosToday: [Todo] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        return todos.filter { todo in
+            guard let due = todo.dueDate, todo.pointValue != nil else { return false }
+            return cal.isDate(due, inSameDayAs: today) || due < today
+        }
+    }
+
     /// Today's Plan: every Task whose pin schedule matches today, plus
     /// any pointed To-do whose due date is today or in the past.
     /// Completed Tasks stay visible so the checkbox can be untoggled.
+    /// Composed from `planTasksToday` / `dueTodosToday` so the plan,
+    /// the season detail, and the proof picker always agree.
     var todaysPlan: [HomeRowItem] {
         var items: [HomeRowItem] = []
 
-        for task in tasks where task.isPinnedToday {
+        for task in planTasksToday {
             items.append(.task(task))
         }
 
@@ -951,13 +972,8 @@ extension Store {
             items.append(.cadenceLink(link))
         }
 
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        for todo in todos {
-            if let due = todo.dueDate, todo.pointValue != nil,
-               cal.isDate(due, inSameDayAs: today) || due < today {
-                items.append(.todo(todo))
-            }
+        for todo in dueTodosToday {
+            items.append(.todo(todo))
         }
 
         return items
@@ -985,7 +1001,7 @@ extension Store {
     /// When the plan is empty, returns a quiet placeholder so the section
     /// header still has something below it.
     var workSubline: String {
-        let pinned = tasks.filter { $0.isPinnedToday }.count
+        let pinned = planTasksToday.count
         let todoCount = todaysPlan.reduce(into: 0) { partial, item in
             if case .todo = item { partial += 1 }
         }
