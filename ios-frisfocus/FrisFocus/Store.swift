@@ -2709,6 +2709,42 @@ extension Store {
         friends.first { $0.id == cheer.fromFriendId }
     }
 
+    /// Every cheer that landed on me in the synced window, newest
+    /// first — the history page's first page (older ones are paged
+    /// in from the server by the view).
+    var receivedCheers: [Cheer] {
+        cheers
+            .filter { $0.toUserId == currentUserId }
+            .sorted { $0.sentAt > $1.sentAt }
+    }
+
+    /// Cheers I sent in the synced window, newest first — the "Sent"
+    /// side of the history page, where friends' reactions show up.
+    var sentCheers: [Cheer] {
+        cheers
+            .filter { $0.fromFriendId == currentUserId }
+            .sorted { $0.sentAt > $1.sentAt }
+    }
+
+    /// React to a received cheer with a single emoji. Marks it read
+    /// (reacting implies seeing), persists, and up-syncs so the
+    /// sender sees the reaction on their sent cheer. Works for
+    /// cheers outside the Store's synced window too — the updated
+    /// value is returned so paged history rows can refresh in place.
+    @discardableResult
+    func reactToCheer(_ cheer: Cheer, emoji: String) -> Cheer {
+        var updated = cheer
+        updated.reaction = emoji
+        updated.reactionAt = Date()
+        if updated.readAt == nil { updated.readAt = Date() }
+        if let idx = cheers.firstIndex(where: { $0.id == cheer.id }) {
+            cheers[idx] = updated
+            persistAll()
+        }
+        social?.cheerReacted(updated)
+        return updated
+    }
+
     // MARK: - C7b: cheers
 
     /// Append a cheer from the current user to a friend. Empty

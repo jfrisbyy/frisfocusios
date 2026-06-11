@@ -155,6 +155,8 @@ export type Database = {
           dismissed_at: string | null
           id: string
           message: string
+          reaction: string | null
+          reaction_at: string | null
           read_at: string | null
           recipient_id: string
           sender_id: string
@@ -164,6 +166,8 @@ export type Database = {
           dismissed_at?: string | null
           id?: string
           message: string
+          reaction?: string | null
+          reaction_at?: string | null
           read_at?: string | null
           recipient_id: string
           sender_id: string
@@ -173,6 +177,8 @@ export type Database = {
           dismissed_at?: string | null
           id?: string
           message?: string
+          reaction?: string | null
+          reaction_at?: string | null
           read_at?: string | null
           recipient_id?: string
           sender_id?: string

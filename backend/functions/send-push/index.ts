@@ -44,6 +44,7 @@ type PushType =
   | "circle_mode"
   | "golden_post"
   | "cheer"
+  | "cheer_reaction"
   | "story_like"
   | "story_comment"
   | "pact_invite"
@@ -172,6 +173,13 @@ function buildCopy(
       return {
         title: senderName,
         body: p ? `🌞 ${p}` : "sent you a cheer",
+        data: { route: "home" },
+      };
+    case "cheer_reaction":
+      // `preview` carries the single emoji the recipient picked.
+      return {
+        title: senderName,
+        body: p ? `reacted ${p} to your cheer` : "reacted to your cheer",
         data: { route: "home" },
       };
     case "story_like":

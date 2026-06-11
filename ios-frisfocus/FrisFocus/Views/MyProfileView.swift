@@ -33,6 +33,7 @@ struct MyProfileView: View {
     @State private var showEditProfile: Bool = false
     @State private var showAccount: Bool = false
     @State private var showMyStories: Bool = false
+    @State private var showCheers: Bool = false
     @State private var ringFill: Double = 0
     @State private var storyRingPulse: Bool = false
 
@@ -93,6 +94,10 @@ struct MyProfileView: View {
                     daySection
                         .padding(.horizontal, Theme.pageHorizontalPadding)
                         .padding(.top, 18)
+                        .padding(.bottom, 18)
+
+                    cheersRow
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
                         .padding(.bottom, 24)
 
                     Color.clear.frame(height: 130)
@@ -130,6 +135,10 @@ struct MyProfileView: View {
         }
         .sheet(isPresented: $showAccount) {
             ProfileSheetView()
+        }
+        .sheet(isPresented: $showCheers) {
+            CheerHistoryView()
+                .environment(store)
         }
         .fullScreenCover(isPresented: $showMyStories) {
             StoryPlayerView(mode: .mine)
@@ -442,6 +451,54 @@ struct MyProfileView: View {
             Capsule(style: .continuous)
                 .strokeBorder(Theme.textCream.opacity(filled ? 0 : 0.35), lineWidth: 0.8)
         )
+    }
+
+    // MARK: - Cheers row
+
+    /// Doorway to the full cheer ledger — every word that ever found
+    /// you (and the ones you sent), beyond the day they landed.
+    private var cheersRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showCheers = true
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Theme.textPrimary.opacity(0.06))
+                    Image(systemName: "hands.clap.fill")
+                        .font(.sans(15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                }
+                .frame(width: 42, height: 42)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Cheers")
+                        .font(.sans(15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Every word that found you")
+                        .font(.serifItalic(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("View all cheers you’ve received and sent")
     }
 
     // MARK: - Day section

@@ -21,13 +21,16 @@ private nonisolated struct CheerRow: Codable, Sendable {
     let createdAt: String
     let readAt: String?
     let dismissedAt: String?
+    let reaction: String?
+    let reactionAt: String?
     enum CodingKeys: String, CodingKey {
-        case id, message
+        case id, message, reaction
         case senderId = "sender_id"
         case recipientId = "recipient_id"
         case createdAt = "created_at"
         case readAt = "read_at"
         case dismissedAt = "dismissed_at"
+        case reactionAt = "reaction_at"
     }
 }
 
@@ -49,6 +52,17 @@ private nonisolated struct CheerStampUpdate: Encodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case readAt = "read_at"
         case dismissedAt = "dismissed_at"
+    }
+}
+
+private nonisolated struct CheerReactionUpdate: Encodable, Sendable {
+    let reaction: String?
+    let reactionAt: String?
+    let readAt: String?
+    enum CodingKeys: String, CodingKey {
+        case reaction
+        case reactionAt = "reaction_at"
+        case readAt = "read_at"
     }
 }
 
@@ -295,31 +309,59 @@ extension SocialSyncService {
             let cutoff = SyncDates.iso(Date().addingTimeInterval(-30 * 24 * 3600))
             let rows: [CheerRow] = try await supabase
                 .from("cheers")
-                .select("id, sender_id, recipient_id, message, created_at, read_at, dismissed_at")
+                .select(Self.cheerSelect)
                 .gte("created_at", value: cutoff)
                 .order("created_at", ascending: false)
                 .limit(200)
                 .execute()
                 .value
             await ensureProfiles(remoteIds: rows.flatMap { [$0.senderId, $0.recipientId] })
-            store.cheers = rows.map { row in
-                let senderLocal = localId(forRemote: row.senderId)
-                return Cheer(
-                    id: row.id,
-                    fromFriendId: senderLocal,
-                    fromName: displayName(forRemote: row.senderId),
-                    fromInitials: initials(forRemote: row.senderId),
-                    fromColorHex: row.senderId == myUserId ? "2C2C2A" : RemoteIDMapper.accentHex(forRemoteId: row.senderId),
-                    toUserId: localId(forRemote: row.recipientId),
-                    message: row.message,
-                    sentAt: SyncDates.parse(row.createdAt),
-                    readAt: row.readAt.map { SyncDates.parse($0) },
-                    dismissedAt: row.dismissedAt.map { SyncDates.parse($0) }
-                )
-            }
+            store.cheers = rows.map { mapCheer($0) }
             store.persistAll()
         } catch {
             print("[SocialSync] cheers refresh failed: \(error)")
+        }
+    }
+
+    private static let cheerSelect =
+        "id, sender_id, recipient_id, message, created_at, read_at, dismissed_at, reaction, reaction_at"
+
+    private func mapCheer(_ row: CheerRow) -> Cheer {
+        Cheer(
+            id: row.id,
+            fromFriendId: localId(forRemote: row.senderId),
+            fromName: displayName(forRemote: row.senderId),
+            fromInitials: initials(forRemote: row.senderId),
+            fromColorHex: row.senderId == myUserId ? "2C2C2A" : RemoteIDMapper.accentHex(forRemoteId: row.senderId),
+            toUserId: localId(forRemote: row.recipientId),
+            message: row.message,
+            sentAt: SyncDates.parse(row.createdAt),
+            readAt: row.readAt.map { SyncDates.parse($0) },
+            dismissedAt: row.dismissedAt.map { SyncDates.parse($0) },
+            reaction: row.reaction,
+            reactionAt: row.reactionAt.map { SyncDates.parse($0) }
+        )
+    }
+
+    /// One older page for the history view, fetched past the rolling
+    /// 30-day window the Store mirrors. Returns mapped cheers without
+    /// touching `store.cheers` — the history view owns the paged tail.
+    func fetchCheerHistory(before: Date, limit: Int = 60) async -> [Cheer] {
+        guard myUserId != nil else { return [] }
+        do {
+            let rows: [CheerRow] = try await supabase
+                .from("cheers")
+                .select(Self.cheerSelect)
+                .lt("created_at", value: SyncDates.iso(before))
+                .order("created_at", ascending: false)
+                .limit(limit)
+                .execute()
+                .value
+            await ensureProfiles(remoteIds: rows.flatMap { [$0.senderId, $0.recipientId] })
+            return rows.map { mapCheer($0) }
+        } catch {
+            print("[SocialSync] cheer history fetch failed: \(error)")
+            return []
         }
     }
 
@@ -354,6 +396,31 @@ extension SocialSyncService {
                     .execute()
             } catch {
                 print("[SocialSync] cheer stamp failed: \(error)")
+            }
+        }
+    }
+
+    /// Up-sync the recipient's emoji reaction and notify the sender.
+    /// Fired by `Store.reactToCheer`; the row update also stamps
+    /// `read_at` since reacting implies the cheer was seen.
+    nonisolated func cheerReacted(_ cheer: Cheer) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await supabase.from("cheers")
+                    .update(CheerReactionUpdate(
+                        reaction: cheer.reaction,
+                        reactionAt: cheer.reactionAt.map { SyncDates.iso($0) },
+                        readAt: cheer.readAt.map { SyncDates.iso($0) }
+                    ))
+                    .eq("id", value: cheer.id.uuidString)
+                    .execute()
+                if let reaction = cheer.reaction,
+                   let sender = self.remoteId(forLocal: cheer.fromFriendId) {
+                    PushService.send(to: sender, kind: .cheerReaction, preview: reaction)
+                }
+            } catch {
+                print("[SocialSync] cheer reaction failed: \(error)")
             }
         }
     }

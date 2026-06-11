@@ -564,6 +564,10 @@ struct Cheer: Codable, Identifiable {
     /// cheer stays in the store (history is preserved), but it no
     /// longer surfaces in `activeCheersToday` once this is set.
     var dismissedAt: Date?
+    /// The single emoji the recipient answered with, if any. Synced
+    /// both ways so the sender sees it on their sent cheer too.
+    var reaction: String?
+    var reactionAt: Date?
 
     /// True only on the local day the cheer was sent. The homepage
     /// Season zone shows active cheers; older cheers stay in the

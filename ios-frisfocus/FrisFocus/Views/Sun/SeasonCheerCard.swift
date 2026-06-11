@@ -3,13 +3,12 @@
 //  FrisFocus
 //
 //  The frosted-glass card that lands inbound cheers on the homepage
-//  Sun zone. Shows up to two cheers stacked per page; if more than
-//  two are active today the card becomes a horizontally-swipeable
-//  pager with small dots beneath. Each cheer reads as `{message}`
-//  with a small avatar of the sender and a `{name} cheered you on`
-//  attribution beneath. Tapping any cheer marks it read but it stays
-//  visible for the rest of the day — `Cheer.isActiveToday` is the
-//  fade contract, not the read stamp.
+//  Sun zone. The three most recent cheers stack vertically — no pager,
+//  so a horizontal swipe always means "dismiss this row". Tapping a
+//  cheer unfolds a small inline action row beneath it: a few reaction
+//  emojis plus a "Cheer back" button. A quiet "all cheers" line at the
+//  bottom (with an "and N more" prefix when extras exist) opens the
+//  full history page.
 //
 
 import SwiftUI
@@ -20,74 +19,55 @@ struct SeasonCheerCard: View {
 
     let cheers: [Cheer]
 
-    @State private var pageIndex: Int = 0
+    /// At most this many rows render on the home card; the rest live
+    /// on the history page behind the "all cheers" line.
+    private static let maxVisible = 3
+
+    /// The inline reaction palette — one tap each, mirrored on the
+    /// history page so reacting feels the same everywhere.
+    static let reactionEmojis: [String] = ["\u{2764}\u{FE0F}", "\u{1F525}", "\u{1F64C}", "\u{1F60A}"]
+
     /// Per-row horizontal drag offset, keyed by cheer id. Lets us
     /// animate the row out before persisting the dismiss.
     @State private var dragOffsets: [UUID: CGFloat] = [:]
-    /// Cheer the user tapped — opens the composer so they can send
-    /// one back to the original sender.
+    /// The cheer whose inline action row is currently unfolded.
+    @State private var expandedCheerId: UUID?
+    /// Cheer-back target — opens the composer addressed to the sender.
     @State private var replyTarget: Friend?
+    @State private var showHistory: Bool = false
 
-    /// Cheers chunked into pages of two so the card can keep the
-    /// "up to two visible at once" rule even when there are 5+
-    /// active today.
-    private var pages: [[Cheer]] {
-        guard !cheers.isEmpty else { return [] }
-        var result: [[Cheer]] = []
-        var idx = 0
-        while idx < cheers.count {
-            let end = min(idx + 2, cheers.count)
-            result.append(Array(cheers[idx..<end]))
-            idx = end
-        }
-        return result
-    }
+    private var visible: [Cheer] { Array(cheers.prefix(Self.maxVisible)) }
+    private var overflowCount: Int { max(0, cheers.count - Self.maxVisible) }
 
     var body: some View {
-        content
-            .sheet(item: $replyTarget) { friend in
-                CheerComposerView(friend: friend)
-            }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if pages.isEmpty {
+        if visible.isEmpty {
             EmptyView()
-        } else if pages.count == 1 {
-            cheerPage(pages[0])
-                .padding(.horizontal, Theme.pageHorizontalPadding)
         } else {
-            VStack(spacing: 8) {
-                TabView(selection: $pageIndex) {
-                    ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
-                        cheerPage(page)
-                            .padding(.horizontal, Theme.pageHorizontalPadding)
-                            .tag(index)
-                    }
+            card
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+                .sheet(item: $replyTarget) { friend in
+                    CheerComposerView(friend: friend)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .frame(height: estimatedPageHeight)
-
-                pageDots
-            }
+                .sheet(isPresented: $showHistory) {
+                    CheerHistoryView()
+                        .environment(store)
+                }
         }
     }
 
-    /// The card itself — one page of up to two cheers. The frosted
-    /// treatment (cream wash + ultraThinMaterial blur + cream hairline)
-    /// is what makes it read as part of the sky rather than a feed
-    /// row dropped over it.
-    private func cheerPage(_ page: [Cheer]) -> some View {
+    // MARK: - Card
+
+    /// One frosted card holding the stacked rows + the history line.
+    /// The cream wash + ultraThinMaterial blur + cream hairline is what
+    /// makes it read as part of the sky rather than a feed row.
+    private var card: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(page) { cheer in
+            ForEach(visible) { cheer in
                 cheerRow(cheer)
-                if cheer.id != page.last?.id {
-                    Rectangle()
-                        .fill(Theme.textCream.opacity(0.18))
-                        .frame(height: 0.5)
-                }
+                hairline
             }
+
+            historyLine
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -104,60 +84,82 @@ struct SeasonCheerCard: View {
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                 .strokeBorder(Theme.textCream.opacity(0.25), lineWidth: 0.5)
         )
+        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: expandedCheerId)
+        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: visible.map(\.id))
     }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(Theme.textCream.opacity(0.18))
+            .frame(height: 0.5)
+    }
+
+    // MARK: - Row
 
     private func cheerRow(_ cheer: Cheer) -> some View {
         let offset = dragOffsets[cheer.id] ?? 0
-        return Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            store.markCheerRead(cheer.id)
-            if let sender = store.friend(forCheer: cheer) {
-                replyTarget = sender
+        let isExpanded = expandedCheerId == cheer.id
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                store.markCheerRead(cheer.id)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    expandedCheerId = isExpanded ? nil : cheer.id
+                }
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    ZStack {
+                        Circle().fill(Color(hex: cheer.fromColorHex))
+                        Text(cheer.fromInitials)
+                            .font(.sans(11, weight: .medium))
+                            .foregroundStyle(Theme.textCream)
+                    }
+                    .frame(width: 28, height: 28)
+                    .overlay(
+                        Circle().strokeBorder(Theme.textCream.opacity(0.35), lineWidth: 0.5)
+                    )
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\u{201C}\(cheer.message)\u{201D}")
+                            .font(.serifItalic(14, weight: .regular))
+                            .foregroundStyle(Theme.textCream.opacity(0.95))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(cheer.fromName) cheered you on \u{00B7} tap to react")
+                            .font(.sans(10, weight: .regular))
+                            .tracking(0.3)
+                            .foregroundStyle(Theme.textCream.opacity(0.65))
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if let reaction = cheer.reaction {
+                        Text(reaction)
+                            .font(.system(size: 15))
+                            .padding(.top, 2)
+                            .transition(.scale(scale: 0.4).combined(with: .opacity))
+                    } else if cheer.readAt == nil {
+                        Circle()
+                            .fill(Color(hex: 0xED93B1))
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 8)
+                    }
+                }
+                .contentShape(Rectangle())
             }
-        } label: {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    Circle().fill(Color(hex: cheer.fromColorHex))
-                    Text(cheer.fromInitials)
-                        .font(.sans(11, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
-                }
-                .frame(width: 28, height: 28)
-                .overlay(
-                    Circle().strokeBorder(Theme.textCream.opacity(0.35), lineWidth: 0.5)
-                )
+            .buttonStyle(.plain)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\u{201C}\(cheer.message)\u{201D}")
-                        .font(.serifItalic(14, weight: .regular))
-                        .foregroundStyle(Theme.textCream.opacity(0.95))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("\(cheer.fromName) cheered you on \u{00B7} tap to reply")
-                        .font(.sans(10, weight: .regular))
-                        .tracking(0.3)
-                        .foregroundStyle(Theme.textCream.opacity(0.65))
-                }
-
-                Spacer(minLength: 0)
-
-                if cheer.readAt == nil {
-                    Circle()
-                        .fill(Color(hex: 0xED93B1))
-                        .frame(width: 6, height: 6)
-                        .padding(.top, 8)
-                }
+            if isExpanded {
+                actionRow(cheer)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
         .offset(x: offset)
         .opacity(1 - min(abs(offset) / 240, 0.7))
         .gesture(
             DragGesture(minimumDistance: 12)
                 .onChanged { value in
                     // Only horizontal drags drive the swipe; vertical
-                    // motion is ignored so the parent pager can still
-                    // be scrolled.
+                    // motion is left to the page scroll.
                     guard abs(value.translation.width) > abs(value.translation.height) else { return }
                     dragOffsets[cheer.id] = value.translation.width
                 }
@@ -169,8 +171,11 @@ struct SeasonCheerCard: View {
                             dragOffsets[cheer.id] = width > 0 ? 600 : -600
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                            store.dismissCheer(cheer.id)
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                store.dismissCheer(cheer.id)
+                            }
                             dragOffsets[cheer.id] = nil
+                            if expandedCheerId == cheer.id { expandedCheerId = nil }
                         }
                     } else {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
@@ -180,7 +185,7 @@ struct SeasonCheerCard: View {
                 }
         )
         .accessibilityLabel("Cheer from \(cheer.fromName): \(cheer.message)")
-        .accessibilityHint("Tap to send one back. Swipe to dismiss.")
+        .accessibilityHint("Tap to react or cheer back. Swipe to dismiss.")
         .accessibilityAction(named: "Dismiss") {
             store.dismissCheer(cheer.id)
         }
@@ -191,29 +196,107 @@ struct SeasonCheerCard: View {
         }
     }
 
-    /// Page dots beneath the pager. Filled cream for the active
-    /// page, half-opacity for the rest. We render our own rather
-    /// than relying on `.page(indexDisplayMode: .always)` so the
-    /// dots can sit outside the card and read against the night
-    /// sky in cream rather than the iOS default tint.
-    private var pageDots: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<pages.count, id: \.self) { i in
-                Circle()
-                    .fill(Theme.textCream.opacity(i == pageIndex ? 0.85 : 0.35))
-                    .frame(width: 5, height: 5)
+    // MARK: - Inline actions
+
+    /// The little row that unfolds beneath a tapped cheer: reaction
+    /// emojis plus "Cheer back". Cream-on-glass like the card itself.
+    private func actionRow(_ cheer: Cheer) -> some View {
+        HStack(spacing: 8) {
+            ForEach(Self.reactionEmojis, id: \.self) { emoji in
+                let isChosen = cheer.reaction == emoji
+                Button {
+                    react(cheer, with: emoji)
+                } label: {
+                    Text(emoji)
+                        .font(.system(size: 17))
+                        .frame(width: 38, height: 32)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(isChosen ? 0.32 : 0.12))
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(Theme.textCream.opacity(isChosen ? 0.6 : 0.25), lineWidth: 0.5)
+                        )
+                        .scaleEffect(isChosen ? 1.12 : 1)
+                        .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("React \(emoji) to \(cheer.fromName)'s cheer")
             }
+
+            Spacer(minLength: 4)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                if let sender = store.friend(forCheer: cheer) {
+                    replyTarget = sender
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "hands.clap.fill")
+                        .font(.sans(11, weight: .semibold))
+                    Text("Cheer back")
+                        .font(.sans(12, weight: .semibold))
+                }
+                .foregroundStyle(Theme.textCream)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.16))
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(Theme.textCream.opacity(0.35), lineWidth: 0.5)
+                )
+                .contentShape(Capsule(style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(store.friend(forCheer: cheer) == nil)
+            .accessibilityLabel("Send \(cheer.fromName) a cheer back")
         }
-        .animation(.easeInOut(duration: 0.18), value: pageIndex)
+        .padding(.top, 10)
+        .padding(.leading, 40)
     }
 
-    /// Reserved height for the pager so TabView doesn't snap to its
-    /// default tall layout. Two-cheer pages stretch a little taller
-    /// than single-cheer pages, so we size to the larger value to
-    /// avoid a layout jump when the user swipes.
-    private var estimatedPageHeight: CGFloat {
-        let maxCount = pages.map(\.count).max() ?? 1
-        return maxCount >= 2 ? 132 : 76
+    /// One tap, a pop, done — the row keeps the chosen emoji and the
+    /// action row folds away a beat later.
+    private func react(_ cheer: Cheer, with emoji: String) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) {
+            store.reactToCheer(cheer, emoji: emoji)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                if expandedCheerId == cheer.id { expandedCheerId = nil }
+            }
+        }
+    }
+
+    // MARK: - History line
+
+    private var historyLine: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showHistory = true
+        } label: {
+            HStack(spacing: 5) {
+                Text(overflowCount > 0 ? "and \(overflowCount) more \u{00B7} all cheers" : "all cheers")
+                    .font(.sans(9, weight: .medium))
+                    .tracking(1.4)
+                    .textCase(.uppercase)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(Theme.textCream.opacity(0.6))
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(overflowCount > 0
+            ? "View all cheers, \(overflowCount) more not shown"
+            : "View all cheers")
     }
 }
 
