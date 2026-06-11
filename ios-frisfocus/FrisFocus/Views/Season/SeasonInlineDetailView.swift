@@ -8,10 +8,10 @@
 //  deepened sky gradient with stars and grain — so the categories,
 //  tasks, filters, and season footer read as part of the landscape.
 //
-//  Content order: minimize pill → title strip → category pills → mode
-//  filter pills → per-category sections → Cadence earned → library
-//  actions → season footer → "the work" scroll hint. Sections reveal
-//  with a gentle stagger when the zone expands.
+//  Content order: title strip → category pills → mode filter pills →
+//  per-category sections → Cadence earned → season dashboard → season
+//  options grid → full-width minimize button. Sections reveal with a
+//  gentle stagger when the zone expands.
 //
 
 import SwiftUI
@@ -35,6 +35,8 @@ struct SeasonInlineDetailView: View {
     @State private var showMilestones: Bool = false
     @State private var showSettings: Bool = false
     @State private var showWeekShare: Bool = false
+    @State private var showSeasonSetup: Bool = false
+    @State private var showNextSeasonDialog: Bool = false
     /// Drives the staggered entrance of each content band.
     @State private var revealed: Bool = false
 
@@ -44,7 +46,6 @@ struct SeasonInlineDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            staggered(0) { minimizePill }
             staggered(0) { titleStrip }
             staggered(1) { categoryPills }
             staggered(1) { modeFilterPills }
@@ -64,9 +65,9 @@ struct SeasonInlineDetailView: View {
                 }
             }
 
-            staggered(3) { libraryActionRow }
-            staggered(3) { seasonFooter }
-            staggered(3) { workHint }
+            staggered(3) { seasonDashboard }
+            staggered(3) { seasonOptionsGrid }
+            staggered(4) { minimizeButton }
         }
         .frame(maxWidth: .infinity)
         .background(alignment: .top) { backdrop }
@@ -97,6 +98,24 @@ struct SeasonInlineDetailView: View {
         }
         .fullScreenCover(isPresented: $showWeekShare) {
             ShareCameraView(context: store.weekShareContext())
+        }
+        .fullScreenCover(isPresented: $showSeasonSetup) {
+            SeasonSetupFlowView()
+        }
+        .confirmationDialog(
+            "Next season",
+            isPresented: $showNextSeasonDialog,
+            titleVisibility: .visible
+        ) {
+            Button("Start guided setup") {
+                showSeasonSetup = true
+            }
+            Button("Carry this season's setup forward") {
+                store.startNewSeasonFromCurrent(name: nil)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Guided setup builds a fresh rubric in conversation. Carrying forward keeps your categories and targets — the day count restarts and milestones reset.")
         }
     }
 
@@ -143,34 +162,6 @@ struct SeasonInlineDetailView: View {
                     .delay(0.05 + 0.06 * Double(index)),
                 value: revealed
             )
-    }
-
-    // MARK: - Minimize pill
-
-    private var minimizePill: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            onMinimize()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("minimize")
-                    .font(.sans(10, weight: .medium))
-                    .tracking(1.6)
-                    .textCase(.uppercase)
-            }
-            .foregroundStyle(Theme.textCream.opacity(0.85))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(Capsule().fill(glassFill))
-            .overlay(Capsule().strokeBorder(glassStroke, lineWidth: 0.5))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .padding(.top, 4)
-        .accessibilityLabel("Minimize season details")
-        .accessibilityHint("Folds the season detail back into the sun zone")
     }
 
     // MARK: - Title strip
@@ -294,14 +285,6 @@ struct SeasonInlineDetailView: View {
             }
 
             Spacer()
-
-            modeFilterPill(
-                label: "Scoring",
-                iconName: "slider.horizontal.3",
-                isSelected: false
-            ) {
-                showSettings = true
-            }
         }
         .padding(.horizontal, 22)
         .padding(.top, 8)
@@ -338,80 +321,48 @@ struct SeasonInlineDetailView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Library actions
+    // MARK: - Season dashboard
 
-    private var libraryActionRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                libraryButton(label: "New task", iconName: "plus") {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    showNewTaskForm = true
-                }
-
-                libraryButton(label: "Reduce", iconName: "arrow.down.right") {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showAvoidanceManager = true
-                }
-
-                libraryButton(label: "Trains", iconName: "circle.hexagongrid") {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showHabitTrains = true
-                }
-
-                libraryButton(label: "Boosters", iconName: "sparkles") {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showBoosters = true
-                }
-
-                // Task library — TODO: navigate to the library view in a
-                // future prompt. Intentionally inert until it ships.
-                libraryButton(label: "Task library", iconName: "list.bullet") { }
-            }
-            .padding(.horizontal, 22)
-        }
-        .padding(.top, 26)
-    }
-
-    @ViewBuilder
-    private func libraryButton(label: String, iconName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: iconName)
-                    .font(.system(size: 14, weight: .regular))
-                Text(label)
-                    .font(.sans(13, weight: .regular))
-            }
-            .foregroundStyle(Theme.textCream.opacity(0.92))
-            .padding(.horizontal, 15)
-            .padding(.vertical, 10)
-            .background(Capsule().fill(Color.white.opacity(0.07)))
-            .overlay(
-                Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Season footer
-
-    private var seasonFooter: some View {
+    /// The season's numbers as a 2×2 glass dashboard — today, week,
+    /// season progress, and milestones — each with a slim glowing
+    /// progress bar that moves live as tasks are completed.
+    private var seasonDashboard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Rectangle()
                 .fill(Color.white.opacity(0.14))
                 .frame(height: 0.5)
                 .padding(.bottom, 16)
 
-            Text(store.currentSeason.name.uppercased())
-                .font(.sans(10, weight: .semibold))
-                .tracking(1.5)
-                .foregroundStyle(Theme.textCream.opacity(0.6))
-                .padding(.bottom, 14)
+            sectionHeader(store.currentSeason.name)
+                .padding(.bottom, 12)
 
-            HStack(spacing: 10) {
-                statCard(
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10)
+                ],
+                spacing: 10
+            ) {
+                dashboardCard(
+                    label: "Today",
+                    value: "\(store.todayScore)",
+                    denominator: " / \(store.currentSeason.dailyGoal)",
+                    detail: goalDetail(
+                        score: store.todayScore,
+                        goal: store.currentSeason.dailyGoal
+                    ),
+                    progress: ratio(store.todayScore, store.currentSeason.dailyGoal)
+                )
+
+                dashboardCard(
                     label: "This week",
                     value: "\(store.weekScore)",
-                    denominator: " / \(store.currentSeason.weeklyGoal)"
+                    denominator: " / \(store.currentSeason.weeklyGoal)",
+                    detail: goalDetail(
+                        score: store.weekScore,
+                        goal: store.currentSeason.weeklyGoal
+                    ),
+                    progress: ratio(store.weekScore, store.currentSeason.weeklyGoal)
                 )
                 .overlay(alignment: .topTrailing) {
                     Button {
@@ -429,15 +380,22 @@ struct SeasonInlineDetailView: View {
                     .accessibilityHint("Opens the share camera with seven small suns for the week")
                 }
 
-                statCard(
-                    label: "Days left",
-                    value: "\(daysLeft)",
-                    denominator: " / \(store.currentSeason.lengthDays)"
+                dashboardCard(
+                    label: "Season",
+                    value: "day \(store.currentSeasonDay)",
+                    denominator: " / \(store.currentSeason.lengthDays)",
+                    detail: "\(daysLeft) days left",
+                    progress: ratio(store.currentSeasonDay, store.currentSeason.lengthDays)
+                )
+
+                dashboardCard(
+                    label: "Milestones",
+                    value: "\(milestonesDone)",
+                    denominator: " / \(store.currentSeason.milestones.count)",
+                    detail: milestonesDetail,
+                    progress: ratio(milestonesDone, store.currentSeason.milestones.count)
                 )
             }
-            .padding(.bottom, 12)
-
-            milestonesLink
         }
         .padding(.horizontal, 22)
         .padding(.top, 28)
@@ -447,99 +405,295 @@ struct SeasonInlineDetailView: View {
         max(0, store.currentSeason.lengthDays - store.currentSeasonDay + 1)
     }
 
+    private var milestonesDone: Int {
+        store.currentSeason.milestones.filter { $0.isCompleted }.count
+    }
+
+    private var milestonesDetail: String {
+        guard !store.currentSeason.milestones.isEmpty else { return "none added yet" }
+        let earned = store.currentSeason.milestones
+            .filter { $0.isCompleted }
+            .map(\.pointValue)
+            .reduce(0, +)
+        return earned > 0 ? "+\(earned) pts earned" : "0 pts earned"
+    }
+
+    /// "N to go" while under the goal, "goal reached" once it's met.
+    private func goalDetail(score: Int, goal: Int) -> String {
+        score >= goal ? "goal reached" : "\(goal - score) to go"
+    }
+
+    /// Safe 0–1 progress fraction.
+    private func ratio(_ value: Int, _ total: Int) -> Double {
+        guard total > 0 else { return 0 }
+        return min(1, max(0, Double(value) / Double(total)))
+    }
+
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.sans(10, weight: .semibold))
+            .tracking(1.5)
+            .foregroundStyle(Theme.textCream.opacity(0.6))
+    }
+
     @ViewBuilder
-    private func statCard(label: String, value: String, denominator: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func dashboardCard(
+        label: String,
+        value: String,
+        denominator: String,
+        detail: String,
+        progress: Double
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
             Text(label)
                 .font(.sans(10, weight: .regular))
                 .foregroundStyle(Theme.textCream.opacity(0.6))
 
             HStack(alignment: .lastTextBaseline, spacing: 0) {
                 Text(value)
-                    .font(.serif(23, weight: .medium))
+                    .font(.serif(22, weight: .medium))
                     .foregroundStyle(Theme.textCream)
                     .contentTransition(.numericText())
                 Text(denominator)
                     .font(.sans(13, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.55))
             }
+            .animation(.easeOut(duration: 0.5), value: value)
+
+            progressTrack(progress)
+
+            Text(detail)
+                .font(.sans(10, weight: .regular))
+                .foregroundStyle(Theme.textCream.opacity(0.5))
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.3), value: detail)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(14)
         .background(glassFill)
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(glassStroke, lineWidth: 0.5)
         )
     }
 
-    private var milestonesLink: some View {
-        Button(action: {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showMilestones = true
-        }) {
-            HStack {
+    /// Slim glowing progress bar — warm sun gradient over a quiet track.
+    @ViewBuilder
+    private func progressTrack(_ progress: Double) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.12))
+
+                if progress > 0 {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [Theme.sunShadow, Theme.sunWarm],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(5, proxy.size.width * progress))
+                        .shadow(color: Theme.sunOuter.opacity(0.55), radius: 3)
+                }
+            }
+            .animation(.easeOut(duration: 0.6), value: progress)
+        }
+        .frame(height: 4)
+        .padding(.top, 2)
+    }
+
+    // MARK: - Season options
+
+    /// Every season-level control in one tidy two-column grid of glass
+    /// tiles — replacing the old sideways-scrolling button row.
+    private var seasonOptionsGrid: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Season options")
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10)
+                ],
+                spacing: 10
+            ) {
+                optionTile(
+                    label: "New task",
+                    hint: "Add a task to today",
+                    iconName: "plus",
+                    haptic: .medium
+                ) {
+                    showNewTaskForm = true
+                }
+
+                optionTile(
+                    label: "Reduce",
+                    hint: "Things you're cutting back",
+                    iconName: "arrow.down.right"
+                ) {
+                    showAvoidanceManager = true
+                }
+
+                optionTile(
+                    label: "Trains",
+                    hint: "Linked habit streaks",
+                    iconName: "circle.hexagongrid"
+                ) {
+                    showHabitTrains = true
+                }
+
+                optionTile(
+                    label: "Boosters",
+                    hint: "Bonus point multipliers",
+                    iconName: "sparkles"
+                ) {
+                    showBoosters = true
+                }
+
+                optionTile(
+                    label: "Milestones",
+                    hint: "The season's big wins",
+                    iconName: "flag"
+                ) {
+                    showMilestones = true
+                }
+
+                optionTile(
+                    label: "Scoring",
+                    hint: "Reminders, categories, colors",
+                    iconName: "slider.horizontal.3"
+                ) {
+                    showSettings = true
+                }
+            }
+
+            nextSeasonTile
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 26)
+    }
+
+    @ViewBuilder
+    private func optionTile(
+        label: String,
+        hint: String,
+        iconName: String,
+        haptic: UIImpactFeedbackGenerator.FeedbackStyle = .light,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: haptic).impactOccurred()
+            action()
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: iconName)
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(Theme.textCream.opacity(0.85))
+                    .frame(height: 20)
+
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Season milestones")
+                    Text(label)
                         .font(.sans(13, weight: .medium))
                         .foregroundStyle(Theme.textCream)
-                    Text(milestonesSubline)
-                        .font(.sans(11, weight: .regular))
-                        .foregroundStyle(Theme.textCream.opacity(0.65))
+                    Text(hint)
+                        .font(.sans(10, weight: .regular))
+                        .foregroundStyle(Theme.textCream.opacity(0.55))
+                        .lineLimit(1)
                 }
-                Spacer()
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.55))
             }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
-            )
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
+            .padding(13)
+            .background(glassFill)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
+                    .strokeBorder(glassStroke, lineWidth: 0.5)
             )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableTileStyle())
+        .accessibilityLabel(label)
+        .accessibilityHint(hint)
     }
 
-    private var milestonesSubline: String {
-        let milestones = store.currentSeason.milestones
-        guard !milestones.isEmpty else {
-            return "Add milestones to map the season"
+    /// Full-width tile — starting (or carrying forward) the next season
+    /// is the season's biggest action, so it gets the whole row.
+    private var nextSeasonTile: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showNextSeasonDialog = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "sun.horizon.fill")
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(Theme.sunWarm)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Next season")
+                        .font(.sans(13, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                    Text("Start the guided setup or carry this one forward")
+                        .font(.sans(10, weight: .regular))
+                        .foregroundStyle(Theme.textCream.opacity(0.55))
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textCream.opacity(0.45))
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity)
+            .background(glassFill)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(glassStroke, lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-
-        let done = milestones.filter { $0.isCompleted }.count
-        let earned = milestones.filter { $0.isCompleted }.map(\.pointValue).reduce(0, +)
-
-        var parts: [String] = ["\(done)/\(milestones.count) done"]
-        if earned > 0 { parts.append("+\(earned) pts") }
-        return parts.joined(separator: " · ")
+        .buttonStyle(PressableTileStyle())
+        .accessibilityLabel("Next season")
+        .accessibilityHint("Start the guided setup or carry this season's setup forward")
     }
 
-    // MARK: - Work hint
+    // MARK: - Minimize button
 
-    /// While the zone is expanded the "scroll · the work" breadcrumb
-    /// lives below the season content so the page still reads
-    /// top-to-bottom.
-    private var workHint: some View {
-        VStack(spacing: 6) {
-            Text("scroll · the work")
-                .font(.sans(9, weight: .medium))
-                .tracking(2)
-                .textCase(.uppercase)
-                .foregroundStyle(Theme.textCream.opacity(0.5))
-
-            Image(systemName: "chevron.down")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Theme.textCream.opacity(0.5))
+    /// Full-width frosted close control at the very bottom — replacing
+    /// the old "scroll · the work" breadcrumb. The parent folds the
+    /// detail with the same spring + scroll-home as the score-band tap.
+    private var minimizeButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onMinimize()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Minimize")
+                    .font(.sans(12, weight: .medium))
+                    .tracking(1.4)
+                    .textCase(.uppercase)
+            }
+            .foregroundStyle(Theme.textCream.opacity(0.9))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(glassFill)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(glassStroke, lineWidth: 0.5))
+            .contentShape(Capsule())
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 30)
-        .padding(.bottom, 22)
+        .buttonStyle(PressableTileStyle())
+        .padding(.horizontal, 22)
+        .padding(.top, 28)
+        .padding(.bottom, 24)
+        .accessibilityLabel("Minimize season details")
+        .accessibilityHint("Folds the season detail back into the sun zone")
     }
 
     // MARK: - Data helpers
@@ -604,6 +758,16 @@ struct SeasonInlineDetailView: View {
             }
             .map(\.pointsEarned)
             .reduce(0, +)
+    }
+}
+
+/// Soft press feedback for the glass tiles — a gentle shrink + dim.
+private struct PressableTileStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
