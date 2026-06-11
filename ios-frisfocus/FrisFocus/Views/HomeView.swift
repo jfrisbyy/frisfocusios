@@ -20,6 +20,7 @@ struct HomeView: View {
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
     @Environment(NotificationManager.self) private var notifications
+    @Environment(MessageGraphService.self) private var messageGraph
     @State private var locationService = LocationService()
     @State private var activeZone: HomeZone = .sun
     @State private var zoneFrames: [HomeZone: CGRect] = [:]
@@ -32,6 +33,10 @@ struct HomeView: View {
     @State private var showCaptureSheet: Bool = false
     @State private var showProfileSheet: Bool = false
     @State private var showCircles: Bool = false
+    /// Swipe-left destination — the camera, zero taps away.
+    @State private var showCamera: Bool = false
+    /// Swipe-right destination — the messages inbox, one gesture away.
+    @State private var showMessages: Bool = false
 
     private let scrollSpace = "frisFocusScroll"
 
@@ -68,7 +73,23 @@ struct HomeView: View {
         .fullScreenCover(item: $notifications.pendingRoute) { route in
             NotificationRouteHost(route: route, myUserId: auth.user?.id ?? "")
         }
+        .fullScreenCover(isPresented: $showCamera) {
+            CaptureView(mode: .generalPost)
+                .environment(store)
+        }
+        .fullScreenCover(isPresented: $showMessages) {
+            ProofsInboxView()
+                .environment(store)
+                .environment(auth)
+        }
         .profileQuickCard(isPresented: $showProfileSheet)
+    }
+
+    /// Unread direct messages — live from the app-wide messaging
+    /// service, so the badge is accurate without ever opening Circles.
+    private var unreadMessages: Int {
+        guard let myId = auth.user?.id else { return 0 }
+        return messageGraph.totalUnread(myUserId: myId)
     }
 
     @ViewBuilder
@@ -111,6 +132,9 @@ struct HomeView: View {
                 .coordinateSpace(.named(scrollSpace))
                 .background(Theme.warmWheat)
                 .ignoresSafeArea(edges: .top)
+                // Snapchat-style horizontal gestures: swipe left for the
+                // camera, swipe right for messages — both zero taps deep.
+                .simultaneousGesture(horizontalSwipeGesture)
                 .onPreferenceChange(ZoneFramesPreferenceKey.self) { frames in
                     zoneFrames = frames
                     updateActiveZone()
@@ -148,7 +172,8 @@ struct HomeView: View {
                     onCirclesTap: {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         showCircles = true
-                    }
+                    },
+                    circlesBadgeCount: unreadMessages
                 )
                 .ignoresSafeArea(edges: .bottom)
             }
@@ -178,6 +203,27 @@ struct HomeView: View {
                 .padding(.top, max(topSafeInset, 12) + 6)
             }
         }
+    }
+
+    // MARK: - Horizontal swipe (camera / messages)
+
+    /// A deliberate horizontal swipe anywhere on the page: left opens
+    /// the camera, right opens the messages inbox. Tuned so vertical
+    /// scrolling never trips it (the gesture must be clearly sideways).
+    private var horizontalSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 36, coordinateSpace: .local)
+            .onEnded { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard abs(dx) > 72, abs(dx) > abs(dy) * 1.8 else { return }
+                if dx < 0 {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    showCamera = true
+                } else {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showMessages = true
+                }
+            }
     }
 
     // MARK: - Zone tracking

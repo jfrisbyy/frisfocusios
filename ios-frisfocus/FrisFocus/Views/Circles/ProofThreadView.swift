@@ -232,10 +232,13 @@ struct ProofThreadView: View {
                             friend: friend,
                             isMine: item.isMine(myUserId),
                             isPending: message.isPending(item.id),
+                            isFailed: message.isFailed(item.id),
                             uploadProgress: (message.isPending(item.id) && item.isProof) ? message.uploadProgress : nil,
                             zoomNamespace: proofZoom,
                             onOpenProof: { openProof(item) },
-                            onReplyWithProof: { replyWithProof() }
+                            onReplyWithProof: { replyWithProof() },
+                            onRetry: { retrySend(item) },
+                            onDiscardFailed: { discardFailed(item) }
                         )
                         .id(item.id)
                         .transition(.asymmetric(
@@ -423,8 +426,27 @@ struct ProofThreadView: View {
     /// proof"; an own proof simply replays.
     private func openProof(_ proof: DirectMessage) {
         guard proof.isProof else { return }
+        // A failed proof has no uploaded media — its tap means "retry".
+        if message.isFailed(proof.id) {
+            retrySend(proof)
+            return
+        }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         playerProof = proof
+    }
+
+    /// Re-attempt a failed send right where it sits in the thread.
+    private func retrySend(_ item: DirectMessage) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task { await message.retrySend(item.id, myUserId: myUserId) }
+    }
+
+    /// Throw a failed send away (long-press → Delete on its retry line).
+    private func discardFailed(_ item: DirectMessage) {
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        withAnimation(.easeOut(duration: 0.2)) {
+            message.discardFailed(item.id)
+        }
     }
 
     /// Fire the camera at this friend to send a proof back — the
@@ -443,11 +465,15 @@ private struct ProofThreadBubble: View {
     let friend: RemoteProfile
     let isMine: Bool
     var isPending: Bool = false
+    /// True when this send failed — renders the inline "Tap to retry".
+    var isFailed: Bool = false
     /// Live byte progress (0...1) while this proof's media uploads.
     var uploadProgress: Double? = nil
     var zoomNamespace: Namespace.ID? = nil
     let onOpenProof: () -> Void
     let onReplyWithProof: () -> Void
+    var onRetry: () -> Void = {}
+    var onDiscardFailed: () -> Void = {}
 
     private var accent: Color { friend.signatureColor }
 
@@ -463,7 +489,28 @@ private struct ProofThreadBubble: View {
                 } else {
                     messageBubble
                 }
-                if isPending, let uploadProgress {
+                if isFailed {
+                    // The send failed — it stays in the thread with an
+                    // explicit retry instead of silently vanishing.
+                    Button(action: onRetry) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.sans(11, weight: .semibold))
+                            Text("Not sent · Tap to retry")
+                                .font(.sans(11, weight: .semibold))
+                        }
+                        .foregroundStyle(Theme.alertRed)
+                        .padding(.horizontal, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(role: .destructive, action: onDiscardFailed) {
+                            Label("Delete message", systemImage: "trash")
+                        }
+                    }
+                    .accessibilityLabel("Message not sent. Tap to retry.")
+                } else if isPending, let uploadProgress {
                     // Real byte-level upload progress — never a frozen spinner.
                     HStack(spacing: 6) {
                         ProgressView(value: min(1, max(0, uploadProgress)))
@@ -486,6 +533,7 @@ private struct ProofThreadBubble: View {
             }
             .opacity(isPending ? 0.7 : 1)
             .animation(.easeOut(duration: 0.2), value: isPending)
+            .animation(.easeOut(duration: 0.2), value: isFailed)
 
             if !isMine { Spacer(minLength: 48) }
         }

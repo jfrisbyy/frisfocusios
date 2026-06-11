@@ -396,6 +396,11 @@ struct CaptureReviewView: View {
     /// labels the fixed destination chip.
     var liveProofRecipientName: String? = nil
     var onSendLiveProof: ((_ data: Data, _ isVideo: Bool, _ duration: Double?, _ caption: String?) async -> Void)? = nil
+    /// When resuming a saved draft, this carries the restored filter,
+    /// captions, stickers, and drawing back onto the canvas. Non-nil also
+    /// marks the session as draft-backed (posting or discarding clears
+    /// the stored draft).
+    var initialDraftState: CaptureEditorDraft? = nil
 
     // Caption state
     @State private var captions: [CaptionBlock] = []
@@ -478,6 +483,15 @@ struct CaptureReviewView: View {
 
     private var isEditing: Bool { editingCaptionId != nil }
 
+    /// True when leaving would lose real work — drives the discard /
+    /// save-draft confirmation instead of silently destroying edits.
+    private var hasEdits: Bool {
+        !captions.isEmpty
+            || !taskStickers.isEmpty
+            || selectedFilter != .original
+            || !pkCanvas.drawing.strokes.isEmpty
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -487,12 +501,30 @@ struct CaptureReviewView: View {
         .preferredColorScheme(.dark)
         .statusBarHidden(true)
         .confirmationDialog(
-            "Discard this post?",
+            "Leave this post?",
             isPresented: $showDiscardConfirm,
             titleVisibility: .visible
         ) {
-            Button("Discard", role: .destructive) { onRetake() }
+            Button("Save draft") {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                CaptureDraftStore.save(
+                    result: result,
+                    filter: selectedFilter,
+                    captions: captions,
+                    stickers: taskStickers,
+                    drawing: pkCanvas.drawing
+                )
+                onRetake()
+            }
+            Button("Discard", role: .destructive) {
+                // Discarding a restored draft throws the stored copy
+                // away too — otherwise an untouched draft stays put.
+                if initialDraftState != nil { CaptureDraftStore.clear() }
+                onRetake()
+            }
             Button("Keep editing", role: .cancel) {}
+        } message: {
+            Text("Save a draft to pick this up later, or discard your edits.")
         }
         .alert("Photos access needed", isPresented: $showSaveDenied) {
             Button("Open Settings") {
@@ -514,6 +546,14 @@ struct CaptureReviewView: View {
         }
         .task { await prepareScaledBases() }
         .task {
+            // Resuming a draft: restore the whole composition first so
+            // the seed below (which checks for emptiness) never doubles.
+            if let draft = initialDraftState {
+                captions = draft.captions
+                taskStickers = draft.stickers
+                selectedFilter = draft.filter
+                pkCanvas.drawing = draft.drawing
+            }
             if var seed = initialTaskSticker, taskStickers.isEmpty {
                 seed.position = CGPoint(x: 0.5, y: 0.6)
                 taskStickers = [seed]
@@ -883,10 +923,10 @@ struct CaptureReviewView: View {
         HStack {
             chromeButton(systemName: "chevron.left") {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                if captions.isEmpty {
-                    onRetake()
-                } else {
+                if hasEdits {
                     showDiscardConfirm = true
+                } else {
+                    onRetake()
                 }
             }
             .accessibilityLabel("Retake")
@@ -2150,6 +2190,7 @@ struct CaptureReviewView: View {
                     sentToast = "Proof sent to \(liveProofRecipientName ?? "your friend")"
                 }
                 try? await Task.sleep(for: .milliseconds(950))
+                if initialDraftState != nil { CaptureDraftStore.clear() }
                 isPosting = false
                 onPosted()
                 return
@@ -2200,6 +2241,8 @@ struct CaptureReviewView: View {
             } else {
                 try? await Task.sleep(for: .milliseconds(220))
             }
+            // A posted draft is done — clear the stored copy.
+            if initialDraftState != nil { CaptureDraftStore.clear() }
             isPosting = false
             onPosted()
         }

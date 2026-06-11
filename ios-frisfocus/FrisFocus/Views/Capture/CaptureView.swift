@@ -92,6 +92,12 @@ struct CaptureView: View {
     @State private var captureResult: CaptureResult?
     @State private var showPermissionDenied: Bool = false
 
+    // Draft state — a saved editor session the user can resume. The chip
+    // sits in the shutter row; tapping it restores the whole composition.
+    @State private var hasDraft: Bool = false
+    @State private var draftThumb: UIImage?
+    @State private var restoredDraft: CaptureEditorDraft?
+
     // Shutter / gesture state
     @State private var isRecording: Bool = false
     @State private var recordStart: Date?
@@ -171,6 +177,7 @@ struct CaptureView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task {
+            refreshDraftState()
             await camera.requestAccessAndStart()
             if camera.authorization == .denied {
                 showPermissionDenied = true
@@ -207,15 +214,19 @@ struct CaptureView: View {
                 mode: mode,
                 onPosted: {
                     captureResult = nil
+                    restoredDraft = nil
                     dismiss()
                 },
                 onRetake: {
                     captureResult = nil
+                    restoredDraft = nil
+                    refreshDraftState()
                 },
                 initialTaskSticker: initialTaskSticker,
                 initialDirectFriendId: initialDirectFriendId,
                 liveProofRecipientName: liveProofRecipientName,
-                onSendLiveProof: onSendLiveProof
+                onSendLiveProof: onSendLiveProof,
+                initialDraftState: restoredDraft
             )
             .environment(store)
         }
@@ -331,12 +342,72 @@ struct CaptureView: View {
 
     private var shutterRow: some View {
         HStack {
-            Color.clear.frame(width: 54, height: 54)
+            if hasDraft {
+                draftChip
+            } else {
+                Color.clear.frame(width: 54, height: 54)
+            }
             Spacer()
             shutterButton
             Spacer()
             Color.clear.frame(width: 54, height: 54)
         }
+    }
+
+    /// A small thumbnail of the saved draft — tap to resume the edit
+    /// exactly where it was left, captions / filter / stickers intact.
+    private var draftChip: some View {
+        Button(action: openDraft) {
+            VStack(spacing: 4) {
+                ZStack {
+                    if let draftThumb {
+                        Image(uiImage: draftThumb)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Color.white.opacity(0.15)
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.8))
+                    }
+                }
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.75), lineWidth: 1.4)
+                )
+
+                Text("Draft")
+                    .font(.sans(10, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                    .shadow(color: Color.black.opacity(0.4), radius: 2, y: 1)
+            }
+            .frame(width: 54)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .transition(.scale.combined(with: .opacity))
+        .accessibilityLabel("Resume draft")
+    }
+
+    // MARK: - Draft actions
+
+    private func refreshDraftState() {
+        hasDraft = CaptureDraftStore.hasDraft
+        draftThumb = hasDraft ? CaptureDraftStore.thumbnail() : nil
+    }
+
+    /// Restore the saved draft into the editor.
+    private func openDraft() {
+        guard let draft = CaptureDraftStore.load() else {
+            hasDraft = false
+            draftThumb = nil
+            return
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        restoredDraft = draft
+        captureResult = draft.result
     }
 
     private var shutterButton: some View {

@@ -145,6 +145,16 @@ struct DirectConversationSummary: Identifiable {
     var id: String { friend.id }
 }
 
+// MARK: - Failed-send payload
+
+/// Everything needed to retry a send that failed. Kept in memory keyed
+/// by the failed message's local id so the thread can offer an inline
+/// "Tap to retry" instead of silently dropping the message.
+enum FailedSendPayload {
+    case note(recipientId: String, text: String)
+    case proof(recipientId: String, data: Data, mediaKind: ProofMediaKind, duration: Double?, caption: String?)
+}
+
 // MARK: - Service
 
 @Observable
@@ -156,6 +166,11 @@ final class MessageGraphService {
     /// Ids of optimistic messages shown in-thread before the network
     /// confirms them. The UI renders these slightly muted ("sending…").
     var pendingMessageIds: Set<UUID> = []
+    /// Ids of messages whose send failed. They stay in the thread with
+    /// an inline "Not sent · Tap to retry" instead of vanishing.
+    var failedMessageIds: Set<UUID> = []
+    /// Retry payloads for failed sends, keyed by local message id.
+    @ObservationIgnored private var failedPayloads: [UUID: FailedSendPayload] = [:]
     var isLoading = false
     var isWorking = false
     /// True while an older history page is being fetched for a thread.
@@ -261,7 +276,11 @@ final class MessageGraphService {
             let counterpartIds = Set(rows.map { $0.senderId == myUserId ? $0.recipientId : $0.senderId })
             profilesById = try await fetchProfiles(ids: Array(counterpartIds))
 
-            messages = rows.reversed().compactMap(mapRow)
+            // Local-only rows (still sending, or failed and awaiting a
+            // retry) must survive a reload — they don't exist server-side.
+            let localOnly = messages.filter { failedMessageIds.contains($0.id) || pendingMessageIds.contains($0.id) }
+            messages = (rows.reversed().compactMap(mapRow) + localOnly)
+                .sorted { $0.createdAt < $1.createdAt }
             syncBadge(myUserId: myUserId)
             prefetchMedia(myUserId: myUserId)
         } catch {
@@ -351,6 +370,15 @@ final class MessageGraphService {
     /// True while a message is optimistic — shown but not yet confirmed.
     func isPending(_ id: UUID) -> Bool { pendingMessageIds.contains(id) }
 
+    /// True when a message's send failed and a retry is available.
+    func isFailed(_ id: UUID) -> Bool { failedMessageIds.contains(id) }
+
+    /// Total unread across every conversation — drives the persistent
+    /// badge on the Home navigation and the Circles paper-plane dot.
+    func totalUnread(myUserId: String) -> Int {
+        messages.filter { $0.recipientId == myUserId && $0.readAt == nil }.count
+    }
+
     // MARK: Send
 
     /// Send a quiet text note to a friend. Optimistic: the note appears
@@ -394,8 +422,8 @@ final class MessageGraphService {
             confirmOptimistic(tempId: temp.id, with: created)
             PushService.send(to: recipientId, kind: .note, preview: trimmed, messageId: created.id.uuidString)
         } catch {
-            removeOptimistic(tempId: temp.id)
-            fail("Couldn't send your message.", error)
+            print("[MessageGraph] Note send failed: \(error)")
+            markFailed(tempId: temp.id, payload: .note(recipientId: recipientId, text: trimmed))
         }
     }
 
@@ -478,9 +506,15 @@ final class MessageGraphService {
             confirmOptimistic(tempId: temp.id, with: created)
             PushService.send(to: recipientId, kind: .proof, preview: trimmedCaption, messageId: created.id.uuidString)
         } catch {
+            print("[MessageGraph] Proof send failed: \(error)")
             uploadProgress = nil
-            removeOptimistic(tempId: temp.id)
-            fail("Couldn't send your proof.", error)
+            markFailed(tempId: temp.id, payload: .proof(
+                recipientId: recipientId,
+                data: data,
+                mediaKind: mediaKind,
+                duration: durationSeconds,
+                caption: trimmedCaption
+            ))
         }
     }
 
@@ -519,6 +553,43 @@ final class MessageGraphService {
     private func removeOptimistic(tempId: UUID) {
         pendingMessageIds.remove(tempId)
         messages.removeAll { $0.id == tempId }
+    }
+
+    /// Flip an optimistic message into the failed state — it stays in
+    /// the thread, rendered with an inline "Tap to retry".
+    private func markFailed(tempId: UUID, payload: FailedSendPayload) {
+        pendingMessageIds.remove(tempId)
+        failedMessageIds.insert(tempId)
+        failedPayloads[tempId] = payload
+    }
+
+    /// Re-attempt a failed send. The failed placeholder is removed and a
+    /// fresh optimistic send takes its place.
+    func retrySend(_ id: UUID, myUserId: String) async {
+        guard let payload = failedPayloads[id] else { return }
+        failedPayloads[id] = nil
+        failedMessageIds.remove(id)
+        messages.removeAll { $0.id == id }
+        switch payload {
+        case .note(let recipientId, let text):
+            await sendNote(to: recipientId, text: text, myUserId: myUserId)
+        case .proof(let recipientId, let data, let mediaKind, let duration, let caption):
+            await sendProof(
+                to: recipientId,
+                data: data,
+                mediaKind: mediaKind,
+                durationSeconds: duration,
+                caption: caption,
+                myUserId: myUserId
+            )
+        }
+    }
+
+    /// Throw away a failed send the user no longer wants to retry.
+    func discardFailed(_ id: UUID) {
+        failedPayloads[id] = nil
+        failedMessageIds.remove(id)
+        messages.removeAll { $0.id == id }
     }
 
     // MARK: Read / watched

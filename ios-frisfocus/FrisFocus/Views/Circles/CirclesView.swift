@@ -54,10 +54,10 @@ struct CirclesView: View {
     @State private var showAddFriends: Bool = false
     @State private var route: CirclesRoute?
 
-    /// The real messaging backend — drives the paper-plane's unread dot.
-    /// The inbox itself owns the live realtime instance; this lightweight
-    /// one just keeps the count fresh on the page.
-    @State private var messageGraph = MessageGraphService()
+    /// The app-wide messaging backend — drives the paper-plane's unread
+    /// dot and the sundial badge. Realtime is owned at the app root, so
+    /// the count here is always live.
+    @Environment(MessageGraphService.self) private var messageGraph
 
     /// Zoom-transition namespace: story players grow out of the exact
     /// avatar / strip that opened them and shrink back into it.
@@ -108,6 +108,7 @@ struct CirclesView: View {
                         Color.clear.frame(height: 140)
                     }
                 }
+                .refreshable { await loadMessages() }
                 .coordinateSpace(.named(scrollSpace))
                 .background(Theme.warmWheat)
                 .ignoresSafeArea(edges: .top)
@@ -136,7 +137,8 @@ struct CirclesView: View {
                     onCirclesTap: {
                         // Already here — light tap, no-op.
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    }
+                    },
+                    circlesBadgeCount: directUnread
                 )
                 .ignoresSafeArea(edges: .bottom)
             }
@@ -225,20 +227,18 @@ struct CirclesView: View {
 
     // MARK: - Live messaging (unread dot)
 
-    /// A lightweight load for the paper-plane's unread dot. The inbox
-    /// owns the live realtime subscription; here we just refresh on
-    /// appear and whenever the inbox closes, so the dot stays accurate
-    /// without a second channel on the same topic.
+    /// Refresh of the shared messaging window — realtime keeps it live;
+    /// this is the explicit pull-to-refresh / on-appear catch-up.
     private func loadMessages() async {
         guard let myId = auth.user?.id else { return }
         await messageGraph.load(myUserId: myId)
     }
 
     /// Total unread proofs/notes across every real conversation — drives
-    /// the paper-plane dot on the Friends section.
+    /// the paper-plane dot on the Friends section and the sundial badge.
     private var directUnread: Int {
         guard let myId = auth.user?.id else { return 0 }
-        return messageGraph.conversations(myUserId: myId).reduce(0) { $0 + $1.unreadCount }
+        return messageGraph.totalUnread(myUserId: myId)
     }
 
     // MARK: - Section toggling
@@ -623,5 +623,6 @@ struct CirclesSectionTopsPreferenceKey: PreferenceKey {
         CirclesView()
             .environment(Store())
             .environment(AuthManager())
+            .environment(MessageGraphService())
     }
 }

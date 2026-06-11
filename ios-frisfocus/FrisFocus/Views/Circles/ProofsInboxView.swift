@@ -85,9 +85,10 @@ struct ProofsInboxView: View {
     @Environment(ModerationService.self) private var moderation
     @Environment(\.dismiss) private var dismiss
 
-    /// The real messaging backend. Owned here and shared into the thread
-    /// so realtime + optimistic state stay consistent across both.
-    @State private var message = MessageGraphService()
+    /// The app-wide messaging backend — one shared instance owns
+    /// realtime, so optimistic + unread state stay consistent across
+    /// Home, Circles, this inbox, and every thread.
+    @Environment(MessageGraphService.self) private var message
     /// The real friend graph — powers the new-conversation picker.
     @State private var friendGraph = FriendGraphService()
 
@@ -155,12 +156,12 @@ struct ProofsInboxView: View {
                             .padding(.bottom, 44)
                             .animation(.easeOut(duration: 0.25), value: conversations.count)
                         }
+                        .refreshable { await refresh() }
                     }
                 }
             }
         }
         .task { await load() }
-        .onDisappear { message.stopRealtime() }
         .fullScreenCover(item: $openFriend, onDismiss: {
             pendingInitialMessageId = nil
         }) { friend in
@@ -222,10 +223,22 @@ struct ProofsInboxView: View {
 
     private func load() async {
         guard let myId else { return }
-        await message.load(myUserId: myId)
+        // Realtime is owned at the app root; this is the on-appear
+        // catch-up plus the friend graph for the new-conversation picker.
+        if message.messages.isEmpty {
+            await message.load(myUserId: myId)
+        }
         message.startRealtime(myUserId: myId)
         await friendGraph.load(myUserId: myId)
         await openInitialPeerIfNeeded(myId: myId)
+    }
+
+    /// Pull-to-refresh — re-pulls the recent message window and the
+    /// friend graph in one gesture.
+    private func refresh() async {
+        guard let myId else { return }
+        await message.load(myUserId: myId)
+        await friendGraph.load(myUserId: myId)
     }
 
     /// Auto-open the 1:1 thread for a push-delivered peer id, resolving the
@@ -309,13 +322,20 @@ struct ProofsInboxView: View {
     // MARK: - States
 
     private var loading: some View {
-        VStack {
-            Spacer()
-            ProgressView().tint(Theme.textPrimary)
-            Spacer()
-            Spacer()
+        // Skeleton rows in the exact shape of real conversations — the
+        // page never sits behind a bare spinner.
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 10) {
+                ForEach(0..<6, id: \.self) { index in
+                    SkeletonConversationRow()
+                        .opacity(1.0 - Double(index) * 0.13)
+                }
+            }
+            .padding(.horizontal, Theme.pageHorizontalPadding)
+            .padding(.top, 8)
         }
-        .frame(maxWidth: .infinity)
+        .scrollDisabled(true)
+        .transition(.opacity)
     }
 
     private var emptyState: some View {
@@ -612,10 +632,18 @@ private struct NewProofFriendPicker: View {
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Spacer()
             if isLoading {
-                ProgressView().tint(Theme.textPrimary)
+                VStack(spacing: 10) {
+                    ForEach(0..<5, id: \.self) { index in
+                        SkeletonPersonRow()
+                            .opacity(1.0 - Double(index) * 0.15)
+                    }
+                }
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+                .padding(.top, 8)
+                Spacer()
             } else {
+                Spacer()
                 ZStack {
                     Circle().fill(Theme.textPrimary.opacity(0.05)).frame(width: 64, height: 64)
                     Image(systemName: "person.2")
@@ -630,9 +658,9 @@ private struct NewProofFriendPicker: View {
                     .foregroundStyle(Theme.textPrimary.opacity(0.6))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
+                Spacer()
+                Spacer()
             }
-            Spacer()
-            Spacer()
         }
         .frame(maxWidth: .infinity)
     }
@@ -642,4 +670,5 @@ private struct NewProofFriendPicker: View {
     ProofsInboxView()
         .environment(Store())
         .environment(AuthManager())
+        .environment(MessageGraphService())
 }

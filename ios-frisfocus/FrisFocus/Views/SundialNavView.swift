@@ -45,6 +45,9 @@ struct SundialNavView: View {
     let onCaptureTap: () -> Void
     let onHomeTap: () -> Void
     let onCirclesTap: () -> Void
+    /// Unread direct messages — rendered as a small count badge on the
+    /// Circles icon so new messages are visible from anywhere.
+    var circlesBadgeCount: Int = 0
 
     // MARK: - Scrub state
 
@@ -561,11 +564,27 @@ struct SundialNavView: View {
                 .foregroundStyle(Theme.textPrimary)
                 .opacity(active == .circles ? 1.0 : 0.38)
                 .frame(width: 44, height: 44)
+                .overlay(alignment: .topTrailing) {
+                    if circlesBadgeCount > 0 {
+                        Text(circlesBadgeCount > 99 ? "99+" : "\(circlesBadgeCount)")
+                            .font(.sans(9, weight: .bold))
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 4.5)
+                            .frame(minWidth: 16)
+                            .frame(height: 16)
+                            .background(Capsule().fill(Color(hex: 0xE0454C)))
+                            .overlay(Capsule().strokeBorder(Theme.warmWheat.opacity(0.9), lineWidth: 1.2))
+                            .offset(x: 3, y: 3)
+                            .transition(.scale.combined(with: .opacity))
+                            .accessibilityHidden(true)
+                    }
+                }
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: circlesBadgeCount > 0)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .position(x: pt.x, y: pt.y)
-        .accessibilityLabel("Circles")
+        .accessibilityLabel(circlesBadgeCount > 0 ? "Circles, \(circlesBadgeCount) unread" : "Circles")
         .accessibilityAddTraits(active == .circles ? .isSelected : [])
     }
 

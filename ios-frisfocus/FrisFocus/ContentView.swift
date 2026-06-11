@@ -22,6 +22,7 @@ struct ContentView: View {
     @Environment(ModerationService.self) private var moderation
     @Environment(NotificationManager.self) private var notifications
     @Environment(CadenceLinkService.self) private var cadence
+    @Environment(MessageGraphService.self) private var messageGraph
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
@@ -45,6 +46,11 @@ struct ContentView: View {
                 // the notification manager who owns this device's token.
                 if let myId = auth.user?.id {
                     notifications.setUserId(myId)
+                    // Messaging is app-wide: load the recent window and
+                    // subscribe to realtime once, so unread badges stay
+                    // live on every screen — not just inside Circles.
+                    await messageGraph.load(myUserId: myId)
+                    messageGraph.startRealtime(myUserId: myId)
                     await profileStore.load(myUserId: myId)
                     await moderation.loadBlocks(myUserId: myId)
                     await notifications.requestAuthorizationIfNeeded()
@@ -54,6 +60,7 @@ struct ContentView: View {
                     await cadence.sync(into: store, myUserId: myId)
                 } else {
                     notifications.setUserId(nil)
+                    messageGraph.stopRealtime()
                     profileStore.clear()
                     moderation.clear()
                     await cadence.refresh(myUserId: nil)
@@ -71,6 +78,9 @@ struct ContentView: View {
                     NotificationManager.clearBadge()
                     if let myId = auth.user?.id {
                         Task { await cadence.sync(into: store, myUserId: myId) }
+                        // Catch up on anything that arrived while the
+                        // socket was suspended in the background.
+                        Task { await messageGraph.load(myUserId: myId) }
                     }
                 } else if newPhase == .background || newPhase == .inactive {
                     // Safety net: flush any debounced, not-yet-written
