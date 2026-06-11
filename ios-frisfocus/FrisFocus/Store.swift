@@ -1777,6 +1777,18 @@ extension Store {
         persistAll()
     }
 
+    /// Set or clear a circle's shared header photo. Owner/admin only
+    /// (mirrors the server-side rule); the change syncs to every
+    /// member through the social mirror.
+    func setCircleHeader(_ urlString: String?, in circleId: UUID) {
+        guard let ci = circles.firstIndex(where: { $0.id == circleId }),
+              canManageTasks(in: circles[ci])
+        else { return }
+        circles[ci].headerUrl = urlString
+        persistAll()
+        social?.circleHeaderUpdated(circleId: circleId, headerUrl: urlString)
+    }
+
     /// Promote a member to admin. Owner-only. No-op if the target
     /// isn't a member or is already admin/owner.
     func promoteToAdmin(userId: UUID, in circleId: UUID) {

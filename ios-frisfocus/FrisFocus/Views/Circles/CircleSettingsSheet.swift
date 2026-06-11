@@ -13,15 +13,32 @@
 //
 
 import SwiftUI
+import PhotosUI
 import UIKit
+
+/// Identifiable wrapper so `fullScreenCover(item:)` can present the
+/// header crop screen for a freshly picked circle banner.
+private struct CircleHeaderCropTarget: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
 
 struct CircleSettingsSheet: View {
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
+    @Environment(ProfileStore.self) private var profileStore
     @Environment(GoldenHourService.self) private var goldenHour
     @Environment(\.dismiss) private var dismiss
 
     let circleId: UUID
+
+    /// Header photo flow.
+    @State private var headerPhotoItem: PhotosPickerItem?
+    @State private var headerCropTarget: CircleHeaderCropTarget?
+    @State private var isUploadingHeader: Bool = false
+
+    /// The member whose profile is open, if any.
+    @State private var profileTarget: ProfileTarget?
 
     @State private var showGoldenSettings: Bool = false
     @State private var showGoldenHour: Bool = false
@@ -61,6 +78,16 @@ struct CircleSettingsSheet: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
+        .profileDestination($profileTarget, store: store)
+        .onChange(of: headerPhotoItem) { _, newItem in
+            guard let newItem else { return }
+            Task { await loadPickedHeader(newItem) }
+        }
+        .fullScreenCover(item: $headerCropTarget) { target in
+            ProfileHeaderCropView(image: target.image) { baked in
+                uploadHeader(baked)
+            }
+        }
     }
 
     // MARK: - Body
@@ -72,6 +99,8 @@ struct CircleSettingsSheet: View {
                 if let banner = transientBanner {
                     bannerView(text: banner)
                 }
+
+                headerPhotoSection(for: circle)
 
                 ourStoryRow(for: circle)
 
@@ -116,6 +145,133 @@ struct CircleSettingsSheet: View {
         }
         .fullScreenCover(isPresented: $showGoldenHour) {
             GoldenHourHostView(circleId: circleId)
+        }
+    }
+
+    // MARK: - Header photo
+
+    /// The circle's shared banner. Everyone sees the picture; owners
+    /// and admins get the add / change / remove controls. Without a
+    /// photo (and without edit rights) the section stays invisible.
+    @ViewBuilder
+    private func headerPhotoSection(for circle: FFCircle) -> some View {
+        let canEdit = store.canManageTasks(in: circle)
+        if circle.headerURL != nil || isUploadingHeader || canEdit {
+            VStack(alignment: .leading, spacing: 10) {
+                if circle.headerURL != nil || isUploadingHeader {
+                    headerBanner(for: circle, canEdit: canEdit)
+                } else if canEdit {
+                    addHeaderButton
+                }
+            }
+        }
+    }
+
+    private func headerBanner(for circle: FFCircle, canEdit: Bool) -> some View {
+        Theme.textPrimary.opacity(0.08)
+            .frame(height: 140)
+            .overlay {
+                if let url = circle.headerURL {
+                    CachedImage(url: url) { image in
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        Theme.textPrimary.opacity(0.08)
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+            .overlay {
+                if isUploadingHeader {
+                    ZStack {
+                        Color.black.opacity(0.25)
+                        ProgressView().tint(.white)
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .overlay(alignment: .bottomTrailing) {
+                if canEdit {
+                    HStack(spacing: 8) {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            store.setCircleHeader(nil, in: circleId)
+                            showBanner("Header photo removed.")
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Circle().fill(Color.black.opacity(0.45)))
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove header photo")
+
+                        PhotosPicker(selection: $headerPhotoItem, matching: .images, photoLibrary: .shared()) {
+                            Image(systemName: "photo.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(Circle().fill(Color.black.opacity(0.45)))
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Change header photo")
+                    }
+                    .padding(10)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Circle header photo")
+    }
+
+    private var addHeaderButton: some View {
+        PhotosPicker(selection: $headerPhotoItem, matching: .images, photoLibrary: .shared()) {
+            HStack(spacing: 10) {
+                Image(systemName: "photo.badge.plus")
+                    .font(.sans(15, weight: .semibold))
+                Text("Add a header photo")
+                    .font(.sans(14, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(0.75))
+            .padding(.vertical, 12)
+            .padding(.horizontal, 14)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.18),
+                                  style: StrokeStyle(lineWidth: 0.8, dash: [4, 4]))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add a header photo for this circle")
+    }
+
+    private func loadPickedHeader(_ item: PhotosPickerItem) async {
+        if let data = try? await item.loadTransferable(type: Data.self),
+           let image = UIImage(data: data) {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            headerCropTarget = CircleHeaderCropTarget(image: image)
+        }
+        headerPhotoItem = nil
+    }
+
+    private func uploadHeader(_ image: UIImage) {
+        guard let myId = auth.user?.id else { return }
+        isUploadingHeader = true
+        Task {
+            let uploaded = await profileStore.uploadHeader(image, myUserId: myId)
+            isUploadingHeader = false
+            if let uploaded {
+                store.setCircleHeader(uploaded, in: circleId)
+                showBanner("Header photo updated.")
+            }
         }
     }
 
@@ -925,24 +1081,43 @@ struct CircleSettingsSheet: View {
 
         let viewerIsOwner = store.isOwner(of: circle)
         let viewerCanManage = store.canManageTasks(in: circle)
+        let target = store.profileTarget(forMemberId: memberId)
 
         return HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(accent)
-                Text(initials)
-                    .font(.sans(13, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: 36, height: 36)
+            Button {
+                guard let target else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                profileTarget = target
+            } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(accent)
+                        Text(initials)
+                            .font(.sans(13, weight: .semibold))
+                            .foregroundStyle(Theme.textCream)
+                    }
+                    .frame(width: 36, height: 36)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(displayName)
-                    .font(.sans(15, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                roleChip(role)
-            }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(displayName)
+                            .font(.sans(15, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                        roleChip(role)
+                    }
 
-            Spacer(minLength: 8)
+                    if target != nil {
+                        Image(systemName: "chevron.right")
+                            .font(.sans(11, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                    }
+
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(target == nil)
+            .accessibilityLabel(isMe ? "Open your profile" : (target != nil ? "Open \(displayName)'s profile" : displayName))
 
             if !isMe {
                 Menu {

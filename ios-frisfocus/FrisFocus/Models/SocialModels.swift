@@ -314,6 +314,12 @@ struct FFCircle: Codable, Identifiable {
     var collectiveProgress: Double?
     var createdAt: Date = Date()
 
+    /// Optional shared header photo for the circle, set by an owner or
+    /// admin and synced to every member. Optional so circles persisted
+    /// before this landed decode cleanly (missing key → nil → the
+    /// type-tinted gradient alone).
+    var headerUrl: String?
+
     /// The circle's lifetime story — each stretch it ran as Witness, a
     /// shared list, a shared number, or both. The last open chapter
     /// (`endedAt == nil`) is the one being lived now. Empty for circles
@@ -330,6 +336,12 @@ struct FFCircle: Codable, Identifiable {
     var hasSharedList: Bool { objectives.contains(.sharedList) }
     /// Whether a shared number layer is currently active.
     var hasSharedNumber: Bool { objectives.contains(.sharedNumber) }
+
+    /// The circle's shared header photo, ready for `CachedImage`.
+    var headerURL: URL? {
+        guard let headerUrl else { return nil }
+        return URL(string: headerUrl)
+    }
 
     /// The chapter being lived right now (last open one), if any.
     var currentChapter: CircleChapter? { chapters.last { $0.endedAt == nil } }
@@ -385,7 +397,7 @@ struct FFCircle: Codable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, name, objectives, timeframe, memberIds, tasks
         case collectiveUnit, collectiveTarget, collectiveProgress, createdAt
-        case ownerId, adminIds, membersCanProposeTasks, chapters
+        case ownerId, adminIds, membersCanProposeTasks, chapters, headerUrl
         // Legacy key: circles persisted before the layer model stored a
         // bare `type`. Kept so old data migrates and a back-compat
         // readout is still written.
@@ -403,6 +415,7 @@ struct FFCircle: Codable, Identifiable {
         collectiveTarget: Double? = nil,
         collectiveProgress: Double? = nil,
         createdAt: Date = Date(),
+        headerUrl: String? = nil,
         ownerId: UUID? = nil,
         adminIds: [UUID] = [],
         membersCanProposeTasks: Bool = false,
@@ -418,6 +431,7 @@ struct FFCircle: Codable, Identifiable {
         self.collectiveTarget = collectiveTarget
         self.collectiveProgress = collectiveProgress
         self.createdAt = createdAt
+        self.headerUrl = headerUrl
         self.ownerId = ownerId
         self.adminIds = adminIds
         self.membersCanProposeTasks = membersCanProposeTasks
@@ -435,6 +449,7 @@ struct FFCircle: Codable, Identifiable {
         self.collectiveTarget = try c.decodeIfPresent(Double.self, forKey: .collectiveTarget)
         self.collectiveProgress = try c.decodeIfPresent(Double.self, forKey: .collectiveProgress)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.headerUrl = try c.decodeIfPresent(String.self, forKey: .headerUrl)
         self.ownerId = try c.decodeIfPresent(UUID.self, forKey: .ownerId)
         self.adminIds = (try c.decodeIfPresent([UUID].self, forKey: .adminIds)) ?? []
         self.membersCanProposeTasks = (try c.decodeIfPresent(Bool.self, forKey: .membersCanProposeTasks)) ?? false
@@ -470,6 +485,7 @@ struct FFCircle: Codable, Identifiable {
         try c.encodeIfPresent(collectiveTarget, forKey: .collectiveTarget)
         try c.encodeIfPresent(collectiveProgress, forKey: .collectiveProgress)
         try c.encode(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(headerUrl, forKey: .headerUrl)
         try c.encodeIfPresent(ownerId, forKey: .ownerId)
         try c.encode(adminIds, forKey: .adminIds)
         try c.encode(membersCanProposeTasks, forKey: .membersCanProposeTasks)

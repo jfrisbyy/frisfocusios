@@ -104,6 +104,7 @@ struct CircleDetailView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .edgeSwipeBack()
         .sheet(isPresented: $showCaptureSheet) {
             CaptureSheetView()
                 .presentationDetents([.fraction(0.5)])
@@ -339,8 +340,37 @@ struct CircleDetailView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 showSettings = true
             } label: {
-                CircleDetailHeroGradient(type: circle.type)
-                    .contentShape(Rectangle())
+                ZStack {
+                    CircleDetailHeroGradient(type: circle.type)
+
+                    // The circle's shared header photo, when set — a
+                    // soft banner behind the hero with a dark wash so
+                    // the name and member stack stay readable.
+                    if let url = heroHeaderURL {
+                        Color.clear
+                            .overlay {
+                                CachedImage(url: url) { image in
+                                    image.resizable().scaledToFill()
+                                } placeholder: {
+                                    CircleDetailHeroGradient(type: circle.type)
+                                }
+                            }
+                            .clipped()
+                            .allowsHitTesting(false)
+
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(0.48),
+                                Color.black.opacity(0.20),
+                                Color.black.opacity(0.42)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .allowsHitTesting(false)
+                    }
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Circle settings")
@@ -361,6 +391,12 @@ struct CircleDetailView: View {
         }
         .frame(height: 220)
         .clipped()
+    }
+
+    /// Live header URL — `circle` is captured at navigation time, so a
+    /// header set moments ago in settings reads from the Store instead.
+    private var heroHeaderURL: URL? {
+        (store.circle(by: circle.id) ?? circle).headerURL
     }
 
     private var topBar: some View {

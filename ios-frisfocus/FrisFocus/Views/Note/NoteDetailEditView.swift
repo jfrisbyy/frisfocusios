@@ -109,6 +109,7 @@ struct NoteDetailEditView: View {
             .ignoresSafeArea(edges: .bottom)
         }
         .navigationBarBackButtonHidden(true)
+        .edgeSwipeBack()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button(action: handleBack) {

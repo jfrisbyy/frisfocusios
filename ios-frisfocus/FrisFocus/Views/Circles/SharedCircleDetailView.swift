@@ -25,11 +25,15 @@ import UIKit
 
 struct SharedCircleDetailView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var socialSync
 
     let service: CircleGraphService
     let circleId: UUID
     let myUserId: String
 
+    /// The member whose profile is open, if any.
+    @State private var profileTarget: ProfileTarget?
     @State private var scope: CircleScope = .today
     @State private var showAddTask = false
     @State private var newTaskTitle = ""
@@ -69,6 +73,8 @@ struct SharedCircleDetailView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .edgeSwipeBack()
+        .profileDestination($profileTarget, store: store)
         .task {
             service.startRealtime(myUserId: myUserId)
             await friendService.load(myUserId: myUserId)
@@ -231,6 +237,33 @@ struct SharedCircleDetailView: View {
     private func hero(_ circle: SharedCircle) -> some View {
         ZStack(alignment: .bottomLeading) {
             LinearGradient(colors: circle.kind.heroColors, startPoint: .top, endPoint: .bottom)
+
+            // The circle's shared header photo, when set — a soft
+            // banner behind the hero with a dark wash so the name and
+            // member stack stay readable.
+            if let url = circle.headerURL {
+                Color.clear
+                    .overlay {
+                        CachedImage(url: url) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            LinearGradient(colors: circle.kind.heroColors, startPoint: .top, endPoint: .bottom)
+                        }
+                    }
+                    .clipped()
+                    .allowsHitTesting(false)
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.48),
+                        Color.black.opacity(0.20),
+                        Color.black.opacity(0.42)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+            }
 
             starsLayer.allowsHitTesting(false)
 
@@ -662,36 +695,64 @@ struct SharedCircleDetailView: View {
         let total = taskIds.count
         let isQuiet = done == 0
         let complete = total > 0 && done == total
+        let target = memberTarget(for: member)
 
-        return HStack(spacing: 12) {
-            RemoteCircleAvatar(profile: member, size: 32, highlight: isMe)
+        return Button {
+            guard let target else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            profileTarget = target
+        } label: {
+            HStack(spacing: 12) {
+                RemoteCircleAvatar(profile: member, size: 32, highlight: isMe)
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text(isMe ? "You" : member.displayName)
-                    .font(.sans(14, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                segmentedBar(taskIds: taskIds, completed: completed, tint: circle.kind.tint)
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(isMe ? "You" : member.displayName)
+                        .font(.sans(14, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    segmentedBar(taskIds: taskIds, completed: completed, tint: circle.kind.tint)
+                }
+
+                Spacer(minLength: 8)
+
+                Text("\(done)/\(total)")
+                    .font(.sans(12, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(complete ? Theme.alertGreen : Theme.textPrimary.opacity(isQuiet ? 0.4 : 0.7))
+
+                if target != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.sans(11, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                }
             }
-
-            Spacer(minLength: 8)
-
-            Text("\(done)/\(total)")
-                .font(.sans(12, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(complete ? Theme.alertGreen : Theme.textPrimary.opacity(isQuiet ? 0.4 : 0.7))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .opacity(isQuiet ? 0.75 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .fill(Color.white.opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-        )
-        .opacity(isQuiet ? 0.75 : 1)
+        .buttonStyle(.plain)
+        .disabled(target == nil)
+        .accessibilityLabel(isMe ? "Open your profile" : (target != nil ? "Open \(member.displayName)'s profile" : member.displayName))
+    }
+
+    /// Resolve a circle member into an openable profile — yourself, a
+    /// friend, or nil for people outside your friend graph (no profile
+    /// to show, the row stays quiet).
+    private func memberTarget(for member: RemoteProfile) -> ProfileTarget? {
+        if member.id == myUserId { return .me }
+        if let friend = store.friend(by: socialSync.localId(forRemote: member.id)) {
+            return .friend(friend)
+        }
+        return nil
     }
 
     private func segmentedBar(taskIds: [UUID], completed: Set<UUID>, tint: Color) -> some View {
@@ -868,38 +929,66 @@ struct SharedCircleDetailView: View {
             sectionEyebrow("WHO'S IN")
             VStack(spacing: 10) {
                 ForEach(ranked, id: \.0.id) { member, amount in
-                    let share = total > 0 ? amount / total : 0
-                    HStack(spacing: 12) {
-                        RemoteCircleAvatar(profile: member, size: 32, highlight: member.id == myUserId)
-                        VStack(alignment: .leading, spacing: 7) {
-                            HStack {
-                                Text(member.id == myUserId ? "You" : member.displayName)
-                                    .font(.sans(14, weight: .regular))
-                                    .foregroundStyle(Theme.textPrimary)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text("\(circleNumber(amount)) \(unit)")
-                                    .font(.sans(12, weight: .medium))
-                                    .monospacedDigit()
-                                    .foregroundStyle(amount > 0 ? Theme.textPrimary.opacity(0.7) : Theme.textPrimary.opacity(0.4))
-                            }
-                            CircleProgressBar(fraction: share, tint: circle.kind.tint, height: 6)
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                            .fill(Color.white.opacity(0.55))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                            .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-                    )
-                    .opacity(amount > 0 ? 1 : 0.75)
+                    contributorRow(circle, member: member, amount: amount, total: total, unit: unit)
                 }
             }
         }
+    }
+
+    private func contributorRow(
+        _ circle: SharedCircle,
+        member: RemoteProfile,
+        amount: Double,
+        total: Double,
+        unit: String
+    ) -> some View {
+        let isMe = member.id == myUserId
+        let share = total > 0 ? amount / total : 0
+        let target = memberTarget(for: member)
+
+        return Button {
+            guard let target else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            profileTarget = target
+        } label: {
+            HStack(spacing: 12) {
+                RemoteCircleAvatar(profile: member, size: 32, highlight: isMe)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text(isMe ? "You" : member.displayName)
+                            .font(.sans(14, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(circleNumber(amount)) \(unit)")
+                            .font(.sans(12, weight: .medium))
+                            .monospacedDigit()
+                            .foregroundStyle(amount > 0 ? Theme.textPrimary.opacity(0.7) : Theme.textPrimary.opacity(0.4))
+                        if target != nil {
+                            Image(systemName: "chevron.right")
+                                .font(.sans(11, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                        }
+                    }
+                    CircleProgressBar(fraction: share, tint: circle.kind.tint, height: 6)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .opacity(amount > 0 ? 1 : 0.75)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(target == nil)
+        .accessibilityLabel(isMe ? "Open your profile" : (target != nil ? "Open \(member.displayName)'s profile" : member.displayName))
     }
 
     // MARK: - Witness body
@@ -918,28 +1007,50 @@ struct SharedCircleDetailView: View {
                 .foregroundStyle(Theme.textPrimary.opacity(0.55))
             VStack(spacing: 10) {
                 ForEach(orderedMembers(circle)) { member in
-                    HStack(spacing: 12) {
-                        RemoteCircleAvatar(profile: member, size: 34, highlight: member.id == myUserId)
-                        Text(member.id == myUserId ? "You" : member.displayName)
-                            .font(.sans(14, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Circle().fill(CircleKind.witness.tint).frame(width: 8, height: 8)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                            .fill(Color.white.opacity(0.55))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                            .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-                    )
+                    witnessRow(member)
                 }
             }
         }
+    }
+
+    private func witnessRow(_ member: RemoteProfile) -> some View {
+        let isMe = member.id == myUserId
+        let target = memberTarget(for: member)
+
+        return Button {
+            guard let target else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            profileTarget = target
+        } label: {
+            HStack(spacing: 12) {
+                RemoteCircleAvatar(profile: member, size: 34, highlight: isMe)
+                Text(isMe ? "You" : member.displayName)
+                    .font(.sans(14, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if target != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.sans(11, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                }
+                Circle().fill(CircleKind.witness.tint).frame(width: 8, height: 8)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(target == nil)
+        .accessibilityLabel(isMe ? "Open your profile" : (target != nil ? "Open \(member.displayName)'s profile" : member.displayName))
     }
 
     /// Labelled hairline separating the two goals in a hybrid.

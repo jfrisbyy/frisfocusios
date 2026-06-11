@@ -78,6 +78,7 @@ private nonisolated struct CircleRow: Codable, Sendable {
     let visibility: String?
     let joinRule: String?
     let description: String?
+    let headerUrl: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, type, visibility, description
@@ -88,6 +89,7 @@ private nonisolated struct CircleRow: Codable, Sendable {
         case collectiveTarget = "collective_target"
         case createdAt = "created_at"
         case joinRule = "join_rule"
+        case headerUrl = "header_url"
     }
 }
 
@@ -371,6 +373,8 @@ struct SharedCircle: Identifiable {
     var joinRule: String = "open"
     /// The owner-written blurb shown in the public directory.
     var descriptionText: String?
+    /// Shared header photo set by an owner/admin, shown behind the hero.
+    var headerUrl: String? = nil
     let members: [RemoteProfile]
     let roles: [String: String]
     var tasks: [CircleTaskRow]
@@ -379,6 +383,11 @@ struct SharedCircle: Identifiable {
 
     var isPublic: Bool { visibility == "public" }
     var requiresApproval: Bool { isPublic && joinRule == "approval" }
+
+    var headerURL: URL? {
+        guard let headerUrl else { return nil }
+        return URL(string: headerUrl)
+    }
 
     func profile(_ userId: String) -> RemoteProfile? { members.first { $0.id == userId } }
 
@@ -510,7 +519,7 @@ final class CircleGraphService {
 
             async let circleRowsReq: [CircleRow] = supabase
                 .from("circles")
-                .select("id, owner_id, name, type, timeframe_kind, end_date, collective_unit, collective_target, created_at, visibility, join_rule, description")
+                .select("id, owner_id, name, type, timeframe_kind, end_date, collective_unit, collective_target, created_at, visibility, join_rule, description, header_url")
                 .in("id", values: circleIds)
                 .execute().value
             async let memberRowsReq: [CircleMemberRow] = supabase
@@ -563,6 +572,7 @@ final class CircleGraphService {
                     visibility: row.visibility ?? "private",
                     joinRule: row.joinRule ?? "open",
                     descriptionText: row.description,
+                    headerUrl: row.headerUrl,
                     members: memberProfiles.sorted {
                         $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
                     },

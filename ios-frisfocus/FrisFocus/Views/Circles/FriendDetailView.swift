@@ -140,6 +140,7 @@ struct FriendDetailView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .edgeSwipeBack()
         .sheet(item: Binding(
             get: { commentsPostId.map { CommentsSheetTarget(postId: $0) } },
             set: { commentsPostId = $0?.postId }
@@ -432,13 +433,16 @@ struct FriendDetailView: View {
 
     // MARK: - Action row (inside the hero)
 
+    /// Compact icon-only circles — camera, chat bubble, clapping hands
+    /// — so the hero reads calm. The proof button stays solid cream as
+    /// the primary action; each keeps its spoken label.
     private var actionRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 18) {
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 showSendProof = true
             } label: {
-                actionLabel(icon: "camera.fill", title: "Proof", filled: true)
+                actionIcon("camera.fill", filled: true)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Send a proof to \(friend.displayName)")
@@ -447,7 +451,7 @@ struct FriendDetailView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 showThread = true
             } label: {
-                actionLabel(icon: "bubble.left.and.bubble.right.fill", title: "Message", filled: false, dot: unreadFromFriend > 0)
+                actionIcon("bubble.left.and.bubble.right.fill", filled: false, dot: unreadFromFriend > 0)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(unreadFromFriend > 0 ? "Message \(friend.displayName), \(unreadFromFriend) unread" : "Message \(friend.displayName)")
@@ -456,43 +460,40 @@ struct FriendDetailView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 showCheerComposer = true
             } label: {
-                actionLabel(icon: "hands.clap.fill", title: "Cheer", filled: false)
+                actionIcon("hands.clap.fill", filled: false)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Cheer \(friend.displayName)")
         }
+        .frame(maxWidth: .infinity)
     }
 
-    /// Translucent cream pills that sit on the accent band. The primary
-    /// action (proof) is solid cream; the rest read as glassy outlines.
-    private func actionLabel(icon: String, title: String, filled: Bool, dot: Bool = false) -> some View {
-        HStack(spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: icon)
-                    .font(.sans(13, weight: .semibold))
-                if dot {
+    /// One glassy icon circle on the accent band. The filled (cream)
+    /// variant marks the primary action.
+    private func actionIcon(_ icon: String, filled: Bool, dot: Bool = false) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Image(systemName: icon)
+                .font(.sans(16, weight: .semibold))
+                .foregroundStyle(filled ? Theme.textPrimary : Theme.textCream)
+                .frame(width: 46, height: 46)
+                .background(
                     Circle()
-                        .fill(Theme.alertRed)
-                        .frame(width: 7, height: 7)
-                        .offset(x: 5, y: -4)
-                }
+                        .fill(filled ? Theme.textCream : Color.white.opacity(0.14))
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(Theme.textCream.opacity(filled ? 0 : 0.35), lineWidth: 0.8)
+                )
+
+            if dot {
+                Circle()
+                    .fill(Theme.alertRed)
+                    .frame(width: 9, height: 9)
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.25), lineWidth: 0.8))
+                    .offset(x: -1, y: 1)
             }
-            Text(title)
-                .font(.sans(13, weight: .semibold))
-                .lineLimit(1)
         }
-        .foregroundStyle(filled ? Theme.textPrimary : Theme.textCream)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 11)
-        .background(
-            Capsule(style: .continuous)
-                .fill(filled ? Theme.textCream : Color.white.opacity(0.14))
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(Theme.textCream.opacity(filled ? 0 : 0.35), lineWidth: 0.8)
-        )
-        .contentShape(Capsule(style: .continuous))
+        .contentShape(Circle())
     }
 
     // MARK: - THEM layer

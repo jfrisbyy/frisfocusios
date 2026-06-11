@@ -78,6 +78,7 @@ struct PactDetailView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .edgeSwipeBack()
         .profileDestination($profileTarget, store: store)
         .sheet(isPresented: $showCheerComposer) {
             if let partner {

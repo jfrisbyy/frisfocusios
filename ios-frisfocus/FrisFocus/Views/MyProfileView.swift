@@ -122,6 +122,7 @@ struct MyProfileView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .edgeSwipeBack()
         .sheet(isPresented: $showEditProfile) {
             NavigationStack {
                 EditProfileView()

@@ -226,11 +226,87 @@ struct SeasonInlineDetailView: View {
     }
 
     /// The season's numbers — the full week/month/season stats,
-    /// rendered inline beneath the sky.
+    /// rendered inline beneath the sky. The docked week chip leads:
+    /// the same score + 7-day stripe from the sky corner, now the
+    /// stats' header — tapping it closes the detail and returns the
+    /// user to the top of the homepage.
     private var statsTab: some View {
         staggered(1) {
-            StatsTabView()
-                .padding(.top, 6)
+            VStack(spacing: 0) {
+                weekChipHeader
+                StatsTabView()
+                    .padding(.top, 6)
+            }
+        }
+    }
+
+    // MARK: - Docked week chip
+
+    /// The week peek's twin, docked at the top of the stats view. One
+    /// tap folds the detail closed — the parent then scrolls home, a
+    /// perfect round trip.
+    private var weekChipHeader: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onMinimize()
+        } label: {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("WEEK")
+                        .font(.sans(10, weight: .medium))
+                        .tracking(2)
+                        .foregroundStyle(Theme.textCream.opacity(0.75))
+
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        Text("\(store.weekScore)")
+                            .font(.serif(20, weight: .medium))
+                            .foregroundStyle(Theme.textCream)
+                            .contentTransition(.numericText(value: Double(store.weekScore)))
+                        Text(" / \(store.currentSeason.weeklyGoal)")
+                            .font(.serif(15, weight: .medium))
+                            .foregroundStyle(Theme.textCream.opacity(0.55))
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 7) {
+                    WeekStripeView(dayOpacities: weekChipOpacities)
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 8, weight: .semibold))
+                        Text("TAP TO RETURN HOME")
+                            .font(.sans(8, weight: .medium))
+                            .tracking(1.4)
+                    }
+                    .foregroundStyle(Theme.textCream.opacity(0.5))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(glassFill)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(glassStroke, lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(PressableTileStyle())
+        .padding(.horizontal, 22)
+        .padding(.top, 14)
+        .accessibilityLabel("Week score \(store.weekScore) of \(store.currentSeason.weeklyGoal)")
+        .accessibilityHint("Closes the season detail and returns to the top of the homepage")
+    }
+
+    /// Same translation the sky's week peek uses — today reads at a
+    /// fixed 0.9, past days scale from a 0.15 floor by goal progress.
+    private var weekChipOpacities: [Double] {
+        let goal = max(1, store.currentSeason.dailyGoal)
+        return store.weekStripeData.enumerated().map { index, score in
+            if index == 6 { return 0.9 }
+            let progress = Double(score) / Double(goal)
+            return 0.15 + min(progress, 1.0) * 0.75
         }
     }
 

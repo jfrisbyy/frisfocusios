@@ -182,6 +182,10 @@ struct CirclesView: View {
             }
             .navigationBarBackButtonHidden(true)
             .toolbar(.hidden, for: .navigationBar)
+            // The Friends room is a root page — the left edge opens the
+            // proof camera, same as the homepage. Going home stays one
+            // tap on the sundial's home button.
+            .edgeSwipeCamera()
             .sheet(isPresented: $showCaptureSheet) {
                 CaptureSheetView()
                     .presentationDetents([.fraction(0.5)])

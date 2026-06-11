@@ -114,6 +114,16 @@ struct HomeView: View {
                         SunZoneView(
                             topSafeInset: topSafeInset,
                             onProfileTap: { showProfileSheet = true },
+                            onStatsOpened: {
+                                // Let the detail unfold first, then glide
+                                // the page down so the stats (with the
+                                // docked week chip) are actually in view.
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.40) {
+                                    withAnimation(.easeInOut(duration: 0.5)) {
+                                        scrollProxy.scrollTo(SunZoneView.statsAnchorID, anchor: .top)
+                                    }
+                                }
+                            },
                             isExpanded: $seasonExpanded
                         )
                             .id(HomeZone.sun.anchorID)
@@ -193,6 +203,9 @@ struct HomeView: View {
                 .ignoresSafeArea(edges: .bottom)
             }
             .background(Theme.warmWheat)
+            // Root page — nothing to go back to, so a left-edge swipe
+            // opens the proof camera instead.
+            .edgeSwipeCamera()
             // Folding the season detail closed gently scrolls the sun
             // zone back to the top so the user is never stranded
             // mid-page where the detail used to be.

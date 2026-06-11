@@ -40,6 +40,10 @@ struct SunZoneView: View {
     /// Called when the user taps the top-right profile avatar. The
     /// parent (HomeView) opens the profile sheet.
     var onProfileTap: () -> Void = {}
+    /// Called after the week peek unfolds the season detail on its
+    /// Stats face — the parent (HomeView) glides the page down so the
+    /// stats are actually in view.
+    var onStatsOpened: () -> Void = {}
     /// Whether the season detail is unfolded beneath the sky band.
     /// Owned by HomeView so it can scroll home on collapse. Never
     /// persisted — the zone always starts compact on launch.
@@ -69,6 +73,7 @@ struct SunZoneView: View {
             if isExpanded {
                 SeasonInlineDetailView(onMinimize: collapse, activeTab: $seasonDetailTab)
                     .transition(.opacity)
+                    .id(SunZoneView.statsAnchorID)
             }
         }
         .frame(maxWidth: .infinity)
@@ -257,14 +262,20 @@ struct SunZoneView: View {
         }
     }
 
+    /// Scroll anchor for the unfolded season detail — HomeView scrolls
+    /// here when the week peek opens the Stats face.
+    static let statsAnchorID = "season.detail.anchor"
+
     /// Opens (or refocuses) the expanded season detail directly on its
-    /// inline Stats tab — the header week score's destination.
+    /// inline Stats tab — the header week score's destination — then
+    /// asks the parent to glide the stats into view.
     private func openStats() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(.spring(response: 0.55, dampingFraction: 0.86)) {
             seasonDetailTab = .stats
             isExpanded = true
         }
+        onStatsOpened()
     }
 
     private func collapse() {

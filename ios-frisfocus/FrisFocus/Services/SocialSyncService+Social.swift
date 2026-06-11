@@ -176,6 +176,7 @@ private nonisolated struct CircleRowS: Codable, Sendable {
     let collectiveUnit: String?
     let collectiveTarget: Double?
     let createdAt: String
+    let headerUrl: String?
     enum CodingKeys: String, CodingKey {
         case id, name, type
         case ownerId = "owner_id"
@@ -183,6 +184,25 @@ private nonisolated struct CircleRowS: Codable, Sendable {
         case collectiveUnit = "collective_unit"
         case collectiveTarget = "collective_target"
         case createdAt = "created_at"
+        case headerUrl = "header_url"
+    }
+}
+
+/// Sets or clears a circle's shared header photo. Custom encode so a
+/// removal writes an explicit SQL NULL (synthesized Encodable would
+/// omit the key and the update would be a no-op).
+private nonisolated struct CircleHeaderUpdateS: Encodable, Sendable {
+    let headerUrl: String?
+    enum CodingKeys: String, CodingKey {
+        case headerUrl = "header_url"
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        if let headerUrl {
+            try c.encode(headerUrl, forKey: .headerUrl)
+        } else {
+            try c.encodeNil(forKey: .headerUrl)
+        }
     }
 }
 
@@ -629,7 +649,7 @@ extension SocialSyncService {
 
             async let circlesQ: [CircleRowS] = supabase
                 .from("circles")
-                .select("id, owner_id, name, type, end_date, collective_unit, collective_target, created_at")
+                .select("id, owner_id, name, type, end_date, collective_unit, collective_target, created_at, header_url")
                 .in("id", values: circleIds)
                 .execute().value
             async let membersQ: [CircleMemberRowS] = supabase
@@ -697,6 +717,7 @@ extension SocialSyncService {
                     collectiveTarget: row.collectiveTarget,
                     collectiveProgress: type.hasSharedNumber ? progress : nil,
                     createdAt: SyncDates.parse(row.createdAt),
+                    headerUrl: row.headerUrl,
                     ownerId: localId(forRemote: row.ownerId),
                     adminIds: adminLocalIds,
                     membersCanProposeTasks: existing?.membersCanProposeTasks ?? false,
@@ -729,6 +750,21 @@ extension SocialSyncService {
             store.persistAll()
         } catch {
             print("[SocialSync] circles refresh failed: \(error)")
+        }
+    }
+
+    /// Write a circle's shared header photo (or its removal) so every
+    /// member's mirror picks it up. RLS scopes the update to owner/admin.
+    nonisolated func circleHeaderUpdated(circleId: UUID, headerUrl: String?) {
+        Task { @MainActor in
+            do {
+                try await supabase.from("circles")
+                    .update(CircleHeaderUpdateS(headerUrl: headerUrl))
+                    .eq("id", value: circleId.uuidString)
+                    .execute()
+            } catch {
+                print("[SocialSync] circle header sync failed: \(error)")
+            }
         }
     }
 

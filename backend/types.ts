@@ -466,6 +466,7 @@ export type Database = {
           created_at: string
           description: string | null
           end_date: string | null
+          header_url: string | null
           id: string
           join_rule: string
           name: string
@@ -480,6 +481,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           end_date?: string | null
+          header_url?: string | null
           id?: string
           join_rule?: string
           name: string
@@ -494,6 +496,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           end_date?: string | null
+          header_url?: string | null
           id?: string
           join_rule?: string
           name?: string

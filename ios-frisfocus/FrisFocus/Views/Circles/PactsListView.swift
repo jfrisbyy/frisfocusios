@@ -70,6 +70,7 @@ struct PactsListView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .edgeSwipeBack()
         .sheet(isPresented: $showPropose) {
             ProposePactView()
                 .environment(store)
