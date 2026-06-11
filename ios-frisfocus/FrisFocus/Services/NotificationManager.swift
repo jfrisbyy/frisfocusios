@@ -159,6 +159,25 @@ final class NotificationManager {
         guard let route = DeepLinkRoute(userInfo: userInfo) else { return }
         pendingRoute = route
     }
+
+    // MARK: App icon badge
+
+    /// Set the icon badge to the real number of waiting items. Pushes
+    /// carry a server-counted badge; the client re-syncs as threads are
+    /// read so the icon never shows a stale count. Fire-and-forget.
+    static func syncBadge(_ count: Int) {
+        UNUserNotificationCenter.current().setBadgeCount(max(0, count)) { error in
+            if let error {
+                print("[Notifications] Badge sync failed: \(error)")
+            }
+        }
+    }
+
+    /// Clear the badge entirely — called when the app comes to the
+    /// foreground (the user is looking at the app; the icon shouldn't nag).
+    static func clearBadge() {
+        syncBadge(0)
+    }
 }
 
 // MARK: - Wire payload

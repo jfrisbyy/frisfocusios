@@ -264,11 +264,17 @@ Deno.serve(async (req) => {
     }
 
     const copy = buildCopy(payload.type, senderName, circleName, payload.preview, senderId, payload.circleId, payload.messageId);
+
+    // Truthful badge: the real number of things waiting for the recipient
+    // (unread direct messages + pending friend requests), never a
+    // hardcoded constant. Counted with head-only queries so no rows move.
+    const badge = await countBadge(admin, payload.recipientId);
+
     const apsPayload = {
       aps: {
         alert: { title: copy.title, body: copy.body },
         sound: "default",
-        badge: 1,
+        badge,
       },
       ...copy.data,
     };
@@ -311,6 +317,30 @@ Deno.serve(async (req) => {
     return json({ error: "Internal server error" }, 500);
   }
 });
+
+/** The recipient's real badge number: unread direct messages plus
+ *  pending friend requests. Falls back to 1 (something *did* just
+ *  happen) if either count query fails. */
+// deno-lint-ignore no-explicit-any
+async function countBadge(admin: any, recipientId: string): Promise<number> {
+  try {
+    const [{ count: unread }, { count: requests }] = await Promise.all([
+      admin
+        .from("direct_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("recipient_id", recipientId)
+        .is("read_at", null),
+      admin
+        .from("friend_requests")
+        .select("id", { count: "exact", head: true })
+        .eq("addressee_id", recipientId)
+        .eq("status", "pending"),
+    ]);
+    return Math.max(1, (unread ?? 0) + (requests ?? 0));
+  } catch {
+    return 1;
+  }
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

@@ -140,7 +140,7 @@ struct EditProfileView: View {
         if let pickedImage {
             Image(uiImage: pickedImage).resizable().scaledToFill()
         } else if let url = currentPhotoURL {
-            AsyncImage(url: url) { image in
+            CachedImage(url: url) { image in
                 image.resizable().scaledToFill()
             } placeholder: {
                 initialsDisc

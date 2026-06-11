@@ -66,9 +66,16 @@ struct ContentView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     store.performDayRolloverIfNeeded()
+                    // The user is looking at the app — the icon badge
+                    // shouldn't keep nagging about things they can now see.
+                    NotificationManager.clearBadge()
                     if let myId = auth.user?.id {
                         Task { await cadence.sync(into: store, myUserId: myId) }
                     }
+                } else if newPhase == .background || newPhase == .inactive {
+                    // Safety net: flush any debounced, not-yet-written
+                    // saves before iOS can suspend or kill the process.
+                    store.flushPendingSaves()
                 }
             }
     }

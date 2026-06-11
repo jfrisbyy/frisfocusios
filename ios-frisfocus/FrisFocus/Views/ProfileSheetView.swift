@@ -452,7 +452,7 @@ struct ProfileSheetView: View {
         let url = profileStore.myProfile?.photoURL ?? user.photoURL
         ZStack {
             if let url {
-                AsyncImage(url: url) { image in
+                CachedImage(url: url) { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
                     initialDisc(for: user)

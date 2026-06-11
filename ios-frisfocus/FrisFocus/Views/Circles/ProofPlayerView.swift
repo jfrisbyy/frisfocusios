@@ -276,24 +276,42 @@ struct ProofPlayerView: View {
         // player and flips the thread pill to "Reply with a proof."
         await message.markProofWatched(proof, myUserId: myUserId)
 
-        guard let path = proof.mediaPath,
-              let url = await message.signedURL(forMediaPath: path) else {
+        guard let path = proof.mediaPath else {
+            failed = true
+            isLoading = false
+            return
+        }
+        let kind: ProofMediaKind = proof.mediaKind ?? .photo
+
+        // Cache-first: a prefetched (or previously watched / sent) proof
+        // opens straight from disk with zero network — no spinner at all.
+        if let local = ProofMediaCache.cachedFileURL(forMediaPath: path, kind: kind) {
+            if isVideo {
+                startVideo(url: local)
+                return
+            }
+            if let img = UIImage(contentsOfFile: local.path) {
+                image = img
+                isLoading = false
+                return
+            }
+        }
+
+        guard let url = await message.signedURL(forMediaPath: path) else {
             failed = true
             isLoading = false
             return
         }
 
         if isVideo {
-            let avPlayer = AVPlayer(url: url)
-            avPlayer.actionAtItemEnd = .pause
-            player = avPlayer
-            isLoading = false
-            avPlayer.play()
+            startVideo(url: url)
         } else {
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
                 if let img = UIImage(data: data) {
                     image = img
+                    // Remember the bytes so the next open is instant.
+                    ProofMediaCache.store(data, forMediaPath: path, kind: kind)
                 } else {
                     failed = true
                 }
@@ -303,6 +321,14 @@ struct ProofPlayerView: View {
             }
             isLoading = false
         }
+    }
+
+    private func startVideo(url: URL) {
+        let avPlayer = AVPlayer(url: url)
+        avPlayer.actionAtItemEnd = .pause
+        player = avPlayer
+        isLoading = false
+        avPlayer.play()
     }
 
     // MARK: - Playback timing

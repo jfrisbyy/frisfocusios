@@ -32,7 +32,7 @@ struct ProfileAvatarButton: View {
         } label: {
             ZStack {
                 if let photoURL {
-                    AsyncImage(url: photoURL) { image in
+                    CachedImage(url: photoURL) { image in
                         image
                             .resizable()
                             .scaledToFill()

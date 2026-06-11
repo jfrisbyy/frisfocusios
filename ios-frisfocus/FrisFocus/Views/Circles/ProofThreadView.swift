@@ -222,12 +222,17 @@ struct ProofThreadView: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 14) {
+                    if !thread.isEmpty, message.canLoadOlder(withFriendId: friend.id) {
+                        loadEarlierControl
+                    }
+
                     ForEach(thread) { item in
                         ProofThreadBubble(
                             message: item,
                             friend: friend,
                             isMine: item.isMine(myUserId),
                             isPending: message.isPending(item.id),
+                            uploadProgress: (message.isPending(item.id) && item.isProof) ? message.uploadProgress : nil,
                             zoomNamespace: proofZoom,
                             onOpenProof: { openProof(item) },
                             onReplyWithProof: { replyWithProof() }
@@ -257,7 +262,9 @@ struct ProofThreadView: View {
                 .animation(.spring(response: 0.34, dampingFraction: 0.78), value: presence.friendIsTyping)
             }
             .onAppear { scrollToBottom(proxy) }
-            .onChange(of: thread.count) { _, _ in
+            // Follow only *new* messages to the bottom — older pages
+            // prepending up top must never yank the scroll position.
+            .onChange(of: thread.last?.id) { _, _ in
                 withAnimation(.easeOut(duration: 0.25)) { scrollToBottom(proxy) }
             }
             .onChange(of: presence.friendIsTyping) { _, isTyping in
@@ -266,6 +273,39 @@ struct ProofThreadView: View {
                 }
             }
         }
+    }
+
+    /// A quiet "load earlier" affordance at the top of the thread —
+    /// history streams in pages instead of loading everything up front.
+    private var loadEarlierControl: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Task { await message.loadOlderMessages(withFriendId: friend.id, myUserId: myUserId) }
+        } label: {
+            HStack(spacing: 7) {
+                if message.isLoadingOlder {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Theme.textPrimary.opacity(0.6))
+                } else {
+                    Image(systemName: "arrow.up.circle")
+                        .font(.sans(12, weight: .semibold))
+                }
+                Text(message.isLoadingOlder ? "Loading…" : "Load earlier messages")
+                    .font(.sans(12, weight: .medium))
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(0.55))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Capsule(style: .continuous).fill(Color.white.opacity(0.55)))
+            .overlay(Capsule(style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5))
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(message.isLoadingOlder)
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 2)
+        .accessibilityLabel("Load earlier messages")
     }
 
     private let bottomAnchor = "thread.bottom"
@@ -403,6 +443,8 @@ private struct ProofThreadBubble: View {
     let friend: RemoteProfile
     let isMine: Bool
     var isPending: Bool = false
+    /// Live byte progress (0...1) while this proof's media uploads.
+    var uploadProgress: Double? = nil
     var zoomNamespace: Namespace.ID? = nil
     let onOpenProof: () -> Void
     let onReplyWithProof: () -> Void
@@ -421,11 +463,26 @@ private struct ProofThreadBubble: View {
                 } else {
                     messageBubble
                 }
-                Text(isPending ? "sending\u{2026}" : ProofThreadFormat.elapsed(from: message.createdAt))
-                    .font(.sans(10, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                if isPending, let uploadProgress {
+                    // Real byte-level upload progress — never a frozen spinner.
+                    HStack(spacing: 6) {
+                        ProgressView(value: min(1, max(0, uploadProgress)))
+                            .progressViewStyle(.linear)
+                            .tint(accent)
+                            .frame(width: 72)
+                        Text("\(Int(min(1, max(0, uploadProgress)) * 100))%")
+                            .font(.sans(10, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                            .monospacedDigit()
+                    }
                     .padding(.horizontal, 4)
-                    .contentTransition(.opacity)
+                } else {
+                    Text(isPending ? "sending\u{2026}" : ProofThreadFormat.elapsed(from: message.createdAt))
+                        .font(.sans(10, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                        .padding(.horizontal, 4)
+                        .contentTransition(.opacity)
+                }
             }
             .opacity(isPending ? 0.7 : 1)
             .animation(.easeOut(duration: 0.2), value: isPending)

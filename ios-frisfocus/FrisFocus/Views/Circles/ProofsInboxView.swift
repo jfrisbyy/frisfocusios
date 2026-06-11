@@ -45,7 +45,7 @@ struct RemoteAvatarView: View {
     var body: some View {
         ZStack {
             if let url = profile.photoURL {
-                AsyncImage(url: url) { image in
+                CachedImage(url: url) { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
                     initials

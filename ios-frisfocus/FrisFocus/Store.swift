@@ -18,12 +18,12 @@ import Observation
 final class Store {
     // MARK: - State
 
-    var currentSeason: Season
-    var tasks: [FFTask] = []
-    var todos: [Todo] = []
-    var logEntries: [LogEntry] = []
-    var notes: [Note] = []
-    var folders: [NoteFolder] = []
+    var currentSeason: Season { didSet { markDirty(.season) } }
+    var tasks: [FFTask] = [] { didSet { markDirty(.tasks) } }
+    var todos: [Todo] = [] { didSet { markDirty(.todos) } }
+    var logEntries: [LogEntry] = [] { didSet { markDirty(.logEntries) } }
+    var notes: [Note] = [] { didSet { markDirty(.notes) } }
+    var folders: [NoteFolder] = [] { didSet { markDirty(.folders) } }
 
     // MARK: - Social
 
@@ -32,44 +32,44 @@ final class Store {
     /// the data model don't reset who the user is.
     var currentUserId: UUID = UUID()
 
-    var friends: [Friend] = []
-    var circles: [FFCircle] = []
-    var circleTaskCompletions: [CircleTaskCompletion] = []
-    var circleContributions: [CircleContribution] = []
-    var signalFacts: [SignalFact] = []
-    var cheers: [Cheer] = []
-    var storyPosts: [StoryPost] = []
-    var likes: [Like] = []
-    var comments: [Comment] = []
-    var mediaAssets: [MediaAsset] = []
+    var friends: [Friend] = [] { didSet { markDirty(.friends) } }
+    var circles: [FFCircle] = [] { didSet { markDirty(.circles) } }
+    var circleTaskCompletions: [CircleTaskCompletion] = [] { didSet { markDirty(.circleTaskCompletions) } }
+    var circleContributions: [CircleContribution] = [] { didSet { markDirty(.circleContributions) } }
+    var signalFacts: [SignalFact] = [] { didSet { markDirty(.signalFacts) } }
+    var cheers: [Cheer] = [] { didSet { markDirty(.cheers) } }
+    var storyPosts: [StoryPost] = [] { didSet { markDirty(.storyPosts) } }
+    var likes: [Like] = [] { didSet { markDirty(.likes) } }
+    var comments: [Comment] = [] { didSet { markDirty(.comments) } }
+    var mediaAssets: [MediaAsset] = [] { didSet { markDirty(.mediaAssets) } }
 
     /// Privately-sent photos/videos (the counterpart to the public
     /// 24h `storyPosts`). One row per recipient — picking several
     /// friends writes one share each. Seeded with a couple of
     /// incoming examples so the Direct surface reads alive on first
     /// launch.
-    var directShares: [DirectShare] = []
+    var directShares: [DirectShare] = [] { didSet { markDirty(.directShares) } }
 
     /// Set of story post ids the current user has played back. Drives
     /// the three-state story avatar ring (no story / watched / new)
     /// on the friends rail. Persisted under its own key so it
     /// survives relaunch; missing on first load is treated as empty.
-    var viewedStoryPostIds: Set<UUID> = []
+    var viewedStoryPostIds: Set<UUID> = [] { didSet { markDirty(.viewedStoryPostIds) } }
 
     // MARK: - Avoidance (penalties)
 
     /// User-defined behaviors to reduce. Standalone, not tied to a
     /// positive task. Each logged occurrence deducts points in real
     /// time via a matching `.penalty` LogEntry.
-    var avoidanceItems: [AvoidanceItem] = []
-    var avoidanceOccurrences: [AvoidanceOccurrence] = []
+    var avoidanceItems: [AvoidanceItem] = [] { didSet { markDirty(.avoidanceItems) } }
+    var avoidanceOccurrences: [AvoidanceOccurrence] = [] { didSet { markDirty(.avoidanceOccurrences) } }
 
     // MARK: - Habit Trains
 
     /// Named, ordered routines made of task / note steps. Daily
     /// completion of every task-step awards `bonusPoints` once via a
     /// `.trainBonus` LogEntry.
-    var habitTrains: [HabitTrain] = []
+    var habitTrains: [HabitTrain] = [] { didSet { markDirty(.habitTrains) } }
 
     // MARK: - Weekly boosters (first-class)
 
@@ -77,7 +77,7 @@ final class Store {
     /// category and pays out all-or-nothing once its count threshold is
     /// reached within the period. First-class so a booster can span
     /// several tasks (a category) and survive any single task's deletion.
-    var boosters: [WeeklyBooster] = []
+    var boosters: [WeeklyBooster] = [] { didSet { markDirty(.boosters) } }
 
     // MARK: - Cadence link (Esengo)
 
@@ -85,27 +85,27 @@ final class Store {
     /// outcome rule) to FrisFocus scoring. Surfaced only while
     /// `cadenceConnected` is true. The link enriches FrisFocus; it is
     /// never load-bearing.
-    var cadenceLinks: [CadenceLink] = []
+    var cadenceLinks: [CadenceLink] = [] { didSet { markDirty(.cadenceLinks) } }
 
     /// Recorded passive-outcome fills (sleep / focus / wind-down) so the
     /// Season view can show "✓ 6h 40m last night" + the credited points.
-    var cadenceOutcomeFulfillments: [CadenceOutcomeFulfillment] = []
+    var cadenceOutcomeFulfillments: [CadenceOutcomeFulfillment] = [] { didSet { markDirty(.cadenceOutcomeFulfillments) } }
 
     /// Outcome-event ids already scored. A local idempotency backstop on
     /// top of the backend `consumed_by_frisfocus` flag so a verified
     /// event is never double-counted.
-    var consumedCadenceEventIds: Set<UUID> = []
+    var consumedCadenceEventIds: Set<UUID> = [] { didSet { markDirty(.consumedCadenceEventIds) } }
 
     /// Whether the user opted in to the Cadence link. Gates every link
     /// surface; false means none of the link UI appears.
-    var cadenceConnected: Bool = false
+    var cadenceConnected: Bool = false { didSet { markDirty(.settings) } }
 
     /// One-time "Connect Cadence" invite dismissal.
-    var cadenceInviteDismissed: Bool = false
+    var cadenceInviteDismissed: Bool = false { didSet { markDirty(.settings) } }
 
     /// Privacy: sleep/focus-derived points stay hidden from the
     /// friend-facing layer unless the user opts in here.
-    var cadenceSurfacePointsSocially: Bool = false
+    var cadenceSurfacePointsSocially: Bool = false { didSet { markDirty(.settings) } }
 
     // MARK: - Reminders (value-based)
 
@@ -113,15 +113,15 @@ final class Store {
     /// least this many points. The single user-facing reminder control,
     /// replacing the retired MUST/SHOULD/COULD priority tiers. Gentle by
     /// design — low-value habits never nag.
-    var reminderValueThreshold: Int = 8
+    var reminderValueThreshold: Int = 8 { didSet { markDirty(.settings) } }
 
     // MARK: - Pacts
 
     /// Two-person, time-boxed shared commitments. A pact is the
     /// witness-model reframe of a 1v1 — symmetric mutual visibility,
     /// no winner field. Lives alongside circles but on its own surface.
-    var pacts: [Pact] = []
-    var pactCompletions: [PactCompletion] = []
+    var pacts: [Pact] = [] { didSet { markDirty(.pacts) } }
+    var pactCompletions: [PactCompletion] = [] { didSet { markDirty(.pactCompletions) } }
 
     // MARK: - Circle governance (C11)
 
@@ -130,14 +130,14 @@ final class Store {
     /// `membersCanProposeTasks == true` AND the requester isn't a
     /// curator (owner/admin). Resolved rows are kept so the
     /// requester can see the outcome.
-    var circleTaskRequests: [CircleTaskRequest] = []
+    var circleTaskRequests: [CircleTaskRequest] = [] { didSet { markDirty(.circleTaskRequests) } }
 
     // MARK: - Focus (F1)
 
     /// Completed focus sessions, newest last. The active session lives
     /// in `activeFocusSession` until it ends, at which point it's
     /// appended here and persisted to focus history.
-    var focusSessions: [FocusSession] = []
+    var focusSessions: [FocusSession] = [] { didSet { markDirty(.focusSessions) } }
 
     /// In-flight focus block. Observers (`FocusModeView`) read and
     /// mutate this via the Store helpers below — `startFocusSession`,
@@ -149,7 +149,7 @@ final class Store {
 
     /// Completed shared focus blocks, newest last. Persisted alongside
     /// solo focus history for review.
-    var sharedFocusBlocks: [SharedFocusBlock] = []
+    var sharedFocusBlocks: [SharedFocusBlock] = [] { didSet { markDirty(.sharedFocusBlocks) } }
 
     /// In-flight shared block. Same lifecycle pattern as solo focus —
     /// lives in memory until the window closes, then it's appended to
@@ -294,6 +294,16 @@ final class Store {
             userDefaults.removeObject(forKey: Keys.cadenceSurfacePointsSocially)
             userDefaults.set(Store.currentModelVersion, forKey: Keys.modelVersion)
         }
+        #else
+        // RELEASE: persisted data is NEVER wiped on a model-version bump.
+        // Before the stamp moves forward, snapshot every key's raw bytes
+        // once (backup.v{old}.{key}) so a failed decode under the new
+        // shape stays recoverable, then carry the data forward.
+        let storedVersion = userDefaults.integer(forKey: Keys.modelVersion)
+        if storedVersion < Store.currentModelVersion {
+            Store.backupPersistedData(fromVersion: storedVersion)
+            userDefaults.set(Store.currentModelVersion, forKey: Keys.modelVersion)
+        }
         #endif
 
         // Load or mint the per-install user id. Persisted under its
@@ -308,10 +318,24 @@ final class Store {
             userDefaults.set(minted.uuidString, forKey: Keys.currentUserId)
         }
 
-        if let seasonData = userDefaults.data(forKey: Keys.currentSeason),
-           let season = try? JSONDecoder().decode(Season.self, from: seasonData) {
+        let storedSeasonData = userDefaults.data(forKey: Keys.currentSeason)
+        let hasPersistedData = storedSeasonData != nil || userDefaults.data(forKey: Keys.tasks) != nil
+        if hasPersistedData {
             // Returning user — load everything we've persisted.
-            self.currentSeason = season
+            if let storedSeasonData,
+               let season = try? JSONDecoder().decode(Season.self, from: storedSeasonData) {
+                self.currentSeason = season
+            } else {
+                // Season bytes exist but can't be read under the current
+                // shape (or are missing while other data survives).
+                // Preserve the raw bytes for recovery and start a fresh
+                // season — never reseed demo data over real history.
+                if let storedSeasonData {
+                    userDefaults.set(storedSeasonData, forKey: "recovery.\(Keys.currentSeason)")
+                    print("[Store] Season decode failed — raw data preserved under 'recovery.\(Keys.currentSeason)'.")
+                }
+                self.currentSeason = Store.seedSeason()
+            }
             self.tasks = Store.loadArray(Keys.tasks) ?? []
             self.todos = Store.loadArray(Keys.todos) ?? []
             self.logEntries = Store.loadArray(Keys.logEntries) ?? []
@@ -371,7 +395,8 @@ final class Store {
                     self.tasks[i].booster = nil
                 }
                 self.boosters = migrated
-                persistAll()
+                dirtyKeys.formUnion([.tasks, .boosters])
+                flushPendingSaves()
             }
 
             // Back-fill ownerId on any circle persisted before the
@@ -449,113 +474,171 @@ final class Store {
                 userId: self.currentUserId
             )
 
-            persistAll()
+            // First-launch seed: assignments inside `init` don't fire
+            // `didSet`, so mark everything dirty and write it through now.
+            markAllDirty()
+            flushPendingSaves()
         }
     }
 
     // MARK: - Persistence
+    //
+    // Targeted, batched saving. Every persisted property marks its own
+    // `DataKey` dirty via `didSet`, so a flush writes *only* the
+    // collections that actually changed — checking one task off no
+    // longer re-serializes ~30 arrays. `persistAll()` keeps its name
+    // (61+ call sites) but now just schedules a debounced flush, so
+    // rapid taps coalesce into a single write off the render path. A
+    // safety flush runs when the app heads to the background.
 
-    private static func loadArray<T: Decodable>(_ key: String) -> [T]? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode([T].self, from: data)
+    /// One persistable slice of the Store. Each case maps to a single
+    /// UserDefaults key.
+    enum DataKey: CaseIterable {
+        case season, tasks, todos, logEntries, notes, folders
+        case friends, circles, circleTaskCompletions, circleContributions
+        case signalFacts, cheers, storyPosts, directShares, likes, comments, mediaAssets
+        case avoidanceItems, avoidanceOccurrences, habitTrains, boosters
+        case viewedStoryPostIds, pacts, pactCompletions, circleTaskRequests
+        case focusSessions, sharedFocusBlocks
+        case cadenceLinks, cadenceOutcomeFulfillments, consumedCadenceEventIds
+        case settings
     }
 
+    /// Collections mutated since the last flush.
+    @ObservationIgnored private var dirtyKeys: Set<DataKey> = []
+    /// The pending debounced flush, if one is scheduled.
+    @ObservationIgnored private var pendingFlush: Task<Void, Never>?
+
+    private func markDirty(_ key: DataKey) {
+        dirtyKeys.insert(key)
+    }
+
+    private func markAllDirty() {
+        dirtyKeys = Set(DataKey.allCases)
+    }
+
+    /// Decode a persisted array. A decode failure never crashes and
+    /// never silently discards bytes: the raw data is preserved under a
+    /// recovery key and the failure is logged before falling back.
+    private static func loadArray<T: Decodable>(_ key: String) -> [T]? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        do {
+            return try JSONDecoder().decode([T].self, from: data)
+        } catch {
+            UserDefaults.standard.set(data, forKey: "recovery.\(key)")
+            print("[Store] Decode failed for '\(key)' — raw data preserved under 'recovery.\(key)': \(error)")
+            return nil
+        }
+    }
+
+    /// Schedule a save of everything that changed. Mutations mark their
+    /// own collections dirty (`didSet`), so despite the historical name
+    /// this writes only the dirty slices — debounced 250 ms so a burst
+    /// of check-offs costs one write.
     func persistAll() {
+        scheduleFlush()
+    }
+
+    private func scheduleFlush() {
+        guard !dirtyKeys.isEmpty else { return }
+        pendingFlush?.cancel()
+        pendingFlush = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            self?.flushPendingSaves()
+        }
+    }
+
+    /// Write every dirty collection now. Called by the debounce, and as
+    /// a safety net when the app heads to the background.
+    func flushPendingSaves() {
+        pendingFlush?.cancel()
+        pendingFlush = nil
+        guard !dirtyKeys.isEmpty else { return }
+        let keys = dirtyKeys
+        dirtyKeys = []
         let encoder = JSONEncoder()
-        if let data = try? encoder.encode(currentSeason) {
-            userDefaults.set(data, forKey: Keys.currentSeason)
+        for key in keys {
+            write(key, with: encoder)
         }
-        if let data = try? encoder.encode(tasks) {
-            userDefaults.set(data, forKey: Keys.tasks)
+    }
+
+    private func write(_ key: DataKey, with encoder: JSONEncoder) {
+        switch key {
+        case .season: setJSON(currentSeason, forKey: Keys.currentSeason, encoder: encoder)
+        case .tasks: setJSON(tasks, forKey: Keys.tasks, encoder: encoder)
+        case .todos: setJSON(todos, forKey: Keys.todos, encoder: encoder)
+        case .logEntries: setJSON(logEntries, forKey: Keys.logEntries, encoder: encoder)
+        case .notes: setJSON(notes, forKey: Keys.notes, encoder: encoder)
+        case .folders: setJSON(folders, forKey: Keys.folders, encoder: encoder)
+        case .friends: setJSON(friends, forKey: Keys.friends, encoder: encoder)
+        case .circles: setJSON(circles, forKey: Keys.circles, encoder: encoder)
+        case .circleTaskCompletions: setJSON(circleTaskCompletions, forKey: Keys.circleTaskCompletions, encoder: encoder)
+        case .circleContributions: setJSON(circleContributions, forKey: Keys.circleContributions, encoder: encoder)
+        case .signalFacts: setJSON(signalFacts, forKey: Keys.signalFacts, encoder: encoder)
+        case .cheers: setJSON(cheers, forKey: Keys.cheers, encoder: encoder)
+        case .storyPosts: setJSON(storyPosts, forKey: Keys.storyPosts, encoder: encoder)
+        case .directShares: setJSON(directShares, forKey: Keys.directShares, encoder: encoder)
+        case .likes: setJSON(likes, forKey: Keys.likes, encoder: encoder)
+        case .comments: setJSON(comments, forKey: Keys.comments, encoder: encoder)
+        case .mediaAssets: setJSON(mediaAssets, forKey: Keys.mediaAssets, encoder: encoder)
+        case .avoidanceItems: setJSON(avoidanceItems, forKey: Keys.avoidanceItems, encoder: encoder)
+        case .avoidanceOccurrences: setJSON(avoidanceOccurrences, forKey: Keys.avoidanceOccurrences, encoder: encoder)
+        case .habitTrains: setJSON(habitTrains, forKey: Keys.habitTrains, encoder: encoder)
+        case .boosters: setJSON(boosters, forKey: Keys.boosters, encoder: encoder)
+        case .viewedStoryPostIds: setJSON(Array(viewedStoryPostIds), forKey: Keys.viewedStoryPostIds, encoder: encoder)
+        case .pacts: setJSON(pacts, forKey: Keys.pacts, encoder: encoder)
+        case .pactCompletions: setJSON(pactCompletions, forKey: Keys.pactCompletions, encoder: encoder)
+        case .circleTaskRequests: setJSON(circleTaskRequests, forKey: Keys.circleTaskRequests, encoder: encoder)
+        case .focusSessions: setJSON(focusSessions, forKey: Keys.focusSessions, encoder: encoder)
+        case .sharedFocusBlocks: setJSON(sharedFocusBlocks, forKey: Keys.sharedFocusBlocks, encoder: encoder)
+        case .cadenceLinks: setJSON(cadenceLinks, forKey: Keys.cadenceLinks, encoder: encoder)
+        case .cadenceOutcomeFulfillments: setJSON(cadenceOutcomeFulfillments, forKey: Keys.cadenceOutcomeFulfillments, encoder: encoder)
+        case .consumedCadenceEventIds: setJSON(Array(consumedCadenceEventIds), forKey: Keys.consumedCadenceEventIds, encoder: encoder)
+        case .settings:
+            userDefaults.set(cadenceConnected, forKey: Keys.cadenceConnected)
+            userDefaults.set(cadenceInviteDismissed, forKey: Keys.cadenceInviteDismissed)
+            userDefaults.set(cadenceSurfacePointsSocially, forKey: Keys.cadenceSurfacePointsSocially)
+            userDefaults.set(reminderValueThreshold, forKey: Keys.reminderValueThreshold)
         }
-        if let data = try? encoder.encode(todos) {
-            userDefaults.set(data, forKey: Keys.todos)
+    }
+
+    private func setJSON<T: Encodable>(_ value: T, forKey key: String, encoder: JSONEncoder) {
+        do {
+            userDefaults.set(try encoder.encode(value), forKey: key)
+        } catch {
+            print("[Store] Encode failed for '\(key)': \(error)")
         }
-        if let data = try? encoder.encode(logEntries) {
-            userDefaults.set(data, forKey: Keys.logEntries)
+    }
+
+    // MARK: - Migration safety
+
+    /// Every key the Store persists — the list a release-version bump
+    /// snapshots before any new code touches the data.
+    private static let allPersistedKeys: [String] = [
+        Keys.currentSeason, Keys.tasks, Keys.todos, Keys.logEntries,
+        Keys.notes, Keys.folders, Keys.friends, Keys.circles,
+        Keys.circleTaskCompletions, Keys.circleContributions,
+        Keys.signalFacts, Keys.cheers, Keys.storyPosts, Keys.directShares,
+        Keys.likes, Keys.comments, Keys.mediaAssets, Keys.avoidanceItems,
+        Keys.avoidanceOccurrences, Keys.habitTrains, Keys.boosters,
+        Keys.viewedStoryPostIds, Keys.pacts, Keys.pactCompletions,
+        Keys.circleTaskRequests, Keys.focusSessions, Keys.sharedFocusBlocks,
+        Keys.cadenceLinks, Keys.cadenceOutcomeFulfillments,
+        Keys.consumedCadenceEventIds
+    ]
+
+    /// One-time, pre-migration snapshot: copy each key's raw bytes to
+    /// `backup.v{oldVersion}.{key}` so a failed decode under the new
+    /// shape can always be recovered instead of lost.
+    private static func backupPersistedData(fromVersion version: Int) {
+        let defaults = UserDefaults.standard
+        for key in allPersistedKeys {
+            let backupKey = "backup.v\(version).\(key)"
+            guard defaults.object(forKey: backupKey) == nil,
+                  let data = defaults.data(forKey: key) else { continue }
+            defaults.set(data, forKey: backupKey)
         }
-        if let data = try? encoder.encode(notes) {
-            userDefaults.set(data, forKey: Keys.notes)
-        }
-        if let data = try? encoder.encode(folders) {
-            userDefaults.set(data, forKey: Keys.folders)
-        }
-        if let data = try? encoder.encode(friends) {
-            userDefaults.set(data, forKey: Keys.friends)
-        }
-        if let data = try? encoder.encode(circles) {
-            userDefaults.set(data, forKey: Keys.circles)
-        }
-        if let data = try? encoder.encode(circleTaskCompletions) {
-            userDefaults.set(data, forKey: Keys.circleTaskCompletions)
-        }
-        if let data = try? encoder.encode(circleContributions) {
-            userDefaults.set(data, forKey: Keys.circleContributions)
-        }
-        if let data = try? encoder.encode(signalFacts) {
-            userDefaults.set(data, forKey: Keys.signalFacts)
-        }
-        if let data = try? encoder.encode(cheers) {
-            userDefaults.set(data, forKey: Keys.cheers)
-        }
-        if let data = try? encoder.encode(storyPosts) {
-            userDefaults.set(data, forKey: Keys.storyPosts)
-        }
-        if let data = try? encoder.encode(directShares) {
-            userDefaults.set(data, forKey: Keys.directShares)
-        }
-        if let data = try? encoder.encode(likes) {
-            userDefaults.set(data, forKey: Keys.likes)
-        }
-        if let data = try? encoder.encode(comments) {
-            userDefaults.set(data, forKey: Keys.comments)
-        }
-        if let data = try? encoder.encode(mediaAssets) {
-            userDefaults.set(data, forKey: Keys.mediaAssets)
-        }
-        if let data = try? encoder.encode(avoidanceItems) {
-            userDefaults.set(data, forKey: Keys.avoidanceItems)
-        }
-        if let data = try? encoder.encode(avoidanceOccurrences) {
-            userDefaults.set(data, forKey: Keys.avoidanceOccurrences)
-        }
-        if let data = try? encoder.encode(habitTrains) {
-            userDefaults.set(data, forKey: Keys.habitTrains)
-        }
-        if let data = try? encoder.encode(boosters) {
-            userDefaults.set(data, forKey: Keys.boosters)
-        }
-        if let data = try? encoder.encode(Array(viewedStoryPostIds)) {
-            userDefaults.set(data, forKey: Keys.viewedStoryPostIds)
-        }
-        if let data = try? encoder.encode(pacts) {
-            userDefaults.set(data, forKey: Keys.pacts)
-        }
-        if let data = try? encoder.encode(pactCompletions) {
-            userDefaults.set(data, forKey: Keys.pactCompletions)
-        }
-        if let data = try? encoder.encode(circleTaskRequests) {
-            userDefaults.set(data, forKey: Keys.circleTaskRequests)
-        }
-        if let data = try? encoder.encode(focusSessions) {
-            userDefaults.set(data, forKey: Keys.focusSessions)
-        }
-        if let data = try? encoder.encode(sharedFocusBlocks) {
-            userDefaults.set(data, forKey: Keys.sharedFocusBlocks)
-        }
-        if let data = try? encoder.encode(cadenceLinks) {
-            userDefaults.set(data, forKey: Keys.cadenceLinks)
-        }
-        if let data = try? encoder.encode(cadenceOutcomeFulfillments) {
-            userDefaults.set(data, forKey: Keys.cadenceOutcomeFulfillments)
-        }
-        if let data = try? encoder.encode(Array(consumedCadenceEventIds)) {
-            userDefaults.set(data, forKey: Keys.consumedCadenceEventIds)
-        }
-        userDefaults.set(cadenceConnected, forKey: Keys.cadenceConnected)
-        userDefaults.set(cadenceInviteDismissed, forKey: Keys.cadenceInviteDismissed)
-        userDefaults.set(cadenceSurfacePointsSocially, forKey: Keys.cadenceSurfacePointsSocially)
-        userDefaults.set(reminderValueThreshold, forKey: Keys.reminderValueThreshold)
     }
 
     // MARK: - Focus (F1) actions

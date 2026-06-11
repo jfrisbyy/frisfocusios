@@ -2027,21 +2027,29 @@ struct CaptureReviewView: View {
     }
 
     /// Resolves the bytes to send for a video. When there are overlays or a
-    /// filter tint, it burns them into a fresh clip; otherwise it sends the
-    /// raw recording. Falls back to the raw recording if rendering fails.
+    /// filter tint, it burns them into a fresh clip first. Every clip is
+    /// then re-encoded to capped-quality H.264 .mp4 (`VideoTranscoder`)
+    /// before it touches the network — a raw 30s `.mov` drops to a few MB.
+    /// Falls back to the raw recording if rendering/transcode fails.
     private func resolveVideoData(url: URL) async -> Data? {
         let hasOverlays = !captions.isEmpty || !taskStickers.isEmpty || !pkCanvas.drawing.strokes.isEmpty
         let tint = videoTintColor()
-        guard hasOverlays || tint != nil else {
-            return try? Data(contentsOf: url)
+
+        var sourceURL = url
+        if hasOverlays || tint != nil {
+            let burned = await VideoOverlayExporter.export(sourceURL: url, tint: tint) { renderSize in
+                hasOverlays ? overlayImage(at: renderSize) : nil
+            }
+            if let burned { sourceURL = burned }
         }
-        let burned = await VideoOverlayExporter.export(sourceURL: url, tint: tint) { renderSize in
-            hasOverlays ? overlayImage(at: renderSize) : nil
-        }
-        if let burned, let data = try? Data(contentsOf: burned) {
+
+        // Snapchat-style outbound compression: capped-quality H.264 in an
+        // .mp4 container, optimized for network streaming.
+        if let compressed = await VideoTranscoder.compressForUpload(sourceURL: sourceURL),
+           let data = try? Data(contentsOf: compressed) {
             return data
         }
-        return try? Data(contentsOf: url)
+        return try? Data(contentsOf: sourceURL)
     }
 
     /// For photos we flatten the filtered image + caption + drawing layers

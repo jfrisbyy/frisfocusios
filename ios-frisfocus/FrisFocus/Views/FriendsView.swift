@@ -366,7 +366,7 @@ struct FriendsView: View {
     private func avatar(_ profile: RemoteProfile) -> some View {
         ZStack {
             if let url = profile.photoURL {
-                AsyncImage(url: url) { image in
+                CachedImage(url: url) { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
                     initialsDisc(profile)

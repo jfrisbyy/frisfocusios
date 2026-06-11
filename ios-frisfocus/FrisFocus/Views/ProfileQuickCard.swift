@@ -216,7 +216,7 @@ private struct ProfileQuickCardOverlay: View {
     private var avatar: some View {
         ZStack {
             if let photoURL {
-                AsyncImage(url: photoURL) { image in
+                CachedImage(url: photoURL) { image in
                     image.resizable().scaledToFill()
                 } placeholder: {
                     initialsDisc

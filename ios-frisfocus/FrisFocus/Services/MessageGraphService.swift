@@ -150,13 +150,19 @@ struct DirectConversationSummary: Identifiable {
 @Observable
 @MainActor
 final class MessageGraphService {
-    /// Every message the signed-in user is part of, oldest first.
+    /// The loaded message window (the recent slice plus any older pages
+    /// pulled in by threads), oldest first.
     var messages: [DirectMessage] = []
     /// Ids of optimistic messages shown in-thread before the network
     /// confirms them. The UI renders these slightly muted ("sending…").
     var pendingMessageIds: Set<UUID> = []
     var isLoading = false
     var isWorking = false
+    /// True while an older history page is being fetched for a thread.
+    var isLoadingOlder = false
+    /// Byte-level progress (0...1) of an in-flight proof upload, nil
+    /// when nothing is uploading. Rendered on the optimistic pill.
+    var uploadProgress: Double?
     var errorMessage: String?
     var showError = false
 
@@ -166,6 +172,29 @@ final class MessageGraphService {
 
     @ObservationIgnored private var channel: RealtimeChannelV2?
     @ObservationIgnored private var realtimeTask: Task<Void, Never>?
+
+    // MARK: Pagination state
+
+    /// How many recent rows the initial load pulls. Conversations stay
+    /// fast no matter how much history exists — older pages stream in
+    /// per-thread on demand.
+    private static let recentPageSize = 200
+    /// Page size for "load earlier" fetches inside one thread.
+    private static let olderPageSize = 60
+    /// True when the initial window already contains the user's entire
+    /// history — no thread has anything older to fetch.
+    @ObservationIgnored private var allHistoryLoaded = false
+    /// Threads whose full history is loaded (an older-page fetch came
+    /// back short), so the UI can stop offering "load earlier".
+    @ObservationIgnored private var exhaustedThreads: Set<String> = []
+
+    /// Signed URLs already minted this session, keyed by storage path.
+    /// Reused until shortly before expiry so players and prefetchers
+    /// never re-sign (and the URL cache stays warm).
+    @ObservationIgnored private var signedURLCache: [String: (url: URL, expires: Date)] = [:]
+
+    /// The column list every row fetch shares.
+    private static let rowColumns = "id, sender_id, recipient_id, kind, body, media_path, media_kind, media_duration, created_at, read_at, watched_at"
 
     // MARK: Date helpers
 
@@ -182,7 +211,14 @@ final class MessageGraphService {
         if let d = isoFormatter.date(from: raw) { return d }
         let plain = ISO8601DateFormatter()
         plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: raw)
+        if let d = plain.date(from: raw) { return d }
+        // Realtime rows can arrive without a timezone suffix — treat as UTC.
+        if !raw.hasSuffix("Z"), !raw.contains("+") {
+            let zulu = raw + "Z"
+            if let d = isoFormatter.date(from: zulu) { return d }
+            return plain.date(from: zulu)
+        }
+        return nil
     }
 
     private func mapRow(_ r: DirectMessageRow) -> DirectMessage? {
@@ -204,26 +240,71 @@ final class MessageGraphService {
 
     // MARK: Load
 
-    /// Pull every message the user is part of (sent or received) and
-    /// resolve each counterpart's profile in a single round-trip.
+    /// Pull the *recent* window of messages (newest `recentPageSize`)
+    /// and resolve each counterpart's profile in a single round-trip.
+    /// Older history streams in per-thread via `loadOlderMessages`.
     func load(myUserId: String) async {
         isLoading = true
         defer { isLoading = false }
         do {
             let rows: [DirectMessageRow] = try await supabase
                 .from("direct_messages")
-                .select("id, sender_id, recipient_id, kind, body, media_path, media_kind, media_duration, created_at, read_at, watched_at")
+                .select(Self.rowColumns)
                 .or("sender_id.eq.\(myUserId),recipient_id.eq.\(myUserId)")
-                .order("created_at", ascending: true)
+                .order("created_at", ascending: false)
+                .limit(Self.recentPageSize)
                 .execute()
                 .value
+
+            allHistoryLoaded = rows.count < Self.recentPageSize
 
             let counterpartIds = Set(rows.map { $0.senderId == myUserId ? $0.recipientId : $0.senderId })
             profilesById = try await fetchProfiles(ids: Array(counterpartIds))
 
-            messages = rows.compactMap(mapRow)
+            messages = rows.reversed().compactMap(mapRow)
+            syncBadge(myUserId: myUserId)
+            prefetchMedia(myUserId: myUserId)
         } catch {
             fail("Couldn't load your messages.", error)
+        }
+    }
+
+    // MARK: Older history (per-thread pages)
+
+    /// Whether this thread might still have earlier messages to pull.
+    func canLoadOlder(withFriendId friendId: String) -> Bool {
+        !allHistoryLoaded && !exhaustedThreads.contains(friendId)
+    }
+
+    /// Fetch the next older page for one thread and merge it in. Marks
+    /// the thread exhausted when a short page comes back.
+    func loadOlderMessages(withFriendId friendId: String, myUserId: String) async {
+        guard !isLoadingOlder, canLoadOlder(withFriendId: friendId) else { return }
+        isLoadingOlder = true
+        defer { isLoadingOlder = false }
+
+        let oldest = thread(withFriendId: friendId, myUserId: myUserId).first?.createdAt ?? Date()
+        do {
+            let rows: [DirectMessageRow] = try await supabase
+                .from("direct_messages")
+                .select(Self.rowColumns)
+                .or("and(sender_id.eq.\(myUserId),recipient_id.eq.\(friendId)),and(sender_id.eq.\(friendId),recipient_id.eq.\(myUserId))")
+                .lt("created_at", value: Self.isoString(oldest))
+                .order("created_at", ascending: false)
+                .limit(Self.olderPageSize)
+                .execute()
+                .value
+
+            if rows.count < Self.olderPageSize {
+                exhaustedThreads.insert(friendId)
+            }
+            let existing = Set(messages.map(\.id))
+            let fresh = rows.compactMap(mapRow).filter { !existing.contains($0.id) }
+            guard !fresh.isEmpty else { return }
+            messages.append(contentsOf: fresh)
+            messages.sort { $0.createdAt < $1.createdAt }
+        } catch {
+            fail("Couldn't load earlier messages.", error)
         }
     }
 
@@ -332,6 +413,15 @@ final class MessageGraphService {
         isWorking = true
         defer { isWorking = false }
 
+        // Hard ceiling — clips are transcoded before they reach here, so
+        // anything still over the cap is refused with a friendly message
+        // rather than silently burning the user's data plan.
+        guard data.count <= VideoTranscoder.maxUploadBytes else {
+            isWorking = false
+            fail("That clip is too large to send. Try a shorter one.", StorageUploadError.badResponse(status: 413))
+            return
+        }
+
         let path = Self.mediaPath(myUserId: myUserId, recipientId: recipientId, kind: mediaKind)
         let contentType = mediaKind == .video ? "video/mp4" : "image/jpeg"
         let trimmedCaption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -354,9 +444,21 @@ final class MessageGraphService {
         appendOptimistic(temp)
 
         do {
-            _ = try await supabase.storage
-                .from("proofs")
-                .upload(path, data: data, options: FileOptions(cacheControl: "3600", contentType: contentType, upsert: false))
+            // Direct upload with real byte-level progress for the pill.
+            uploadProgress = 0
+            try await StorageUploadClient.upload(
+                data: data,
+                bucket: "proofs",
+                path: path,
+                contentType: contentType
+            ) { [weak self] progress in
+                Task { @MainActor in self?.uploadProgress = progress }
+            }
+            uploadProgress = nil
+
+            // Seed the local media cache with the bytes we just sent so
+            // "watch again" replays instantly and for free.
+            ProofMediaCache.store(data, forMediaPath: path, kind: mediaKind)
 
             let created: DirectMessageRow = try await supabase
                 .from("direct_messages")
@@ -376,6 +478,7 @@ final class MessageGraphService {
             confirmOptimistic(tempId: temp.id, with: created)
             PushService.send(to: recipientId, kind: .proof, preview: trimmedCaption, messageId: created.id.uuidString)
         } catch {
+            uploadProgress = nil
             removeOptimistic(tempId: temp.id)
             fail("Couldn't send your proof.", error)
         }
@@ -431,6 +534,8 @@ final class MessageGraphService {
             if let idx = messages.firstIndex(where: { $0.id == id }) { messages[idx].readAt = now }
         }
 
+        syncBadge(myUserId: myUserId)
+
         do {
             try await supabase
                 .from("direct_messages")
@@ -462,25 +567,72 @@ final class MessageGraphService {
 
     // MARK: Media
 
-    /// A short-lived signed URL for a proof's private media, or nil on
-    /// failure. The bucket is private, so this is the only way to load it.
+    /// A signed URL for a proof's private media, or nil on failure.
+    /// Cached by storage path and reused until shortly before expiry,
+    /// so repeated opens never re-sign (and downstream URL-keyed caches
+    /// stay warm).
     func signedURL(forMediaPath path: String, expiresIn seconds: Int = 3600) async -> URL? {
+        if let hit = signedURLCache[path], hit.expires > Date().addingTimeInterval(120) {
+            return hit.url
+        }
         do {
-            return try await supabase.storage
+            let url = try await supabase.storage
                 .from("proofs")
                 .createSignedURL(path: path, expiresIn: seconds)
+            signedURLCache[path] = (url, Date().addingTimeInterval(TimeInterval(seconds)))
+            return url
         } catch {
             print("[MessageGraph] Signed URL failed for \(path): \(error)")
             return nil
         }
     }
 
+    // MARK: Prefetch
+
+    /// Quietly warm the caches for what the user is most likely to tap
+    /// next: every counterpart's avatar plus the latest incoming proof
+    /// in each recent conversation. Best-effort and fully detached —
+    /// failures are invisible.
+    private func prefetchMedia(myUserId: String) {
+        let avatarURLs = profilesById.values.compactMap(\.photoURL)
+        let targets: [(path: String, kind: ProofMediaKind)] = conversations(myUserId: myUserId)
+            .prefix(6)
+            .compactMap { convo in
+                let latestIncoming = thread(withFriendId: convo.friend.id, myUserId: myUserId)
+                    .last { $0.isProof && !$0.isMine(myUserId) && $0.mediaPath != nil }
+                guard let path = latestIncoming?.mediaPath, let kind = latestIncoming?.mediaKind else { return nil }
+                return (path, kind)
+            }
+
+        Task { [weak self] in
+            for url in avatarURLs {
+                await ImageCache.prefetch(url)
+            }
+            for target in targets {
+                guard let self else { return }
+                if ProofMediaCache.cachedFileURL(forMediaPath: target.path, kind: target.kind) != nil { continue }
+                guard let url = await self.signedURL(forMediaPath: target.path) else { continue }
+                await ProofMediaCache.download(from: url, forMediaPath: target.path, kind: target.kind)
+            }
+        }
+    }
+
+    // MARK: Badge
+
+    /// Keep the app icon badge equal to the real unread count as
+    /// messages arrive and threads are read.
+    private func syncBadge(myUserId: String) {
+        let unread = messages.filter { $0.recipientId == myUserId && $0.readAt == nil }.count
+        NotificationManager.syncBadge(unread)
+    }
+
     // MARK: Realtime
 
-    /// Subscribe to live changes on `direct_messages`. Any insert/update/
-    /// delete the signed-in user is allowed to see (RLS-scoped) triggers
-    /// a refresh, so new messages and read/watched flips arrive without a
-    /// manual reload. Idempotent — a second call is a no-op.
+    /// Subscribe to live changes on `direct_messages`. Each event is
+    /// applied *incrementally* — one insert appends one message, one
+    /// update touches one row — instead of refetching the whole history,
+    /// so live delivery stays O(1) no matter how big the thread gets.
+    /// Idempotent — a second call is a no-op.
     func startRealtime(myUserId: String) {
         guard channel == nil else { return }
         let ch = supabase.channel("direct-messages-\(myUserId)")
@@ -491,10 +643,62 @@ final class MessageGraphService {
             // RLS-scoped postgres changes are delivered to this user.
             await supabase.realtimeV2.setAuth()
             await ch.subscribe()
-            for await _ in changes {
+            for await change in changes {
                 if Task.isCancelled { break }
-                await self?.load(myUserId: myUserId)
+                await self?.apply(change, myUserId: myUserId)
             }
+        }
+    }
+
+    /// Fold one realtime event into local state. A decode failure falls
+    /// back to a full reload — correctness over cleverness.
+    private func apply(_ change: AnyAction, myUserId: String) async {
+        switch change {
+        case .insert(let action):
+            guard let row = try? action.decodeRecord(as: DirectMessageRow.self, decoder: JSONDecoder()) else {
+                await load(myUserId: myUserId)
+                return
+            }
+            // A brand-new conversation may involve a profile we've never
+            // resolved — fetch it before the row renders nameless.
+            let counterpart = row.senderId == myUserId ? row.recipientId : row.senderId
+            if profilesById[counterpart] == nil, counterpart != myUserId {
+                if let fetched = try? await fetchProfiles(ids: [counterpart]) {
+                    profilesById.merge(fetched) { current, _ in current }
+                }
+            }
+            appendIfNew(row)
+            syncBadge(myUserId: myUserId)
+            // Warm the cache for an incoming proof so the tap that
+            // follows the banner opens instantly.
+            if row.senderId != myUserId,
+               let path = row.mediaPath,
+               let kind = row.mediaKind.flatMap({ ProofMediaKind(rawValue: $0) }) {
+                Task { [weak self] in
+                    guard let self,
+                          ProofMediaCache.cachedFileURL(forMediaPath: path, kind: kind) == nil,
+                          let url = await self.signedURL(forMediaPath: path) else { return }
+                    await ProofMediaCache.download(from: url, forMediaPath: path, kind: kind)
+                }
+            }
+        case .update(let action):
+            guard let row = try? action.decodeRecord(as: DirectMessageRow.self, decoder: JSONDecoder()) else {
+                await load(myUserId: myUserId)
+                return
+            }
+            if let idx = messages.firstIndex(where: { $0.id == row.id }) {
+                messages[idx].readAt = Self.parseDate(row.readAt)
+                messages[idx].watchedAt = Self.parseDate(row.watchedAt)
+            } else {
+                appendIfNew(row)
+            }
+            syncBadge(myUserId: myUserId)
+        case .delete(let action):
+            if let raw = action.oldRecord["id"]?.stringValue, let id = UUID(uuidString: raw) {
+                messages.removeAll { $0.id == id }
+            }
+        default:
+            break
         }
     }
 
