@@ -2,14 +2,16 @@
 //  CategorySectionView.swift
 //  FrisFocus
 //
-//  One per-category block on the expanded Season page. Renders a header
-//  (category swatch + name + tier pill + status line + day points) then
-//  the category's pinned Tasks for today — completed entries on top,
-//  open ones below.
+//  One per-category block in the inline season detail (inside the Sun
+//  zone). Renders a header (category swatch + name + tier pill +
+//  status line + day points) then the category's pinned Tasks for
+//  today — completed entries on top, open ones below.
 //
-//  Cards use the same `TaskCardView` the home uses, so completing /
-//  uncompleting a task here flows through the same Store action and
-//  the hero score updates live.
+//  Styled glass-on-sky: cream text and translucent fills over the
+//  deepened sky gradient. Cards use the same `TaskCardView` the home
+//  uses (in its on-sky appearance), so completing / uncompleting a
+//  task here flows through the same Store action and the sun + score
+//  at the top of the zone update live.
 //
 
 import SwiftUI
@@ -74,7 +76,7 @@ struct CategorySectionView: View {
 
             VStack(spacing: 6) {
                 ForEach(doneTasks + openTasks) { task in
-                    TaskCardView(task: task)
+                    TaskCardView(task: task, onSky: true)
                 }
             }
             .padding(.horizontal, 16)
@@ -93,7 +95,7 @@ struct CategorySectionView: View {
                 HStack(spacing: 6) {
                     Text(store.categoryDisplayName(category))
                         .font(.serif(16, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
+                        .foregroundStyle(Theme.textCream)
 
                     if let tierPill {
                         tierPill
@@ -102,7 +104,7 @@ struct CategorySectionView: View {
 
                 Text(statusLine)
                     .font(.sans(11, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                    .foregroundStyle(Theme.textCream.opacity(0.6))
             }
 
             Spacer(minLength: 8)
@@ -110,7 +112,7 @@ struct CategorySectionView: View {
             if pointsToday > 0 {
                 Text("+\(pointsToday)")
                     .font(.serif(19, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                    .foregroundStyle(Theme.textCream.opacity(0.9))
                     .contentTransition(.numericText(value: Double(pointsToday)))
                     .animation(.easeOut(duration: 0.4), value: pointsToday)
             }
@@ -121,7 +123,7 @@ struct CategorySectionView: View {
         let swatch = Color(hex: store.categoryColorHex(category))
         return ZStack {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(swatch.opacity(0.15))
+                .fill(swatch.opacity(0.28))
                 .frame(width: 30, height: 30)
 
             Circle()
@@ -157,18 +159,18 @@ struct CategorySectionView: View {
     private func tierTextColor(for tier: CategoryTier) -> Color {
         switch tier {
         case .quiet:
-            return Theme.textPrimary.opacity(0.55)
+            return Theme.textCream.opacity(0.6)
         case .primary, .support:
-            return category.darkColor
+            return Theme.textCream.opacity(0.95)
         }
     }
 
     private func tierBackground(for tier: CategoryTier) -> Color {
         switch tier {
         case .quiet:
-            return Theme.textPrimary.opacity(0.06)
+            return Color.white.opacity(0.08)
         case .primary, .support:
-            return Color(hex: store.categoryColorHex(category)).opacity(0.15)
+            return Color(hex: store.categoryColorHex(category)).opacity(0.35)
         }
     }
 }
@@ -190,6 +192,6 @@ struct CategorySectionView: View {
             )
         }
     }
-    .background(Theme.warmWheat)
+    .background(Theme.skyDeep)
     .environment(store)
 }

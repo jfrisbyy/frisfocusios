@@ -19,6 +19,9 @@ import UIKit
 struct TaskCardView: View {
     @Environment(Store.self) private var store
     let task: FFTask
+    /// Glass-on-sky appearance for the inline season detail: cream ink
+    /// and translucent fills instead of white paper cards.
+    var onSky: Bool = false
 
     @State private var showEdit: Bool = false
     @State private var showShareCapture: Bool = false
@@ -37,6 +40,9 @@ struct TaskCardView: View {
     }
 
     private var isCompleted: Bool { todayEntry != nil }
+
+    /// Primary ink — charcoal on paper, cream on the sky.
+    private var ink: Color { onSky ? Theme.textCream : Theme.textPrimary }
 
     /// Whether this task is worth at least the reminder threshold — drives
     /// the quiet high-value emphasis on the checkbox.
@@ -72,12 +78,12 @@ struct TaskCardView: View {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 10, weight: .regular))
                             .rotationEffect(.degrees(45))
-                            .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                            .foregroundStyle(ink.opacity(0.45))
                     }
                     Text(task.title)
                         .font(.sans(15, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary.opacity(isCompleted ? 0.5 : 1.0))
-                        .strikethrough(isCompleted, color: Theme.textPrimary.opacity(0.6))
+                        .foregroundStyle(ink.opacity(isCompleted ? 0.5 : 1.0))
+                        .strikethrough(isCompleted, color: ink.opacity(0.6))
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -88,7 +94,7 @@ struct TaskCardView: View {
 
                     Text(metadataString)
                         .font(.sans(11, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                        .foregroundStyle(ink.opacity(0.6))
                 }
 
                 if !referencingBoosters.isEmpty || penaltyStatus != nil {
@@ -124,21 +130,24 @@ struct TaskCardView: View {
             VStack(alignment: .trailing, spacing: 0) {
                 Text("\(displayValue)")
                     .font(.serif(22, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(isCompleted ? 0.4 : 1.0))
+                    .foregroundStyle(ink.opacity(isCompleted ? 0.4 : 1.0))
                 if task.requiresQuantityLogging, !isCompleted {
                     Image(systemName: "plus.forwardslash.minus")
                         .font(.system(size: 9, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                        .foregroundStyle(ink.opacity(0.4))
                 }
             }
             .padding(.top, 2)
         }
         .padding(14)
-        .background(Color.white)
+        .background(onSky ? Color.white.opacity(0.10) : Color.white)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+                .strokeBorder(
+                    onSky ? Color.white.opacity(0.16) : Theme.textPrimary.opacity(0.08),
+                    lineWidth: 0.5
+                )
         )
         .animation(.easeInOut(duration: 0.25), value: isCompleted)
         .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
@@ -185,15 +194,15 @@ struct TaskCardView: View {
         ZStack {
             if isCompleted {
                 Circle()
-                    .fill(Theme.alertGreen)
+                    .fill(onSky ? Color(hex: 0x9BC25B) : Theme.alertGreen)
                     .frame(width: 22, height: 22)
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Theme.warmWheat)
+                    .foregroundStyle(onSky ? Color(hex: 0x1E3007) : Theme.warmWheat)
             } else {
                 Circle()
                     .stroke(
-                        Theme.textPrimary.opacity(isHighValue ? 0.5 : 0.3),
+                        ink.opacity(isHighValue ? 0.5 : 0.3),
                         lineWidth: 1.5
                     )
                     .frame(width: 22, height: 22)

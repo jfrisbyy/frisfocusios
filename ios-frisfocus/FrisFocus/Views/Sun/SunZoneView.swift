@@ -20,6 +20,13 @@
 //    9. Foreground content (meta + score headline + forward sentence
 //       + scroll hint)
 //
+//  Tapping the score band toggles `isExpanded`: the season detail
+//  (`SeasonInlineDetailView`) unfolds INLINE beneath the compact band
+//  with one spring — the sky continues downward and the sun + score
+//  stay visible at the top while tasks are completed. The parent
+//  (HomeView) owns the binding so collapsing can scroll the zone back
+//  to the top of the screen.
+//
 
 import SwiftUI
 import UIKit
@@ -33,6 +40,10 @@ struct SunZoneView: View {
     /// Called when the user taps the top-right profile avatar. The
     /// parent (HomeView) opens the profile sheet.
     var onProfileTap: () -> Void = {}
+    /// Whether the season detail is unfolded beneath the sky band.
+    /// Owned by HomeView so it can scroll home on collapse. Never
+    /// persisted — the zone always starts compact on launch.
+    @Binding var isExpanded: Bool
 
     @Environment(\.sunSky) private var sky
     @Environment(Store.self) private var store
@@ -48,6 +59,29 @@ struct SunZoneView: View {
     var body: some View {
         let palette = sky.palette
 
+        VStack(spacing: 0) {
+            compactBand(palette: palette)
+
+            if isExpanded {
+                SeasonInlineDetailView(onMinimize: collapse)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .sheet(isPresented: $showDaySheet) {
+            DayDetailSheet(selectedDate: daySheetDate)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $showShareCamera) {
+            ShareCameraView(context: store.dayShareContext())
+        }
+    }
+
+    // MARK: - Compact sky band
+
+    @ViewBuilder
+    private func compactBand(palette: SkyPalette) -> some View {
         ZStack(alignment: .top) {
             // 1. Sky gradient
             LinearGradient(
@@ -72,9 +106,13 @@ struct SunZoneView: View {
             // 5. Bird flock
             BirdFlockView(tint: palette.halo)
 
-            // 6. Horizon glow — uses palette warmth
+            // 6. Horizon glow — uses palette warmth. Faded out while
+            //    the season detail is unfolded beneath (the horizon is
+            //    no longer at this band's bottom edge).
             HorizonGlowView(palette: palette)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .opacity(isExpanded ? 0 : 1)
+                .animation(.easeInOut(duration: 0.35), value: isExpanded)
 
             // 7. Sun — positioned by time of day, brightness + scale
             //    driven by today's score against the season's goal.
@@ -94,17 +132,17 @@ struct SunZoneView: View {
             // 9. Foreground content
             //
             //    The meta row (with the avatar) and the scroll hint stay
-            //    outside the NavigationLink so the avatar tap and the
+            //    outside the score button so the avatar tap and the
             //    visual scroll affordance stay independent. Everything
             //    in between — the score headline, the breathing space
             //    around it, the forward sentence, and the "tap for
             //    season details" hint — is one big tappable surface
-            //    that pushes `SeasonExpandedView`.
+            //    that unfolds the season detail in place.
             VStack(spacing: 0) {
                 meta(palette: palette)
 
-                NavigationLink {
-                    SeasonExpandedView()
+                Button {
+                    toggleExpanded()
                 } label: {
                     VStack(spacing: 0) {
                         // At midday the sun rides higher in the sky and
@@ -152,33 +190,38 @@ struct SunZoneView: View {
                             .animation(.easeInOut(duration: 0.3), value: sentence)
 
                         // Subtle affordance — the whole band above is
-                        // tappable; this is the breadcrumb.
+                        // tappable; this is the breadcrumb. Swaps to
+                        // "tap to close" while the detail is open.
                         HStack(spacing: 5) {
-                            Text("tap for season details")
+                            Text(isExpanded ? "tap to close" : "tap for season details")
                                 .font(.sans(9, weight: .medium))
                                 .tracking(1.6)
                                 .textCase(.uppercase)
-                            Image(systemName: "arrow.up.right")
+                            Image(systemName: isExpanded ? "chevron.up" : "arrow.up.right")
                                 .font(.system(size: 9, weight: .semibold))
                         }
                         .foregroundStyle(Theme.textCream.opacity(0.55))
                         .padding(.bottom, 18)
+                        .animation(.easeInOut(duration: 0.25), value: isExpanded)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .simultaneousGesture(
-                    TapGesture().onEnded {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    }
+                .accessibilityLabel(isExpanded ? "Close season details" : "Open season details")
+                .accessibilityHint(
+                    isExpanded
+                        ? "Folds the season detail back into the sun zone"
+                        : "Unfolds today's tasks grouped by category beneath the sun"
                 )
-                .accessibilityLabel("Open Season details")
-                .accessibilityHint("Shows today's tasks grouped by category")
 
                 // Scroll hint — quiet affordance toward the work zone.
-                // Lives outside the NavigationLink so tapping it doesn't
-                // navigate; it's a visual hint, not a target.
+                // Lives outside the score button so tapping it doesn't
+                // toggle; it's a visual hint, not a target. While the
+                // detail is open the hint moves below the season content
+                // (rendered by SeasonInlineDetailView), so this one
+                // fades — keeping its layout slot so the band never
+                // jumps.
                 VStack(spacing: 6) {
                     Text("scroll · the work")
                         .font(.sans(9, weight: .medium))
@@ -191,18 +234,27 @@ struct SunZoneView: View {
                         .foregroundStyle(Theme.textCream.opacity(0.5))
                 }
                 .padding(.bottom, 14)
+                .opacity(isExpanded ? 0 : 1)
+                .animation(.easeInOut(duration: 0.25), value: isExpanded)
             }
         }
         .frame(maxWidth: .infinity)
         .frame(height: zoneHeight)
         .clipped()
-        .sheet(isPresented: $showDaySheet) {
-            DayDetailSheet(selectedDate: daySheetDate)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+    }
+
+    // MARK: - Expand / collapse
+
+    private func toggleExpanded() {
+        UIImpactFeedbackGenerator(style: isExpanded ? .light : .medium).impactOccurred()
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.86)) {
+            isExpanded.toggle()
         }
-        .fullScreenCover(isPresented: $showShareCamera) {
-            ShareCameraView(context: store.dayShareContext())
+    }
+
+    private func collapse() {
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
+            isExpanded = false
         }
     }
 
@@ -372,8 +424,10 @@ struct SunZoneView: View {
 }
 
 #Preview {
-    SunZoneView(topSafeInset: 47)
-        .environment(\.sunSky, .make(now: .now, coordinate: nil))
-        .environment(Store())
-        .environment(AuthManager())
+    ScrollView {
+        SunZoneView(topSafeInset: 47, isExpanded: .constant(false))
+    }
+    .environment(\.sunSky, .make(now: .now, coordinate: nil))
+    .environment(Store())
+    .environment(AuthManager())
 }

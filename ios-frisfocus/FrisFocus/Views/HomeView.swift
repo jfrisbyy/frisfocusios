@@ -25,6 +25,10 @@ struct HomeView: View {
     @State private var locationService = LocationService()
     @State private var activeZone: HomeZone = .sun
     @State private var zoneFrames: [HomeZone: CGRect] = [:]
+    /// Whether the Sun zone's season detail is unfolded inline. Owned
+    /// here so collapsing can scroll the zone back to the top of the
+    /// screen. Never persisted — the home always launches compact.
+    @State private var seasonExpanded: Bool = false
     @State private var haptic = UIImpactFeedbackGenerator(style: .light)
     @State private var topSafeInset: CGFloat = 0
 
@@ -108,7 +112,8 @@ struct HomeView: View {
                     VStack(spacing: 0) {
                         SunZoneView(
                             topSafeInset: topSafeInset,
-                            onProfileTap: { showProfileSheet = true }
+                            onProfileTap: { showProfileSheet = true },
+                            isExpanded: $seasonExpanded
                         )
                             .id(HomeZone.sun.anchorID)
                             .background(zoneTracker(.sun))
@@ -186,6 +191,16 @@ struct HomeView: View {
                 .ignoresSafeArea(edges: .bottom)
             }
             .background(Theme.warmWheat)
+            // Folding the season detail closed gently scrolls the sun
+            // zone back to the top so the user is never stranded
+            // mid-page where the detail used to be.
+            .onChange(of: seasonExpanded) { _, expanded in
+                if !expanded {
+                    withAnimation(.easeInOut(duration: 0.45)) {
+                        scrollProxy.scrollTo(HomeZone.sun.anchorID, anchor: .top)
+                    }
+                }
+            }
             .sheet(isPresented: $showCaptureSheet, onDismiss: {
                 withAnimation { sundialActive = sundialPreCapture }
             }) {
