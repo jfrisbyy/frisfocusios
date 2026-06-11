@@ -35,11 +35,14 @@ struct FriendRoutine: Identifiable, Equatable {
 }
 
 /// One item on the friend's task checklist. Completed items tick green;
-/// open items render neutral/grey — the day's not over.
+/// open items render neutral/grey — the day's not over. Each task
+/// carries its life category so the profile can group the checklist
+/// and color-code effort the way the user's own day is color-coded.
 struct FriendDayTask: Identifiable, Equatable {
     let id = UUID()
     let title: String
     let isDone: Bool
+    let category: Category
 }
 
 /// A friend's full-visibility day. The snapshot fields (logged, rhythm,
@@ -70,6 +73,27 @@ struct FriendDay: Equatable {
     }
 
     var openCount: Int { tasks.filter { !$0.isDone }.count }
+
+    /// Categories present today, ordered by how much was done in each
+    /// (then by total size), paired with their done/total counts.
+    /// Drives the grouped checklist at Full and the anonymous effort
+    /// breakdown at Open.
+    var categoryBreakdown: [(category: Category, done: Int, total: Int)] {
+        var order: [Category] = []
+        var done: [Category: Int] = [:]
+        var total: [Category: Int] = [:]
+        for task in tasks {
+            if total[task.category] == nil { order.append(task.category) }
+            total[task.category, default: 0] += 1
+            if task.isDone { done[task.category, default: 0] += 1 }
+        }
+        return order
+            .map { (category: $0, done: done[$0] ?? 0, total: total[$0] ?? 0) }
+            .sorted { lhs, rhs in
+                if lhs.done != rhs.done { return lhs.done > rhs.done }
+                return lhs.total > rhs.total
+            }
+    }
 
     /// Today's completion as a 0...1 fraction — done tasks over total.
     /// Drives the full-tier progress ring and the friend-card summary.
@@ -115,14 +139,14 @@ extension FriendDay {
             FriendRoutine(title: "Wind-down", detail: "3 of 5 · tonight", isComplete: false)
         ],
         tasks: [
-            FriendDayTask(title: "20-min run", isDone: true),
-            FriendDayTask(title: "Took meds", isDone: true),
-            FriendDayTask(title: "Journaled", isDone: true),
-            FriendDayTask(title: "Read 10 pages", isDone: true),
-            FriendDayTask(title: "Made the bed", isDone: true),
-            FriendDayTask(title: "Walked the dog", isDone: true),
-            FriendDayTask(title: "Call mom", isDone: false),
-            FriendDayTask(title: "Meal prep", isDone: false)
+            FriendDayTask(title: "20-min run", isDone: true, category: .fitness),
+            FriendDayTask(title: "Took meds", isDone: true, category: .health),
+            FriendDayTask(title: "Journaled", isDone: true, category: .spiritual),
+            FriendDayTask(title: "Read 10 pages", isDone: true, category: .creative),
+            FriendDayTask(title: "Made the bed", isDone: true, category: .apartment),
+            FriendDayTask(title: "Walked the dog", isDone: true, category: .health),
+            FriendDayTask(title: "Call mom", isDone: false, category: .health),
+            FriendDayTask(title: "Meal prep", isDone: false, category: .apartment)
         ],
         focusText: "1h 40m",
         focusSessions: 2,
@@ -145,13 +169,13 @@ extension FriendDay {
             FriendRoutine(title: "Wind-down", detail: "2 of 4 · tonight", isComplete: false)
         ],
         tasks: [
-            FriendDayTask(title: "Cold plunge", isDone: true),
-            FriendDayTask(title: "500 words", isDone: true),
-            FriendDayTask(title: "Gym session", isDone: true),
-            FriendDayTask(title: "Read 20 pages", isDone: true),
-            FriendDayTask(title: "Inbox zero", isDone: true),
-            FriendDayTask(title: "Call landlord", isDone: false),
-            FriendDayTask(title: "Plan the week", isDone: false)
+            FriendDayTask(title: "Cold plunge", isDone: true, category: .fitness),
+            FriendDayTask(title: "500 words", isDone: true, category: .creative),
+            FriendDayTask(title: "Gym session", isDone: true, category: .fitness),
+            FriendDayTask(title: "Read 20 pages", isDone: true, category: .creative),
+            FriendDayTask(title: "Inbox zero", isDone: true, category: .work),
+            FriendDayTask(title: "Call landlord", isDone: false, category: .apartment),
+            FriendDayTask(title: "Plan the week", isDone: false, category: .work)
         ],
         focusText: "2h 10m",
         focusSessions: 3,
@@ -174,12 +198,12 @@ extension FriendDay {
             FriendRoutine(title: "Wind-down", detail: "done · 9:30p", isComplete: true)
         ],
         tasks: [
-            FriendDayTask(title: "Morning pages", isDone: true),
-            FriendDayTask(title: "Zine layout", isDone: true),
-            FriendDayTask(title: "Ink 3 panels", isDone: true),
-            FriendDayTask(title: "Post to the shop", isDone: true),
-            FriendDayTask(title: "Answer emails", isDone: true),
-            FriendDayTask(title: "Sketch the cover", isDone: false)
+            FriendDayTask(title: "Morning pages", isDone: true, category: .spiritual),
+            FriendDayTask(title: "Zine layout", isDone: true, category: .creative),
+            FriendDayTask(title: "Ink 3 panels", isDone: true, category: .creative),
+            FriendDayTask(title: "Post to the shop", isDone: true, category: .work),
+            FriendDayTask(title: "Answer emails", isDone: true, category: .work),
+            FriendDayTask(title: "Sketch the cover", isDone: false, category: .creative)
         ],
         focusText: "3h 05m",
         focusSessions: 4,
@@ -201,12 +225,12 @@ extension FriendDay {
             FriendRoutine(title: "Deep work block", detail: "1 of 3 · tonight", isComplete: false)
         ],
         tasks: [
-            FriendDayTask(title: "Open the doc", isDone: true),
-            FriendDayTask(title: "Cold shower", isDone: true),
-            FriendDayTask(title: "20-min walk", isDone: true),
-            FriendDayTask(title: "Deep work", isDone: false),
-            FriendDayTask(title: "Read a chapter", isDone: false),
-            FriendDayTask(title: "Meal prep", isDone: false)
+            FriendDayTask(title: "Open the doc", isDone: true, category: .work),
+            FriendDayTask(title: "Cold shower", isDone: true, category: .health),
+            FriendDayTask(title: "20-min walk", isDone: true, category: .fitness),
+            FriendDayTask(title: "Deep work", isDone: false, category: .work),
+            FriendDayTask(title: "Read a chapter", isDone: false, category: .creative),
+            FriendDayTask(title: "Meal prep", isDone: false, category: .apartment)
         ],
         focusText: "35m",
         focusSessions: 1,
@@ -228,10 +252,10 @@ extension FriendDay {
             FriendRoutine(title: "Evening walk", detail: "tonight", isComplete: false)
         ],
         tasks: [
-            FriendDayTask(title: "Stretch", isDone: true),
-            FriendDayTask(title: "Tea + journal", isDone: true),
-            FriendDayTask(title: "Water the plants", isDone: false),
-            FriendDayTask(title: "Read", isDone: false)
+            FriendDayTask(title: "Stretch", isDone: true, category: .fitness),
+            FriendDayTask(title: "Tea + journal", isDone: true, category: .spiritual),
+            FriendDayTask(title: "Water the plants", isDone: false, category: .apartment),
+            FriendDayTask(title: "Read", isDone: false, category: .creative)
         ],
         focusText: "20m",
         focusSessions: 1,
@@ -265,16 +289,19 @@ extension FriendDay {
             ("Reading", "1:00p"),
             ("Wind-down", "tonight")
         ]
-        let taskPool = [
-            "20-min walk", "Drank water", "Journaled", "Read 10 pages",
-            "Made the bed", "Stretched", "Inbox zero", "Cooked dinner",
-            "Called a friend", "Tidied desk"
+        let taskPool: [(String, Category)] = [
+            ("20-min walk", .fitness), ("Drank water", .health),
+            ("Journaled", .spiritual), ("Read 10 pages", .creative),
+            ("Made the bed", .apartment), ("Stretched", .fitness),
+            ("Inbox zero", .work), ("Cooked dinner", .health),
+            ("Called a friend", .health), ("Tidied desk", .apartment)
         ]
 
         let totalTasks = 6 + next(3)            // 6–8
         let doneTasks = 2 + next(totalTasks - 2) // at least 2 done, never all
         let tasks: [FriendDayTask] = (0..<totalTasks).map { i in
-            FriendDayTask(title: taskPool[(i + next(taskPool.count)) % taskPool.count], isDone: i < doneTasks)
+            let (title, category) = taskPool[(i + next(taskPool.count)) % taskPool.count]
+            return FriendDayTask(title: title, isDone: i < doneTasks, category: category)
         }
 
         let routineCount = 2 + next(2)          // 2–3

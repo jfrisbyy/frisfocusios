@@ -355,8 +355,38 @@ struct StoryPlayerView: View {
 
     // MARK: - Progress bars
 
+    /// The window of the queue the top bars represent. In `.friend`
+    /// mode the queue spans every friend with an active story, but the
+    /// bars must only describe the person currently on screen — their
+    /// contiguous block of posts. `.mine` and `.circle` tapes belong to
+    /// one owner, so the whole queue is the window.
+    private var segmentWindow: (count: Int, index: Int, ownerKey: String) {
+        guard case .friend = mode, let post = currentPost else {
+            return (posts.count, currentIndex, "single-owner")
+        }
+        let author = post.authorId
+        var blockStart = currentIndex
+        while blockStart > 0 && posts[blockStart - 1].authorId == author {
+            blockStart -= 1
+        }
+        var blockEnd = currentIndex
+        while blockEnd + 1 < posts.count && posts[blockEnd + 1].authorId == author {
+            blockEnd += 1
+        }
+        return (blockEnd - blockStart + 1, currentIndex - blockStart, author.uuidString)
+    }
+
+    /// Per-person segmented bars. Keyed by the current author so the
+    /// handoff between people tears the old bars down and fades the new
+    /// person's fresh set in — the Instagram/Snapchat reset.
     private var progressBars: some View {
-        SegmentedProgressBars(count: posts.count, currentIndex: currentIndex, clock: clock)
+        let window = segmentWindow
+        return ZStack {
+            SegmentedProgressBars(count: window.count, currentIndex: window.index, clock: clock)
+                .id(window.ownerKey)
+                .transition(.opacity)
+        }
+        .animation(.easeInOut(duration: 0.22), value: window.ownerKey)
     }
 
     // MARK: - Header

@@ -172,157 +172,200 @@ struct ProfileSheetView: View {
         let displayName = profile?.name ?? user.name ?? "You"
         let handle = profile?.handle
 
-        return VStack(spacing: 0) {
-            Spacer().frame(height: 16)
+        return ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
+                identityHeader(user: user, displayName: displayName, handle: handle)
+                    .padding(.top, 10)
 
+                if cadence.isEligible && !store.cadenceConnected && !store.cadenceInviteDismissed {
+                    cadenceInviteBanner
+                        .padding(.top, 18)
+                }
+
+                hubList
+                    .padding(.top, 22)
+
+                quietFooter
+                    .padding(.top, 28)
+                    .padding(.bottom, 28)
+            }
+        }
+    }
+
+    /// Compact identity header: avatar beside name + handle, with the
+    /// synced state folded in as a quiet line instead of a big badge.
+    private func identityHeader(user: AuthManager.User, displayName: String, handle: String?) -> some View {
+        HStack(spacing: 14) {
             avatar(for: user)
 
-            VStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(displayName)
-                    .font(.serif(26, weight: .medium))
+                    .font(.serif(23, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
 
                 if let handle {
                     Text(handle)
-                        .font(.sans(14, weight: .semibold))
+                        .font(.sans(13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
                 } else if !user.email.isEmpty {
                     Text(user.email)
-                        .font(.sans(14, weight: .regular))
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.alertGreen)
+                    Text("Synced to your account")
+                        .font(.sans(11, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                 }
-            }
-            .padding(.top, 16)
-
-            syncedBadge
-                .padding(.top, 18)
-
-            if cadence.isEligible && !store.cadenceConnected && !store.cadenceInviteDismissed {
-                cadenceInviteBanner
-                    .padding(.top, 18)
+                .padding(.top, 2)
             }
 
-            VStack(spacing: 10) {
-                NavigationLink {
-                    EditProfileView()
-                } label: {
-                    hubRow(
-                        icon: "person.crop.circle",
-                        title: "Edit profile",
-                        subtitle: "Name, photo, and @username"
-                    )
-                }
-                .buttonStyle(.plain)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// All hub destinations as one grouped, denser list — a single card
+    /// with hairline separators instead of a stack of floating boxes.
+    private var hubList: some View {
+        VStack(spacing: 0) {
+            NavigationLink {
+                EditProfileView()
+            } label: {
+                hubRow(
+                    icon: "person.crop.circle",
+                    title: "Edit profile",
+                    subtitle: "Name, photo, and @username"
+                )
+            }
+            .buttonStyle(.plain)
+
+            hubDivider
+
+            NavigationLink {
+                FriendsView()
+            } label: {
+                hubRow(
+                    icon: "person.2.fill",
+                    title: "Friends",
+                    subtitle: "Add real friends and accept requests"
+                )
+            }
+            .buttonStyle(.plain)
+
+            hubDivider
+
+            NavigationLink {
+                SharedCirclesListView()
+            } label: {
+                hubRow(
+                    icon: "circle.hexagongrid.fill",
+                    title: "Circles",
+                    subtitle: "Shared goals you run with friends"
+                )
+            }
+            .buttonStyle(.plain)
+
+            if cadence.isEligible {
+                hubDivider
 
                 NavigationLink {
-                    FriendsView()
+                    CadenceConnectView()
                 } label: {
                     hubRow(
-                        icon: "person.2.fill",
-                        title: "Friends",
-                        subtitle: "Add real friends and accept requests"
-                    )
-                }
-                .buttonStyle(.plain)
-
-                NavigationLink {
-                    SharedCirclesListView()
-                } label: {
-                    hubRow(
-                        icon: "circle.hexagongrid.fill",
-                        title: "Circles",
-                        subtitle: "Shared goals you run with friends"
-                    )
-                }
-                .buttonStyle(.plain)
-
-                if cadence.isEligible {
-                    NavigationLink {
-                        CadenceConnectView()
-                    } label: {
-                        hubRow(
-                            icon: "moon.stars.fill",
-                            title: "Cadence",
-                            subtitle: store.cadenceConnected
-                                ? "Linked routines & sleep outcomes"
-                                : "Connect your routines & sleep"
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showProofs = true
-                } label: {
-                    hubRow(
-                        icon: "paperplane.fill",
-                        title: "Proofs",
-                        subtitle: "Private notes and proofs with friends"
-                    )
-                }
-                .buttonStyle(.plain)
-
-                NavigationLink {
-                    BlockedAccountsView()
-                } label: {
-                    hubRow(
-                        icon: "hand.raised.fill",
-                        title: "Blocked",
-                        subtitle: "People you've blocked"
+                        icon: "moon.stars.fill",
+                        title: "Cadence",
+                        subtitle: store.cadenceConnected
+                            ? "Linked routines & sleep outcomes"
+                            : "Connect your routines & sleep"
                     )
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.top, 24)
 
-            Text("Settings, season management, and history will live here.")
-                .font(.sans(13, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                .multilineTextAlignment(.center)
-                .padding(.top, 18)
-                .padding(.horizontal, 24)
+            hubDivider
 
-            Spacer()
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showProofs = true
+            } label: {
+                hubRow(
+                    icon: "paperplane.fill",
+                    title: "Proofs",
+                    subtitle: "Private notes and proofs with friends"
+                )
+            }
+            .buttonStyle(.plain)
 
-            VStack(spacing: 12) {
-                Button {
-                    Task { await auth.signOut() }
-                } label: {
-                    Text("Sign out")
-                        .font(.sans(16, weight: .medium))
-                        .foregroundStyle(Theme.alertRed)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background(Theme.paperCream)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(Theme.alertRed.opacity(0.2), lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
+            hubDivider
 
-                Button {
-                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-                    showDeleteConfirm = true
-                } label: {
-                    Group {
-                        if isDeleting {
-                            ProgressView().tint(Theme.alertRed)
-                        } else {
-                            Text("Delete account")
-                                .font(.sans(14, weight: .regular))
-                                .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                        }
-                    }
+            NavigationLink {
+                BlockedAccountsView()
+            } label: {
+                hubRow(
+                    icon: "hand.raised.fill",
+                    title: "Blocked",
+                    subtitle: "People you've blocked"
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .background(Theme.paperCream)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+
+    private var hubDivider: some View {
+        Rectangle()
+            .fill(Theme.textPrimary.opacity(0.06))
+            .frame(height: 0.5)
+            .padding(.leading, 64)
+    }
+
+    /// Sign out / delete as quiet text actions — present, never loud.
+    private var quietFooter: some View {
+        VStack(spacing: 14) {
+            Button {
+                Task { await auth.signOut() }
+            } label: {
+                Text("Sign out")
+                    .font(.sans(15, weight: .medium))
+                    .foregroundStyle(Theme.alertRed)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 32)
-                }
-                .buttonStyle(.plain)
-                .disabled(isDeleting)
+                    .frame(height: 36)
+                    .contentShape(Rectangle())
             }
-            .padding(.bottom, 28)
+            .buttonStyle(.plain)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                showDeleteConfirm = true
+            } label: {
+                Group {
+                    if isDeleting {
+                        ProgressView().tint(Theme.alertRed)
+                    } else {
+                        Text("Delete account")
+                            .font(.sans(13, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isDeleting)
         }
     }
 
@@ -385,49 +428,35 @@ struct ProfileSheetView: View {
         )
     }
 
-    private var syncedBadge: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.alertGreen)
-            Text("Synced to your account")
-                .font(.sans(13, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Theme.alertGreen.opacity(0.1))
-        .clipShape(Capsule())
-    }
-
     private func hubRow(icon: String, title: String, subtitle: String) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 13) {
             ZStack {
                 Circle().fill(Theme.textPrimary.opacity(0.06))
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
             }
-            .frame(width: 44, height: 44)
+            .frame(width: 38, height: 38)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.sans(16, weight: .medium))
+                    .font(.sans(15, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
                 Text(subtitle)
                     .font(.sans(12, weight: .regular))
                     .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
             }
 
             Spacer()
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.textTertiary)
         }
-        .padding(14)
-        .background(Theme.paperCream)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .contentShape(Rectangle())
     }
 
     // MARK: - Pieces
@@ -461,10 +490,10 @@ struct ProfileSheetView: View {
                 initialDisc(for: user)
             }
         }
-        .frame(width: 84, height: 84)
+        .frame(width: 66, height: 66)
         .clipShape(Circle())
         .overlay(Circle().stroke(Theme.sunWarm, lineWidth: 2))
-        .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 4)
+        .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 3)
     }
 
     private func initialDisc(for user: AuthManager.User) -> some View {
@@ -472,7 +501,7 @@ struct ProfileSheetView: View {
         return ZStack {
             Theme.textPrimary
             Text(initials.isEmpty ? "?" : initials)
-                .font(.serif(30, weight: .medium))
+                .font(.serif(24, weight: .medium))
                 .foregroundStyle(Theme.textCream)
         }
     }

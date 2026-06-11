@@ -143,7 +143,7 @@ private struct ProfileQuickCardOverlay: View {
         .ignoresSafeArea()
         .task {
             topInset = Self.keyWindowTopInset()
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) { shown = true }
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) { shown = true }
             if let id = auth.user?.id { await messages.load(myUserId: id) }
         }
     }
@@ -174,13 +174,26 @@ private struct ProfileQuickCardOverlay: View {
             divider
             accountRow
         }
-        .background(Theme.paperCream)
+        .background(
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                Theme.paperCream.opacity(0.85)
+            }
+        )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Theme.textPrimary.opacity(0.06), lineWidth: 1)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.55), Theme.textPrimary.opacity(0.07)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         )
-        .shadow(color: .black.opacity(0.24), radius: 26, x: 0, y: 14)
+        .shadow(color: .black.opacity(0.22), radius: 24, x: 0, y: 12)
+        .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 2)
     }
 
     private var header: some View {
@@ -253,18 +266,20 @@ private struct ProfileQuickCardOverlay: View {
         .padding(.bottom, 12)
     }
 
+    /// Four compact icon tiles in a row — replaces the tall shortcut
+    /// list so the card reads at a glance.
     private var shortcuts: some View {
-        VStack(spacing: 2) {
-            shortcutRow(.editProfile, icon: "person.crop.circle", title: "Edit profile")
-            shortcutRow(.friends, icon: "person.2.fill", title: "Friends")
-            shortcutRow(.circles, icon: "circle.hexagongrid.fill", title: "Circles")
-            shortcutRow(.proofs, icon: "paperplane.fill", title: "Proofs", showDot: unreadCount > 0)
+        HStack(spacing: 6) {
+            shortcutTile(.editProfile, icon: "person.crop.circle", title: "Profile")
+            shortcutTile(.friends, icon: "person.2.fill", title: "Friends")
+            shortcutTile(.circles, icon: "circle.hexagongrid.fill", title: "Circles")
+            shortcutTile(.proofs, icon: "paperplane.fill", title: "Proofs", showDot: unreadCount > 0)
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 12)
     }
 
-    private func shortcutRow(
+    private func shortcutTile(
         _ dest: ProfileQuickDestination,
         icon: String,
         title: String,
@@ -273,24 +288,35 @@ private struct ProfileQuickCardOverlay: View {
         Button {
             close(routingTo: dest)
         } label: {
-            HStack(spacing: 13) {
-                iconCircle(icon)
-                Text(title)
-                    .font(.sans(15, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                if showDot {
-                    Circle()
-                        .fill(Theme.alertRed)
-                        .frame(width: 7, height: 7)
+            VStack(spacing: 6) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: icon)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(height: 20)
+                    if showDot {
+                        Circle()
+                            .fill(Theme.alertRed)
+                            .frame(width: 7, height: 7)
+                            .offset(x: 7, y: -3)
+                    }
                 }
-                Spacer()
-                chevron
+                Text(title)
+                    .font(.sans(11, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 9)
-            .contentShape(Rectangle())
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Theme.textPrimary.opacity(0.055))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .buttonStyle(QuickRowButtonStyle())
+        .buttonStyle(QuickTileButtonStyle())
+        .accessibilityLabel(showDot ? "\(title), new activity" : title)
     }
 
     private var accountRow: some View {
@@ -364,11 +390,11 @@ private struct ProfileQuickCardOverlay: View {
 
     private func close(routingTo dest: ProfileQuickDestination?) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.easeIn(duration: 0.16)) {
+        withAnimation(.easeIn(duration: 0.13)) {
             shown = false
             drag = .zero
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.13) {
             onDismiss(dest)
         }
     }
@@ -400,6 +426,17 @@ private struct QuickRowButtonStyle: ButtonStyle {
             )
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+/// Press feedback for the compact shortcut tiles — a quick sink that
+/// reads as a tap on a physical key.
+private struct QuickTileButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
