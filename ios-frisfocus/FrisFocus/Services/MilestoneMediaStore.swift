@@ -37,6 +37,34 @@ enum MilestoneMediaStore {
         }
     }
 
+    /// Persist already-encoded JPEG bytes (a composed proof card) and
+    /// return the attachment metadata, flagged as a proof.
+    static func saveProofPhotoData(_ data: Data) -> MilestoneAttachment? {
+        let filename = "milestone-photo-\(UUID().uuidString.lowercased()).jpg"
+        let url = documentsDirectory.appendingPathComponent(filename)
+        do {
+            try data.write(to: url, options: .atomic)
+            return MilestoneAttachment(kind: .photo, filename: filename, isProof: true)
+        } catch {
+            print("[MilestoneMediaStore] proof write failed: \(error)")
+            return nil
+        }
+    }
+
+    /// Persist a composed proof clip's bytes as an MP4 and return the
+    /// attachment metadata, flagged as a proof.
+    static func saveProofVideoData(_ data: Data, duration: TimeInterval) -> MilestoneAttachment? {
+        let filename = "milestone-video-\(UUID().uuidString.lowercased()).mp4"
+        let url = documentsDirectory.appendingPathComponent(filename)
+        do {
+            try data.write(to: url, options: .atomic)
+            return MilestoneAttachment(kind: .video, filename: filename, duration: duration, isProof: true)
+        } catch {
+            print("[MilestoneMediaStore] proof video write failed: \(error)")
+            return nil
+        }
+    }
+
     /// Remove an attachment's file from disk. Safe to call when missing.
     static func delete(_ attachment: MilestoneAttachment) {
         guard let url = attachment.url else { return }

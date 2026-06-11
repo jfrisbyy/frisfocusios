@@ -461,6 +461,15 @@ struct CaptureReviewView: View {
     @State private var showAudiencePanel: Bool = false
     @State private var sentToast: String? = nil
 
+    // Attach flow — the composed proof kept around after posting so it
+    // can land on a milestone's journey or a note (where it outlives
+    // the 24h story).
+    @State private var pendingAttach: ComposedProofMedia?
+    @State private var attachChipVisible: Bool = false
+    @State private var showAttachPicker: Bool = false
+    @State private var sheetPickHandled: Bool = false
+    @State private var finishTask: Task<Void, Never>?
+
     // Task sticker state. Stickers share the active-selection + trash
     // plumbing with captions (ids are unique across both) and bake into
     // the exported photo alongside the caption layer.
@@ -552,6 +561,24 @@ struct CaptureReviewView: View {
             .environment(store)
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.hidden)
+        }
+        .sheet(isPresented: $showAttachPicker, onDismiss: {
+            // Closed without picking — the post already happened, so
+            // the editor just finishes.
+            if !sheetPickHandled { onPosted() }
+            sheetPickHandled = false
+        }) {
+            ProofAttachPickerSheet(
+                onPick: { target in
+                    sheetPickHandled = true
+                    showAttachPicker = false
+                    attachAndFinish(target)
+                }
+            )
+            .environment(store)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
         }
         .task { await prepareScaledBases() }
         .task {
@@ -1673,25 +1700,109 @@ struct CaptureReviewView: View {
     private func sentToastView(_ text: String) -> some View {
         VStack {
             Spacer()
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.alertGreen)
-                Text(text)
-                    .font(.sans(14, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
+            VStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.alertGreen)
+                    Text(text)
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .background(Capsule().fill(Color(hex: 0x1E1C1B).opacity(0.96)))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                .shadow(color: Color.black.opacity(0.4), radius: 14, y: 6)
+                .allowsHitTesting(false)
+
+                if attachChipVisible {
+                    attachChip
+                        .transition(.scale(scale: 0.94).combined(with: .opacity))
+                }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(Capsule().fill(Color(hex: 0x1E1C1B).opacity(0.96)))
-            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
-            .shadow(color: Color.black.opacity(0.4), radius: 14, y: 6)
+            .animation(.spring(response: 0.34, dampingFraction: 0.82), value: attachChipVisible)
             Spacer()
         }
         .transition(.scale(scale: 0.92).combined(with: .opacity))
-        .allowsHitTesting(false)
+        .allowsHitTesting(attachChipVisible)
+    }
+
+    /// The quiet post-confirmation invitation — pin the proof somewhere
+    /// it outlives the 24h story. Skippable; the editor auto-closes if
+    /// it's ignored.
+    private var attachChip: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            finishTask?.cancel()
+            showAttachPicker = true
+        } label: {
+            HStack(spacing: 7) {
+                HStack(spacing: -2) {
+                    Image(systemName: "flag")
+                        .font(.system(size: 10, weight: .semibold))
+                    Image(systemName: "leaf")
+                        .font(.system(size: 8, weight: .semibold))
+                        .offset(y: -4)
+                }
+                .foregroundStyle(Color(hex: 0xFFD98A))
+
+                Text("Add to a milestone or note")
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.55))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Capsule().fill(Color(hex: 0x1E1C1B).opacity(0.94)))
+            .overlay(Capsule().strokeBorder(Color(hex: 0xFFD98A).opacity(0.35), lineWidth: 0.5))
+            .shadow(color: Color.black.opacity(0.35), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add to a milestone or note")
+        .accessibilityHint("Keeps the proof beyond the 24 hour story")
+    }
+
+    /// Writes the pending proof onto the picked destination, confirms,
+    /// and closes the editor.
+    private func attachAndFinish(_ target: ProofAttachTarget) {
+        guard let media = pendingAttach else {
+            onPosted()
+            return
+        }
+        let ok: Bool
+        let confirmation: String
+        switch target {
+        case .milestone(let id):
+            ok = store.attachProof(media, toMilestone: id)
+            confirmation = ok ? "Added to the journey" : "Couldn't save — try again"
+        case .note(let id):
+            ok = store.attachProof(media, toNote: id)
+            confirmation = ok ? "Added to the note" : "Couldn't save — try again"
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+        withAnimation(.easeOut(duration: 0.2)) {
+            attachChipVisible = false
+            sentToast = confirmation
+        }
+        scheduleFinish(after: 0.9)
+    }
+
+    /// Auto-close after a beat — cancelled the moment the user engages
+    /// with the attach chip.
+    private func scheduleFinish(after seconds: Double) {
+        finishTask?.cancel()
+        finishTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            onPosted()
+        }
     }
 
     // MARK: - Trash overlay (shown when dragging a block)
@@ -2067,14 +2178,30 @@ struct CaptureReviewView: View {
                 }
             }
 
+            // A posted draft is done — clear the stored copy.
+            if initialDraftState != nil { CaptureDraftStore.clear() }
+
+            // General posts grow the quiet attach invitation — pin the
+            // proof to a journey or note before the editor closes.
+            if case .generalPost = mode, let mediaData {
+                pendingAttach = mediaType == .video
+                    ? .video(mediaData, duration: duration ?? 0)
+                    : .photo(mediaData)
+                isPosting = false
+                withAnimation(.easeOut(duration: 0.2)) {
+                    sentToast = toast ?? "Posted to your people"
+                    attachChipVisible = true
+                }
+                scheduleFinish(after: 3.4)
+                return
+            }
+
             if let toast {
                 withAnimation(.easeOut(duration: 0.2)) { sentToast = toast }
                 try? await Task.sleep(for: .milliseconds(950))
             } else {
                 try? await Task.sleep(for: .milliseconds(220))
             }
-            // A posted draft is done — clear the stored copy.
-            if initialDraftState != nil { CaptureDraftStore.clear() }
             isPosting = false
             onPosted()
         }

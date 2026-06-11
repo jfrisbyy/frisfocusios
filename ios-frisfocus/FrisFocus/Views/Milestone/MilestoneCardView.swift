@@ -142,23 +142,31 @@ struct MilestoneCardView: View {
     }
 }
 
-/// A small rounded photo thumbnail for a journey attachment, with a
-/// quiet placeholder while the file is still downloading from sync.
+/// A small rounded thumbnail for a journey attachment — photos load
+/// directly, videos show a poster frame with a play badge, and proof
+/// attachments carry the thin signature-color edge. Quiet placeholder
+/// while the file is still downloading from sync.
 struct MilestoneThumbView: View {
     let attachment: MilestoneAttachment
     var size: CGFloat = 34
+
+    @State private var videoPoster: UIImage? = nil
+
+    private var displayImage: UIImage? {
+        attachment.kind == .video ? videoPoster : MilestoneMediaStore.image(for: attachment)
+    }
 
     var body: some View {
         Color(.secondarySystemBackground)
             .frame(width: size, height: size)
             .overlay {
-                if let image = MilestoneMediaStore.image(for: attachment) {
+                if let image = displayImage {
                     Image(uiImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .allowsHitTesting(false)
                 } else {
-                    Image(systemName: "photo")
+                    Image(systemName: attachment.kind == .video ? "video" : "photo")
                         .font(.system(size: size * 0.32, weight: .light))
                         .foregroundStyle(Theme.textPrimary.opacity(0.3))
                 }
@@ -166,7 +174,23 @@ struct MilestoneThumbView: View {
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+                    .strokeBorder(
+                        attachment.isProof ? Theme.sunWarm.opacity(0.85) : Theme.textPrimary.opacity(0.08),
+                        lineWidth: attachment.isProof ? 1.2 : 0.5
+                    )
             )
+            .overlay {
+                if attachment.kind == .video {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: size * 0.26, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .shadow(color: .black.opacity(0.45), radius: 2)
+                        .allowsHitTesting(false)
+                }
+            }
+            .task(id: attachment.filename) {
+                guard attachment.kind == .video, let url = attachment.url else { return }
+                videoPoster = await VideoThumbnailService.thumbnail(for: url, maxDimension: max(160, size * 3))
+            }
     }
 }

@@ -43,6 +43,15 @@ struct ShareCompositionOverlayView: View {
                 layer: layer,
                 bottomPadding: bottomPadding
             )
+
+        case .note(let context):
+            NoteShareOverlayView(
+                context: context,
+                mode: mode,
+                username: username,
+                layer: layer,
+                bottomPadding: bottomPadding
+            )
         }
     }
 }

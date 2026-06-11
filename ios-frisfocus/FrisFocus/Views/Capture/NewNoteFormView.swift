@@ -36,6 +36,7 @@ struct NewNoteFormView: View {
     @State private var showTagPicker: Bool = false
     @State private var showLabelField: Bool = false
     @State private var photoItems: [PhotosPickerItem] = []
+    @State private var showProofCamera: Bool = false
 
     @State private var recorder = AudioRecorderService()
 
@@ -98,6 +99,17 @@ struct NewNoteFormView: View {
         .sheet(isPresented: $showTagPicker) {
             TagPickerSheetView(selectedTags: $tags)
                 .presentationDetents([.medium, .large])
+        }
+        .fullScreenCover(isPresented: $showProofCamera) {
+            ShareCameraView(
+                subject: .note(ShareNoteContext(date: Date(), seasonName: store.currentSeason.name)),
+                attachContext: .noteComposer,
+                onSavedToNoteComposer: { saved in
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        photos.append(saved)
+                    }
+                }
+            )
         }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
@@ -231,6 +243,18 @@ struct NewNoteFormView: View {
     @ViewBuilder
     private var toolStrip: some View {
         HStack(spacing: 4) {
+            // Camera-first — the designed proof camera is the default
+            // capture; the library picker stays one tap away.
+            Button(action: {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showProofCamera = true
+            }) {
+                toolIcon("camera", active: photos.contains { $0.isProof })
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Capture a proof")
+            .accessibilityHint("Opens the proof camera — post it, or just save it to this note")
+
             micTool
 
             PhotosPicker(

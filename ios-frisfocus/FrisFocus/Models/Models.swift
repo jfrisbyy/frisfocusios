@@ -514,23 +514,57 @@ struct MilestoneStep: Codable, Identifiable, Equatable, Hashable {
 
 /// What kind of media a `MilestoneAttachment` carries.
 enum MilestoneAttachmentKind: String, Codable, Equatable {
-    case photo, voiceMemo
+    case photo, voiceMemo, video
 }
 
-/// A photo or voice memo documenting a milestone's journey. The file
-/// lives in the Documents directory under `filename` (same convention
-/// as note media), so the absolute path survives container moves.
+/// A photo, video clip, or voice memo documenting a milestone's
+/// journey. The file lives in the Documents directory under `filename`
+/// (same convention as note media), so the absolute path survives
+/// container moves.
 struct MilestoneAttachment: Codable, Identifiable, Equatable, Hashable {
     var id: UUID = UUID()
     var kind: MilestoneAttachmentKind
     var filename: String
-    /// Voice memo length; nil for photos.
+    /// Voice memo / video clip length; nil for photos.
     var duration: TimeInterval? = nil
     var createdAt: Date = Date()
+    /// True when this media is a composed proof card — overlay,
+    /// captions, and stickers baked in. Proof attachments get the
+    /// signature edge in the journey UI.
+    var isProof: Bool = false
 
     var url: URL? {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         return docs?.appendingPathComponent(filename)
+    }
+}
+
+// Backward-compatible Codable: attachments persisted before videos /
+// proofs existed still decode cleanly — missing keys fall through to
+// the property defaults.
+extension MilestoneAttachment {
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, filename, duration, createdAt, isProof
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.kind = try c.decode(MilestoneAttachmentKind.self, forKey: .kind)
+        self.filename = try c.decode(String.self, forKey: .filename)
+        self.duration = try c.decodeIfPresent(TimeInterval.self, forKey: .duration)
+        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.isProof = try c.decodeIfPresent(Bool.self, forKey: .isProof) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(filename, forKey: .filename)
+        try c.encodeIfPresent(duration, forKey: .duration)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(isProof, forKey: .isProof)
     }
 }
 
@@ -826,17 +860,60 @@ struct NoteVoiceMemo: Codable, Identifiable, Equatable, Hashable {
     }
 }
 
-/// A single photo attached to a Note. The JPEG lives on disk in the
-/// Documents directory under `filename`; resolve via `url`. A note can
-/// carry any number, rendered in `createdAt` order.
+/// What kind of media a `NotePhoto` slot carries. Video clips arrived
+/// with proof attachments; the type keeps its original name so every
+/// persisted note decodes unchanged.
+enum NoteMediaKind: String, Codable, Equatable {
+    case photo, video
+}
+
+/// A single photo or short video attached to a Note. The file lives on
+/// disk in the Documents directory under `filename`; resolve via
+/// `url`. A note can carry any number, rendered in `createdAt` order.
 struct NotePhoto: Codable, Identifiable, Equatable, Hashable {
     var id: UUID = UUID()
     var filename: String
     var createdAt: Date = Date()
+    /// Photo or video clip. Defaults so pre-video payloads decode.
+    var kind: NoteMediaKind = .photo
+    /// Clip length; nil for photos.
+    var duration: TimeInterval? = nil
+    /// True when this media is a composed proof card — overlay,
+    /// captions, and stickers baked in. Proofs get the signature edge
+    /// in the photo grid.
+    var isProof: Bool = false
 
     var url: URL? {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         return docs?.appendingPathComponent(filename)
+    }
+}
+
+// Backward-compatible Codable: note photos persisted before videos /
+// proofs existed still decode cleanly.
+extension NotePhoto {
+    private enum CodingKeys: String, CodingKey {
+        case id, filename, createdAt, kind, duration, isProof
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.filename = try c.decode(String.self, forKey: .filename)
+        self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.kind = try c.decodeIfPresent(NoteMediaKind.self, forKey: .kind) ?? .photo
+        self.duration = try c.decodeIfPresent(TimeInterval.self, forKey: .duration)
+        self.isProof = try c.decodeIfPresent(Bool.self, forKey: .isProof) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(filename, forKey: .filename)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(duration, forKey: .duration)
+        try c.encode(isProof, forKey: .isProof)
     }
 }
 

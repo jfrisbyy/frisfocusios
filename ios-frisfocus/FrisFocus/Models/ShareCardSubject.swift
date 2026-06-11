@@ -15,6 +15,9 @@ import Foundation
 enum ShareCardSubject: Equatable {
     case day(ShareDayContext)
     case milestone(ShareMilestoneContext)
+    /// A capture headed for the journal — minimal overlay (date plus a
+    /// small season wordmark), no disclosure layers.
+    case note(ShareNoteContext)
 }
 
 /// A subject plus its overlay options — everything the preview and the
@@ -22,4 +25,5 @@ enum ShareCardSubject: Equatable {
 enum ShareCardComposition: Equatable {
     case day(ShareDayContext, ShareOverlayOptions)
     case milestone(ShareMilestoneContext, MilestoneShareOptions)
+    case note(ShareNoteContext)
 }

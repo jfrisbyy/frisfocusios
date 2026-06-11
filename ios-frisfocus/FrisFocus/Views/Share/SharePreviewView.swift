@@ -50,16 +50,31 @@ struct SharePreviewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let result: CaptureResult
-    /// The card subject (day or milestone) frozen together with the
-    /// user's overlay choices at capture time.
+    /// The card subject (day, milestone, or note) frozen together with
+    /// the user's overlay choices at capture time.
     let composition: ShareCardComposition
     let username: String
+    /// Where the composed card can attach afterwards — a milestone's
+    /// journey, the note composer, or the free-standing picker.
+    var attachContext: ProofAttachContext = .none
+    /// Note-composer flow: saved media returns here instead of
+    /// mutating the Store (the note doesn't exist yet).
+    var onSavedToNoteComposer: ((NotePhoto) -> Void)? = nil
     /// Called after a successful post/share so the camera dismisses too.
     let onFinished: () -> Void
 
     @State private var isWorking: Bool = false
     @State private var sharePayload: SharePayload?
     @State private var postedConfirmation: String?
+
+    // Attach flow — the composed clean card kept around so it can land
+    // on a journey or note after posting (or via "Just save").
+    @State private var pendingAttach: ComposedProofMedia?
+    @State private var attachChipVisible: Bool = false
+    @State private var showAttachPicker: Bool = false
+    @State private var didPost: Bool = false
+    @State private var sheetPickHandled: Bool = false
+    @State private var finishTask: Task<Void, Never>?
 
     // Destination state — the same any-combination model as a proof.
     @State private var audience: ShareCardAudience = .initial
@@ -136,6 +151,26 @@ struct SharePreviewView: View {
         .sheet(item: $sharePayload) { payload in
             ActivityShareSheet(items: payload.items)
                 .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showAttachPicker, onDismiss: {
+            // Closed without picking: a posted card just finishes (the
+            // post already happened); a "Just save" returns to the
+            // preview so nothing is silently lost.
+            if !sheetPickHandled && didPost { onFinished() }
+            sheetPickHandled = false
+        }) {
+            ProofAttachPickerSheet(
+                suggestedMilestoneId: suggestedMilestoneId,
+                onPick: { target in
+                    sheetPickHandled = true
+                    showAttachPicker = false
+                    attachAndFinish(target)
+                }
+            )
+            .environment(store)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
         }
         .sheet(isPresented: $showTaskPicker) {
             TaskStickerPickerView { block in
@@ -499,27 +534,65 @@ struct SharePreviewView: View {
             }
             .padding(.horizontal, 20)
 
-            Button {
-                shareOutside()
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("Share outside")
-                        .font(.sans(12, weight: .medium))
-                        .lineLimit(1)
+            HStack(spacing: 10) {
+                Button {
+                    shareOutside()
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Share outside")
+                            .font(.sans(12, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Color.white.opacity(0.72))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
                 }
-                .foregroundStyle(Color.white.opacity(0.72))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .background(Capsule().fill(Color.white.opacity(0.08)))
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+                .accessibilityLabel("Share outside")
+                .accessibilityHint("Opens the share sheet with your attributed card")
+
+                Button {
+                    justSave()
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(justSaveLabel)
+                            .font(.sans(12, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Color.white.opacity(0.72))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+                }
+                .accessibilityLabel(justSaveLabel)
+                .accessibilityHint("Keeps the card on this device without posting")
             }
-            .accessibilityLabel("Share outside")
-            .accessibilityHint("Opens the share sheet with your attributed card")
         }
         .padding(.bottom, 20)
         .disabled(isWorking)
+    }
+
+    /// "Just save" reads as its destination when the camera was opened
+    /// from a milestone or the note composer.
+    private var justSaveLabel: String {
+        switch attachContext {
+        case .milestone: return "Just save to journey"
+        case .noteComposer: return "Just save to note"
+        case .none: return "Just save"
+        }
+    }
+
+    /// The milestone to offer first in the attach picker — the capture's
+    /// own subject when there is one.
+    private var suggestedMilestoneId: UUID? {
+        if case .milestone(let id) = attachContext { return id }
+        return nil
     }
 
     // MARK: - Destination pill
@@ -1010,21 +1083,86 @@ struct SharePreviewView: View {
     private func postedToast(_ text: String) -> some View {
         VStack {
             Spacer()
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(Color(hex: 0xFFC668))
-                Text(text)
-                    .font(.sans(14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
+            VStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color(hex: 0xFFC668))
+                    Text(text)
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .background(Capsule().fill(Color.black.opacity(0.75)))
+                .allowsHitTesting(false)
+
+                if attachChipVisible {
+                    attachChip
+                        .transition(.scale(scale: 0.94).combined(with: .opacity))
+                }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(Capsule().fill(Color.black.opacity(0.75)))
             .padding(.bottom, 140)
         }
         .transition(.opacity)
-        .allowsHitTesting(false)
+        .animation(.spring(response: 0.34, dampingFraction: 0.82), value: attachChipVisible)
+    }
+
+    /// The quiet post-confirmation invitation — pin the designed card
+    /// somewhere it outlives the 24h story.
+    private var attachChip: some View {
+        Button {
+            chipTapped()
+        } label: {
+            HStack(spacing: 7) {
+                HStack(spacing: -2) {
+                    Image(systemName: "flag")
+                        .font(.system(size: 10, weight: .semibold))
+                    Image(systemName: "leaf")
+                        .font(.system(size: 8, weight: .semibold))
+                        .offset(y: -4)
+                }
+                .foregroundStyle(Color(hex: 0xFFD98A))
+
+                Text(attachChipLabel)
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.55))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Capsule().fill(Color(hex: 0x1E1C1B).opacity(0.94)))
+            .overlay(Capsule().strokeBorder(Color(hex: 0xFFD98A).opacity(0.35), lineWidth: 0.5))
+            .shadow(color: Color.black.opacity(0.35), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(attachChipLabel)
+        .accessibilityHint("Keeps the card beyond the 24 hour story")
+    }
+
+    private var attachChipLabel: String {
+        switch attachContext {
+        case .milestone: return "Add to the journey"
+        case .noteComposer: return "Add to this note"
+        case .none: return "Add to a milestone or note"
+        }
+    }
+
+    private func chipTapped() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        finishTask?.cancel()
+        switch attachContext {
+        case .milestone(let id):
+            attachAndFinish(.milestone(id))
+        case .noteComposer:
+            saveToComposerAndFinish()
+        case .none:
+            showAttachPicker = true
+        }
     }
 
     // MARK: - Destinations
@@ -1041,46 +1179,23 @@ struct SharePreviewView: View {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
         Task {
-            let mediaData: Data?
-            let mediaType: MediaType
-            let duration: Double?
-
-            switch result {
-            case .photo(let image):
-                let composed = ShareCardRenderer.compositePhoto(
-                    image,
-                    composition: composition,
-                    username: username,
-                    attributed: false,
-                    zoom: mediaZoom.scale,
-                    zoomOffset: mediaZoom.offset,
-                    zoomCanvas: cardSize,
-                    editLayer: { size in editLayerImage(at: size) }
-                )
-                mediaData = composed?.jpegData(compressionQuality: 0.9)
-                mediaType = .photo
-                duration = nil
-
-            case .video(let url, _, let dur):
-                let composedURL = await ShareCardRenderer.compositeVideo(
-                    at: url,
-                    composition: composition,
-                    username: username,
-                    attributed: false,
-                    animated: !reduceMotion,
-                    zoom: mediaZoom.scale,
-                    zoomOffset: mediaZoom.offset,
-                    zoomCanvas: cardSize,
-                    editLayer: { size in editLayerImage(at: size) }
-                )
-                mediaData = try? Data(contentsOf: composedURL ?? url)
-                mediaType = .video
-                duration = dur
-            }
-
-            guard let mediaData else {
+            guard let media = await composeCleanMedia() else {
                 isWorking = false
                 return
+            }
+
+            let mediaData: Data
+            let mediaType: MediaType
+            let duration: Double?
+            switch media {
+            case .photo(let data):
+                mediaData = data
+                mediaType = .photo
+                duration = nil
+            case .video(let data, let dur):
+                mediaData = data
+                mediaType = .video
+                duration = dur
             }
 
             var toast = "Posted to your people"
@@ -1109,9 +1224,140 @@ struct SharePreviewView: View {
             }
 
             isWorking = false
+            didPost = true
+            pendingAttach = media
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            withAnimation(.easeOut(duration: 0.25)) { postedConfirmation = toast }
-            try? await Task.sleep(for: .seconds(0.9))
+            withAnimation(.easeOut(duration: 0.25)) {
+                postedConfirmation = toast
+                attachChipVisible = true
+            }
+            scheduleFinish(after: 3.4)
+        }
+    }
+
+    /// Composes the CLEAN card (no attribution — it stays in the app)
+    /// once, for posting and/or attaching.
+    private func composeCleanMedia() async -> ComposedProofMedia? {
+        switch result {
+        case .photo(let image):
+            let composed = ShareCardRenderer.compositePhoto(
+                image,
+                composition: composition,
+                username: username,
+                attributed: false,
+                zoom: mediaZoom.scale,
+                zoomOffset: mediaZoom.offset,
+                zoomCanvas: cardSize,
+                editLayer: { size in editLayerImage(at: size) }
+            )
+            guard let data = composed?.jpegData(compressionQuality: 0.9) else { return nil }
+            return .photo(data)
+
+        case .video(let url, _, let dur):
+            let composedURL = await ShareCardRenderer.compositeVideo(
+                at: url,
+                composition: composition,
+                username: username,
+                attributed: false,
+                animated: !reduceMotion,
+                zoom: mediaZoom.scale,
+                zoomOffset: mediaZoom.offset,
+                zoomCanvas: cardSize,
+                editLayer: { size in editLayerImage(at: size) }
+            )
+            guard let data = try? Data(contentsOf: composedURL ?? url) else { return nil }
+            return .video(data, duration: dur)
+        }
+    }
+
+    // MARK: - Attach flow
+
+    /// "Just save" — compose the clean card and keep it on-device only.
+    /// Nothing posts, nothing leaves the device.
+    private func justSave() {
+        guard !isWorking else { return }
+        isWorking = true
+        if showAudiencePanel { showAudiencePanel = false }
+        if isDrawing { isDrawing = false }
+        activeBlockId = nil
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        Task {
+            guard let media = await composeCleanMedia() else {
+                isWorking = false
+                return
+            }
+            pendingAttach = media
+            isWorking = false
+            switch attachContext {
+            case .milestone(let id):
+                attachAndFinish(.milestone(id))
+            case .noteComposer:
+                saveToComposerAndFinish()
+            case .none:
+                showAttachPicker = true
+            }
+        }
+    }
+
+    /// Writes the pending card onto the picked destination, confirms,
+    /// and closes the camera.
+    private func attachAndFinish(_ target: ProofAttachTarget) {
+        guard let media = pendingAttach else {
+            onFinished()
+            return
+        }
+        let ok: Bool
+        let confirmation: String
+        switch target {
+        case .milestone(let id):
+            ok = store.attachProof(media, toMilestone: id)
+            confirmation = ok ? "Added to the journey" : "Couldn't save — try again"
+        case .note(let id):
+            ok = store.attachProof(media, toNote: id)
+            confirmation = ok ? "Added to the note" : "Couldn't save — try again"
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+        withAnimation(.easeOut(duration: 0.22)) {
+            attachChipVisible = false
+            postedConfirmation = confirmation
+        }
+        if ok || didPost {
+            scheduleFinish(after: 0.9)
+        } else {
+            // A failed "Just save" returns to the preview after the toast.
+            finishTask?.cancel()
+            finishTask = Task {
+                try? await Task.sleep(for: .seconds(1.4))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeIn(duration: 0.2)) { postedConfirmation = nil }
+            }
+        }
+    }
+
+    /// Note-composer flow — the media file is written, then handed back
+    /// to the still-open composer.
+    private func saveToComposerAndFinish() {
+        guard let media = pendingAttach, let saved = store.saveProofNoteMedia(media) else {
+            onFinished()
+            return
+        }
+        onSavedToNoteComposer?(saved)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        withAnimation(.easeOut(duration: 0.22)) {
+            attachChipVisible = false
+            postedConfirmation = "Added to your note"
+        }
+        scheduleFinish(after: 0.8)
+    }
+
+    /// Auto-close after a beat — cancelled the moment the user engages
+    /// with the attach chip.
+    private func scheduleFinish(after seconds: Double) {
+        finishTask?.cancel()
+        finishTask = Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
             onFinished()
         }
     }

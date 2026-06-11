@@ -69,9 +69,11 @@ private struct ViewerTarget: Identifiable {
 
 // MARK: - Single thumbnail
 
-/// One rounded photo tile. Loads the JPEG off the main render pass;
-/// shows a quiet paper placeholder while loading or when the file is
-/// still downloading from sync.
+/// One rounded media tile — a photo, or a video poster with a play
+/// badge and duration. Proof attachments carry the thin
+/// signature-color edge. Loads off the main render pass; shows a quiet
+/// paper placeholder while loading or when the file is still
+/// downloading from sync.
 struct NotePhotoThumbView: View {
     let photo: NotePhoto
 
@@ -87,7 +89,7 @@ struct NotePhotoThumbView: View {
                         .aspectRatio(contentMode: .fill)
                         .allowsHitTesting(false)
                 } else {
-                    Image(systemName: "photo")
+                    Image(systemName: photo.kind == .video ? "video" : "photo")
                         .font(.system(size: 18, weight: .light))
                         .foregroundStyle(Theme.textPrimary.opacity(0.25))
                 }
@@ -95,8 +97,33 @@ struct NotePhotoThumbView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 0.5)
+                    .strokeBorder(
+                        photo.isProof ? Theme.sunWarm.opacity(0.85) : Theme.textPrimary.opacity(0.1),
+                        lineWidth: photo.isProof ? 1.2 : 0.5
+                    )
             )
+            .overlay {
+                if photo.kind == .video {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .shadow(color: .black.opacity(0.45), radius: 2)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if photo.kind == .video, let duration = photo.duration, duration > 0 {
+                    Text(duration.voiceMemoTimeString)
+                        .font(.sans(9, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.black.opacity(0.55)))
+                        .padding(5)
+                        .allowsHitTesting(false)
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .task(id: photo.filename) {
                 image = await loadImage()
@@ -105,6 +132,10 @@ struct NotePhotoThumbView: View {
 
     private func loadImage() async -> UIImage? {
         let target = photo
+        if target.kind == .video {
+            guard let url = target.url else { return nil }
+            return await VideoThumbnailService.thumbnail(for: url, maxDimension: 480)
+        }
         return await Task.detached(priority: .userInitiated) {
             NotePhotoStore.image(for: target)
         }.value

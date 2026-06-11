@@ -34,15 +34,21 @@ private nonisolated struct RemoteNoteMemo: Codable, Sendable {
     }
 }
 
-/// JSONB shape for one photo on a remote note row.
+/// JSONB shape for one photo / video on a remote note row. The media
+/// fields are optional so rows written before videos and proofs
+/// existed still decode.
 private nonisolated struct RemoteNotePhoto: Codable, Sendable {
     let id: String
     let filename: String
     let createdAt: String
+    let kind: String?
+    let duration: Double?
+    let isProof: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, filename
+        case id, filename, kind, duration
         case createdAt = "created_at"
+        case isProof = "is_proof"
     }
 }
 
@@ -276,7 +282,10 @@ final class NotesSyncService {
                 NotePhoto(
                     id: UUID(uuidString: $0.id) ?? UUID(),
                     filename: $0.filename,
-                    createdAt: SyncDates.parse($0.createdAt)
+                    createdAt: SyncDates.parse($0.createdAt),
+                    kind: NoteMediaKind(rawValue: $0.kind ?? "photo") ?? .photo,
+                    duration: $0.duration,
+                    isProof: $0.isProof ?? false
                 )
             },
             tags: row.tags,
@@ -389,7 +398,10 @@ final class NotesSyncService {
                         RemoteNotePhoto(
                             id: $0.id.uuidString,
                             filename: $0.filename,
-                            createdAt: SyncDates.iso($0.createdAt)
+                            createdAt: SyncDates.iso($0.createdAt),
+                            kind: $0.kind.rawValue,
+                            duration: $0.duration,
+                            isProof: $0.isProof
                         )
                     },
                     createdAt: SyncDates.iso(note.createdAt),
@@ -441,7 +453,7 @@ final class NotesSyncService {
             pairs.append((memo.filename, "audio/mp4"))
         }
         for photo in note.photos {
-            pairs.append((photo.filename, "image/jpeg"))
+            pairs.append((photo.filename, photo.kind == .video ? "video/mp4" : "image/jpeg"))
         }
 
         for (filename, contentType) in pairs where !uploadedMedia.contains(filename) {

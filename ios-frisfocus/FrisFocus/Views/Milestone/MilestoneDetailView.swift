@@ -121,7 +121,10 @@ struct MilestoneDetailView: View {
         }
         .fullScreenCover(isPresented: $showShareCamera) {
             if let milestone = store.milestone(by: milestoneId) {
-                ShareCameraView(subject: .milestone(store.milestoneShareContext(for: milestone)))
+                ShareCameraView(
+                    subject: .milestone(store.milestoneShareContext(for: milestone)),
+                    attachContext: .milestone(milestoneId)
+                )
             }
         }
         .confirmationDialog(
@@ -412,6 +415,30 @@ struct MilestoneDetailView: View {
             }
 
             HStack(spacing: 10) {
+                // Proofs lead — the designed camera is the journey's
+                // default capture. Library + voice memo stay quieter.
+                Button {
+                    openShareCamera()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Capture a proof")
+                            .font(.sans(12, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Theme.warmWheat))
+                    .overlay(
+                        Capsule().strokeBorder(Theme.sunWarm.opacity(0.6), lineWidth: 0.5)
+                    )
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Capture a proof")
+                .accessibilityHint("Opens the proof camera — post it, or just save it to this journey")
+
                 PhotosPicker(selection: $photoItem, matching: .images) {
                     journeyAddLabel("photo", systemImage: "photo")
                 }
@@ -454,7 +481,7 @@ struct MilestoneDetailView: View {
     @ViewBuilder
     private func journeyRow(_ attachment: MilestoneAttachment) -> some View {
         switch attachment.kind {
-        case .photo:
+        case .photo, .video:
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 viewingAttachment = attachment
@@ -462,7 +489,7 @@ struct MilestoneDetailView: View {
                 HStack(spacing: 12) {
                     MilestoneThumbView(attachment: attachment, size: 52)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Photo")
+                        Text(journeyRowTitle(attachment))
                             .font(.sans(13, weight: .medium))
                             .foregroundStyle(Theme.textPrimary.opacity(0.9))
                         Text(journeyDateText(attachment.createdAt))
@@ -470,18 +497,33 @@ struct MilestoneDetailView: View {
                             .foregroundStyle(Theme.textPrimary.opacity(0.5))
                     }
                     Spacer()
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 10, weight: .regular))
+                    Image(systemName: attachment.kind == .video ? "play.circle" : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: attachment.kind == .video ? 14 : 10, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.35))
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Open photo full screen")
+            .accessibilityLabel(attachment.kind == .video ? "Play video full screen" : "Open photo full screen")
 
         case .voiceMemo:
             MilestoneMemoRow(attachment: attachment, dateText: journeyDateText(attachment.createdAt))
         }
+    }
+
+    private func journeyRowTitle(_ attachment: MilestoneAttachment) -> String {
+        let base: String
+        switch attachment.kind {
+        case .photo: base = attachment.isProof ? "Proof" : "Photo"
+        case .video:
+            if let duration = attachment.duration, duration > 0 {
+                base = "\(attachment.isProof ? "Proof clip" : "Video") · \(duration.voiceMemoTimeString)"
+            } else {
+                base = attachment.isProof ? "Proof clip" : "Video"
+            }
+        case .voiceMemo: base = "Voice memo"
+        }
+        return base
     }
 
     private func journeyDateText(_ date: Date) -> String {
@@ -875,10 +917,11 @@ private struct MilestoneMemoRow: View {
     }
 }
 
-// MARK: - Full-screen photo viewer
+// MARK: - Full-screen media viewer
 
-/// Minimal full-screen viewer for a journey photo — black ground,
-/// fit-to-screen image, tap or the close control to dismiss.
+/// Minimal full-screen viewer for journey media — black ground,
+/// fit-to-screen image or a looping clip with sound, tap or the close
+/// control to dismiss.
 private struct MilestonePhotoViewer: View {
     let attachment: MilestoneAttachment
     @Environment(\.dismiss) private var dismiss
@@ -887,7 +930,12 @@ private struct MilestonePhotoViewer: View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
 
-            if let image = MilestoneMediaStore.image(for: attachment) {
+            if attachment.kind == .video, let url = attachment.url,
+               FileManager.default.fileExists(atPath: url.path) {
+                VideoLoopView(url: url, gravity: .resizeAspect)
+                    .id(url)
+                    .ignoresSafeArea()
+            } else if let image = MilestoneMediaStore.image(for: attachment) {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -914,7 +962,7 @@ private struct MilestonePhotoViewer: View {
             .buttonStyle(.plain)
             .padding(.trailing, 16)
             .padding(.top, 8)
-            .accessibilityLabel("Close photo")
+            .accessibilityLabel(attachment.kind == .video ? "Close video" : "Close photo")
         }
         .onTapGesture { dismiss() }
     }

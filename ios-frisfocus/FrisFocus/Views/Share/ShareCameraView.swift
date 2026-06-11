@@ -31,8 +31,15 @@ struct ShareCameraView: View {
     @Environment(ProfileStore.self) private var profileStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// What's being shared — a day (or week), or a milestone.
+    /// What's being shared — a day (or week), a milestone, or a
+    /// journal capture.
     let subject: ShareCardSubject
+    /// Where the composed card can attach afterwards — a milestone's
+    /// journey, the note composer, or the free-standing picker.
+    let attachContext: ProofAttachContext
+    /// Note-composer flow: saved media returns here instead of
+    /// mutating the Store (the note doesn't exist yet).
+    let onSavedToNoteComposer: ((NotePhoto) -> Void)?
 
     @State private var camera = CameraService()
     @State private var options = ShareOverlayOptions()
@@ -42,13 +49,21 @@ struct ShareCameraView: View {
     @State private var result: CaptureResult?
     @State private var showLayers: Bool = false
 
-    init(subject: ShareCardSubject) {
+    init(
+        subject: ShareCardSubject,
+        attachContext: ProofAttachContext = .none,
+        onSavedToNoteComposer: ((NotePhoto) -> Void)? = nil
+    ) {
         self.subject = subject
+        self.attachContext = attachContext
+        self.onSavedToNoteComposer = onSavedToNoteComposer
     }
 
     /// Convenience for the existing day/week entry points.
     init(context: ShareDayContext) {
         self.subject = .day(context)
+        self.attachContext = .none
+        self.onSavedToNoteComposer = nil
     }
 
     // Recording state
@@ -80,12 +95,19 @@ struct ShareCameraView: View {
         switch subject {
         case .day(let context): return .day(context, options)
         case .milestone(let context): return .milestone(context, milestoneOptions)
+        case .note(let context): return .note(context)
         }
     }
 
     private var isDaySubject: Bool {
         if case .day = subject { return true }
         return false
+    }
+
+    /// The journal card has no disclosure layers — hide the button.
+    private var hasLayers: Bool {
+        if case .note = subject { return false }
+        return true
     }
 
     var body: some View {
@@ -147,6 +169,8 @@ struct ShareCameraView: View {
                 result: captured,
                 composition: composition,
                 username: username,
+                attachContext: attachContext,
+                onSavedToNoteComposer: onSavedToNoteComposer,
                 onFinished: {
                     result = nil
                     dismiss()
@@ -171,6 +195,8 @@ struct ShareCameraView: View {
                 .presentationDetents([.height(440)])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
+        case .note:
+            EmptyView()
         }
     }
 
@@ -192,19 +218,21 @@ struct ShareCameraView: View {
 
             Spacer()
 
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showLayers = true
-            } label: {
-                Text("Layers")
-                    .font(.sans(14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 18)
-                    .frame(height: 40)
-                    .background(Capsule().fill(Color.black.opacity(0.35)))
+            if hasLayers {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showLayers = true
+                } label: {
+                    Text("Layers")
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .frame(height: 40)
+                        .background(Capsule().fill(Color.black.opacity(0.35)))
+                }
+                .accessibilityLabel("Overlay layers")
+                .accessibilityHint("Choose what appears on the share")
             }
-            .accessibilityLabel("Overlay layers")
-            .accessibilityHint("Choose what appears on the share")
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()

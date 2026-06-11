@@ -302,7 +302,13 @@ final class SeasonSyncService {
         guard let store else { return [] }
         return store.currentSeason.milestones.flatMap { milestone in
             milestone.attachments.map { attachment in
-                (attachment.filename, attachment.kind == .photo ? "image/jpeg" : "audio/mp4")
+                let contentType: String
+                switch attachment.kind {
+                case .photo: contentType = "image/jpeg"
+                case .voiceMemo: contentType = "audio/mp4"
+                case .video: contentType = "video/mp4"
+                }
+                return (attachment.filename, contentType)
             }
         }
     }

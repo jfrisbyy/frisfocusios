@@ -2,11 +2,13 @@
 //  NotePhotoViewerView.swift
 //  FrisFocus
 //
-//  Full-screen photo viewer for note attachments. Swipe between
-//  photos, pinch to zoom (double-tap toggles), close with the ×.
-//  Presented as a fullScreenCover from the photo grid.
+//  Full-screen media viewer for note attachments. Swipe between
+//  pages — photos pinch to zoom (double-tap toggles), video clips
+//  loop with sound — close with the ×. Presented as a
+//  fullScreenCover from the photo grid.
 //
 
+import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -23,8 +25,14 @@ struct NotePhotoViewerView: View {
 
             TabView(selection: $currentIndex) {
                 ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
-                    ZoomablePhotoView(photo: photo)
-                        .tag(index)
+                    Group {
+                        if photo.kind == .video {
+                            NoteVideoPageView(photo: photo, isActive: currentIndex == index)
+                        } else {
+                            ZoomablePhotoView(photo: photo)
+                        }
+                    }
+                    .tag(index)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: photos.count > 1 ? .automatic : .never))
@@ -50,6 +58,30 @@ struct NotePhotoViewerView: View {
             currentIndex = min(max(0, startIndex), max(0, photos.count - 1))
         }
         .statusBarHidden(true)
+    }
+}
+
+// MARK: - Video page
+
+/// One video page — loops with sound while it's the visible page,
+/// pauses the moment the user swipes away.
+private struct NoteVideoPageView: View {
+    let photo: NotePhoto
+    let isActive: Bool
+
+    var body: some View {
+        if let url = photo.url, FileManager.default.fileExists(atPath: url.path) {
+            VideoLoopView(url: url, gravity: .resizeAspect, isPaused: !isActive)
+                .id(url)
+                .ignoresSafeArea()
+        } else {
+            VStack(spacing: 8) {
+                ProgressView().tint(.white)
+                Text("Still syncing…")
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+        }
     }
 }
 
