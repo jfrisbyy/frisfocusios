@@ -596,10 +596,85 @@ struct CameraProxyView: View {
     @Bindable var camera: CameraService
 
     var body: some View {
-        if camera.hasCamera {
-            ActualCameraView(camera: camera)
-        } else {
+        switch camera.viewState {
+        case .running:
+            ZStack {
+                ActualCameraView(camera: camera)
+                if camera.isInterrupted {
+                    statusCard(
+                        icon: "pause.circle",
+                        title: "Camera paused",
+                        message: "Another app is using the camera. It will resume automatically."
+                    )
+                }
+            }
+        case .warmingUp:
+            ZStack {
+                Color.black
+                ProgressView()
+                    .tint(Color.white.opacity(0.7))
+            }
+        case .denied:
+            statusCard(
+                icon: "video.slash",
+                title: "Camera access is off",
+                message: "Enable camera access in Settings to capture a moment from your day.",
+                buttonTitle: "Open Settings"
+            ) {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+        case .failed:
+            statusCard(
+                icon: "exclamationmark.triangle",
+                title: "The camera couldn't start",
+                message: "Something interrupted the camera. Try again.",
+                buttonTitle: "Retry"
+            ) {
+                Task { await camera.retry() }
+            }
+        case .unavailable:
             placeholder
+        }
+    }
+
+    private func statusCard(
+        icon: String,
+        title: String,
+        message: String,
+        buttonTitle: String? = nil,
+        action: (() -> Void)? = nil
+    ) -> some View {
+        ZStack {
+            Color.black.opacity(0.92)
+            VStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 30, weight: .regular))
+                    .foregroundStyle(Color.white.opacity(0.65))
+                Text(title)
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.92))
+                Text(message)
+                    .font(.serif(14, weight: .regular))
+                    .italic()
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Color.white.opacity(0.7))
+                    .padding(.horizontal, 40)
+
+                if let buttonTitle, let action {
+                    Button(action: action) {
+                        Text(buttonTitle)
+                            .font(.sans(14, weight: .semibold))
+                            .foregroundStyle(Color.black)
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 10)
+                            .background(Capsule().fill(Color.white.opacity(0.92)))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                }
+            }
         }
     }
 
@@ -667,10 +742,19 @@ final class CameraService: NSObject {
         case unknown, granted, denied, restricted
     }
 
+    /// What the proxy view should show. Keeps the four failure surfaces
+    /// (permission, hardware-missing, startup failure, interruption)
+    /// from collapsing into one silent black screen.
+    enum ViewState: Equatable {
+        case warmingUp, running, denied, failed, unavailable
+    }
+
     let session = AVCaptureSession()
     private(set) var authorization: AuthState = .unknown
     private(set) var isReady: Bool = false
     private(set) var hasCamera: Bool = false
+    private(set) var startupFailed: Bool = false
+    private(set) var isInterrupted: Bool = false
     private(set) var isFlashOn: Bool = false
     private(set) var position: AVCaptureDevice.Position = .back
     private(set) var currentZoom: CGFloat = 1.0
@@ -679,10 +763,25 @@ final class CameraService: NSObject {
     private let photoOutput = AVCapturePhotoOutput()
     private let movieOutput = AVCaptureMovieFileOutput()
     private var currentInput: AVCaptureDeviceInput?
-    private var audioInput: AVCaptureDeviceInput?
     private var pendingCapture: CheckedContinuation<UIImage?, Never>?
     private var pendingRecording: ((URL?) -> Void)?
     private var pendingRecordingURL: URL?
+    private var observersRegistered: Bool = false
+
+    var viewState: ViewState {
+        if hasCamera { return .running }
+        if authorization == .denied || authorization == .restricted { return .denied }
+        if startupFailed { return .failed }
+        if authorization == .granted, !Self.cameraDeviceExists { return .unavailable }
+        return .warmingUp
+    }
+
+    /// Whether the hardware has any camera at all — distinguishes the
+    /// cloud simulator's placeholder from a real-device startup failure.
+    nonisolated private static var cameraDeviceExists: Bool {
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil
+            || AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) != nil
+    }
 
     func requestAccessAndStart() async {
         // Idempotent: if we've already set the session up successfully,
@@ -695,6 +794,13 @@ final class CameraService: NSObject {
             return
         }
 
+        startupFailed = false
+
+        // Video permission only — the microphone is deliberately NOT
+        // requested or attached here. Holding an audio input while the
+        // app's voice/audio features own the audio session can silently
+        // interrupt the capture session and leave the viewfinder black.
+        // Audio attaches just-in-time when a recording actually starts.
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
         case .authorized: authorization = .granted
@@ -706,22 +812,68 @@ final class CameraService: NSObject {
         @unknown default: authorization = .denied
         }
 
-        // Best-effort microphone access for video recording. We don't
-        // gate the whole flow on this — photos still work without it.
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            _ = await AVCaptureDevice.requestAccess(for: .audio)
-        }
-
         guard authorization == .granted else {
             hasCamera = false
             return
         }
+
+        registerSessionObservers()
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             sessionQueue.async { [weak self] in
                 self?.configureSession()
                 continuation.resume()
             }
+        }
+    }
+
+    /// Clears a failed startup and tries the whole bring-up again.
+    func retry() async {
+        startupFailed = false
+        await requestAccessAndStart()
+    }
+
+    // MARK: - Interruption recovery
+
+    private func registerSessionObservers() {
+        guard !observersRegistered else { return }
+        observersRegistered = true
+        let nc = NotificationCenter.default
+        nc.addObserver(
+            self,
+            selector: #selector(sessionWasInterrupted),
+            name: AVCaptureSession.wasInterruptedNotification,
+            object: session
+        )
+        nc.addObserver(
+            self,
+            selector: #selector(sessionInterruptionEnded),
+            name: AVCaptureSession.interruptionEndedNotification,
+            object: session
+        )
+        nc.addObserver(
+            self,
+            selector: #selector(sessionRuntimeError),
+            name: AVCaptureSession.runtimeErrorNotification,
+            object: session
+        )
+    }
+
+    @objc nonisolated private func sessionWasInterrupted() {
+        Task { @MainActor in self.isInterrupted = true }
+    }
+
+    @objc nonisolated private func sessionInterruptionEnded() {
+        sessionQueue.async { [session] in
+            if !session.isRunning { session.startRunning() }
+        }
+        Task { @MainActor in self.isInterrupted = false }
+    }
+
+    @objc nonisolated private func sessionRuntimeError() {
+        // Bounce the session back the moment the system lets us.
+        sessionQueue.async { [session] in
+            if !session.isRunning { session.startRunning() }
         }
     }
 
@@ -808,19 +960,61 @@ final class CameraService: NSObject {
         let dir = FileManager.default.temporaryDirectory
         let url = dir.appendingPathComponent("frisfocus-clip-\(UUID().uuidString).mov")
         pendingRecordingURL = url
-        sessionQueue.async { [weak self] in
-            guard let self else { return }
-            if let connection = self.movieOutput.connection(with: .video) {
-                if connection.isVideoOrientationSupported {
-                    connection.videoOrientation = .portrait
-                }
-                if self.position == .front, connection.isVideoMirroringSupported {
-                    connection.automaticallyAdjustsVideoMirroring = false
-                    connection.isVideoMirrored = true
-                }
+        let mirrored = (position == .front)
+        Task { @MainActor in
+            // Just-in-time microphone: ask only when a recording actually
+            // begins, and attach the input for the recording's duration.
+            // Photos never touch the mic; a denied mic still records
+            // silent video instead of failing.
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+                _ = await AVCaptureDevice.requestAccess(for: .audio)
             }
-            self.movieOutput.startRecording(to: url, recordingDelegate: self)
+            sessionQueue.async { [weak self] in
+                guard let self else { return }
+                self.attachAudioInput()
+                if let connection = self.movieOutput.connection(with: .video) {
+                    if connection.isVideoOrientationSupported {
+                        connection.videoOrientation = .portrait
+                    }
+                    if mirrored, connection.isVideoMirroringSupported {
+                        connection.automaticallyAdjustsVideoMirroring = false
+                        connection.isVideoMirrored = true
+                    }
+                }
+                self.movieOutput.startRecording(to: url, recordingDelegate: self)
+            }
         }
+    }
+
+    /// Adds the microphone input if authorized and not already attached.
+    /// Runs on the session queue.
+    nonisolated private func attachAudioInput() {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
+        let alreadyAttached = session.inputs
+            .compactMap { $0 as? AVCaptureDeviceInput }
+            .contains { $0.device.hasMediaType(.audio) }
+        guard !alreadyAttached,
+              let audioDevice = AVCaptureDevice.default(for: .audio),
+              let input = try? AVCaptureDeviceInput(device: audioDevice) else { return }
+        session.beginConfiguration()
+        if session.canAddInput(input) {
+            session.addInput(input)
+        }
+        session.commitConfiguration()
+    }
+
+    /// Releases the microphone after a recording so the camera never
+    /// holds the audio device while idle. Runs on the session queue.
+    nonisolated private func detachAudioInput() {
+        let audioInputs = session.inputs
+            .compactMap { $0 as? AVCaptureDeviceInput }
+            .filter { $0.device.hasMediaType(.audio) }
+        guard !audioInputs.isEmpty else { return }
+        session.beginConfiguration()
+        for input in audioInputs {
+            session.removeInput(input)
+        }
+        session.commitConfiguration()
     }
 
     func stopRecording(completion: @escaping (URL?) -> Void) {
@@ -840,26 +1034,25 @@ final class CameraService: NSObject {
         session.beginConfiguration()
         session.sessionPreset = .high
 
-        guard let device = Self.defaultDevice(position: .back),
+        guard let device = Self.defaultDevice(position: .back) ?? Self.defaultDevice(position: .front),
               let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else {
             session.commitConfiguration()
+            // A device exists but couldn't be wired up → a real failure
+            // worth a Retry. No device at all → the simulator placeholder.
+            let failed = Self.cameraDeviceExists
             Task { @MainActor in
                 self.hasCamera = false
                 self.isReady = false
+                self.startupFailed = failed
             }
             return
         }
         session.addInput(input)
 
-        // Audio (best effort; video without audio is still fine).
-        var addedAudio: AVCaptureDeviceInput?
-        if let audioDevice = AVCaptureDevice.default(for: .audio),
-           let aIn = try? AVCaptureDeviceInput(device: audioDevice),
-           session.canAddInput(aIn) {
-            session.addInput(aIn)
-            addedAudio = aIn
-        }
+        // NOTE: no audio input here — the mic attaches just-in-time in
+        // startRecording() so an idle viewfinder never owns the audio
+        // device (which can silently interrupt the session → black).
 
         if session.canAddOutput(photoOutput) {
             session.addOutput(photoOutput)
@@ -870,12 +1063,14 @@ final class CameraService: NSObject {
         session.commitConfiguration()
         session.startRunning()
 
+        let running = session.isRunning
+        let devicePosition = device.position
         Task { @MainActor in
             self.currentInput = input
-            self.audioInput = addedAudio
-            self.position = .back
-            self.hasCamera = true
-            self.isReady = true
+            self.position = devicePosition
+            self.hasCamera = running
+            self.isReady = running
+            self.startupFailed = !running
         }
     }
 
@@ -942,6 +1137,10 @@ extension CameraService: @preconcurrency AVCaptureFileOutputRecordingDelegate {
         from connections: [AVCaptureConnection],
         error: Error?
     ) {
+        // Release the mic as soon as the clip is finalized.
+        sessionQueue.async { [weak self] in
+            self?.detachAudioInput()
+        }
         Task { @MainActor in
             let finalURL: URL? = (error == nil) ? outputFileURL : nil
             let completion = self.pendingRecording

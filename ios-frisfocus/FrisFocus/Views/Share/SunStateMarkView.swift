@@ -24,9 +24,9 @@ import SwiftUI
 struct SunStateMarkView: View {
     /// Raw ratio — may exceed 1.0; visuals clamp, rays key off ≥ 1.
     let ratio: Double
-    var diameter: CGFloat = 46
+    var diameter: CGFloat = 40
 
-    private var width: CGFloat { diameter * 2.5 }
+    private var width: CGFloat { SunGlyphCore.frameWidth(diameter: diameter) }
     private var height: CGFloat { SunGlyphCore.frameHeight(diameter: diameter) }
     private var hairlineY: CGFloat { SunGlyphCore.hairlineY(diameter: diameter) }
 
@@ -50,8 +50,8 @@ struct SunStateMarkView: View {
 struct WeekSunsMarkView: View {
     /// Seven day-ratios, oldest first, ending with today.
     let ratios: [Double]
-    var width: CGFloat = 212
-    var sunDiameter: CGFloat = 14
+    var width: CGFloat = 172
+    var sunDiameter: CGFloat = 13
 
     private var height: CGFloat { SunGlyphCore.frameHeight(diameter: sunDiameter) }
     private var hairlineY: CGFloat { SunGlyphCore.hairlineY(diameter: sunDiameter) }
@@ -87,13 +87,14 @@ struct SunGlyphCore: View {
     let ratio: Double
     let diameter: CGFloat
 
-    static func frameHeight(diameter: CGFloat) -> CGFloat { diameter * 2.6 }
-    static func hairlineY(diameter: CGFloat) -> CGFloat { frameHeight(diameter: diameter) * 0.68 }
+    static func frameWidth(diameter: CGFloat) -> CGFloat { diameter * 1.7 }
+    static func frameHeight(diameter: CGFloat) -> CGFloat { diameter * 2.0 }
+    static func hairlineY(diameter: CGFloat) -> CGFloat { frameHeight(diameter: diameter) * 0.85 }
 
     private var clamped: Double { min(max(ratio, 0), 1) }
     private var isFull: Bool { ratio >= 1.0 }
     private var frameSize: CGSize {
-        CGSize(width: diameter * 2.5, height: Self.frameHeight(diameter: diameter))
+        CGSize(width: Self.frameWidth(diameter: diameter), height: Self.frameHeight(diameter: diameter))
     }
     private var hairlineY: CGFloat { Self.hairlineY(diameter: diameter) }
 
@@ -134,12 +135,12 @@ struct SunGlyphCore: View {
                         ],
                         center: .center,
                         startRadius: 0,
-                        endRadius: diameter * (0.75 + 0.65 * clamped)
+                        endRadius: diameter * (0.65 + 0.55 * clamped)
                     )
                 )
                 .frame(
-                    width: diameter * (1.5 + 1.3 * clamped),
-                    height: diameter * (1.5 + 1.3 * clamped)
+                    width: diameter * (1.35 + 1.0 * clamped),
+                    height: diameter * (1.35 + 1.0 * clamped)
                 )
                 .blur(radius: diameter * 0.08)
                 .position(sunCenter)

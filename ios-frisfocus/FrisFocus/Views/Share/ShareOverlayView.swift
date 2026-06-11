@@ -119,9 +119,9 @@ struct ShareOverlayView: View {
     // MARK: - Cluster
 
     private var cluster: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             // Sun + season name
-            HStack(alignment: .center, spacing: 13) {
+            HStack(alignment: .center, spacing: 10) {
                 sunMark
                     .opacity(sunVisible ? 1 : 0)
 
@@ -209,7 +209,7 @@ struct ShareOverlayView: View {
     private var sunMark: some View {
         switch context.sun {
         case .day(let ratio):
-            SunStateMarkView(ratio: ratio, diameter: 44)
+            SunStateMarkView(ratio: ratio, diameter: 38)
         case .week(let ratios):
             WeekSunsMarkView(ratios: ratios)
         }
