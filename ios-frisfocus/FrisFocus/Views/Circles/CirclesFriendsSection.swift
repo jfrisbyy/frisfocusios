@@ -39,6 +39,9 @@ struct CirclesFriendsSection: View {
     /// the paper-plane dot. Supplied by the parent (which owns the
     /// messaging service); 0 when signed out or nothing is waiting.
     var directUnreadCount: Int = 0
+    /// Namespace for the story players' zoom transitions — each avatar
+    /// is tagged so the player grows out of the exact disc tapped.
+    var zoomNamespace: Namespace.ID? = nil
     let onHeaderTap: () -> Void
     let onFriendTap: (Friend, Bool) -> Void
     let onYouTap: () -> Void
@@ -177,6 +180,7 @@ struct CirclesFriendsSection: View {
                     action: onYouTap,
                     addAction: { (onYouAddTap ?? onYouTap)() }
                 )
+                .zoomSource(id: "mystory", in: zoomNamespace)
 
                 ForEach(store.friends) { friend in
                     FriendStoryAvatar(
@@ -185,6 +189,7 @@ struct CirclesFriendsSection: View {
                     ) {
                         onFriendTap(friend, illumination(for: friend) == .fresh)
                     }
+                    .zoomSource(id: "story-\(friend.id.uuidString)", in: zoomNamespace)
                 }
 
                 if let onAddFriendTap {

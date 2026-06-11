@@ -27,6 +27,9 @@ struct ProofPlayerView: View {
     let friend: RemoteProfile
     let message: MessageGraphService
     let myUserId: String
+    /// Shared thread presence — lets the sender see "watching your
+    /// proof…" live while this player is up.
+    var presence: ThreadPresenceService? = nil
 
     // MARK: Load + playback state
 
@@ -39,9 +42,14 @@ struct ProofPlayerView: View {
     /// leaf — not this whole player (see `PlaybackClock`).
     @State private var clock = PlaybackClock()
     @State private var isPaused: Bool = false
-    @State private var dragOffset: CGFloat = 0
+    /// Interactive dismissal — the card scales, rounds, and follows the
+    /// finger; the backdrop fades; release is velocity-aware.
+    @State private var drag = PlayerDragMetrics()
+    @State private var crossedDismissThreshold: Bool = false
     @State private var pressStart: Date?
     @State private var reportTarget: ReportTarget?
+    /// Keeps the player up briefly after a reaction so the burst lands.
+    @State private var didReact: Bool = false
 
     private let tick: TimeInterval = 0.04
     private let timer = Timer.publish(every: 0.04, on: .main, in: .common).autoconnect()
@@ -57,20 +65,55 @@ struct ProofPlayerView: View {
     }
 
     var body: some View {
+        GeometryReader { proxy in
+            let bottomInset = proxy.safeAreaInsets.bottom
+            ZStack {
+                // The backdrop stays put and fades as the card is dragged.
+                Color.black
+                    .opacity(drag.backdropOpacity)
+                    .ignoresSafeArea()
+
+                playerCard(bottomInset: bottomInset)
+                    .playerCardEffect(drag)
+            }
+            .ignoresSafeArea()
+        }
+        .statusBarHidden(true)
+        .onReceive(timer) { _ in tickProgress() }
+        .task { await loadMedia() }
+        .onDisappear {
+            player?.pause()
+            player = nil
+            presence?.setWatching(false)
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: target.messageId,
+                subjectName: target.subjectName
+            )
+            .environment(auth)
+            .environment(moderation)
+        }
+        .onAppear { presence?.setWatching(true) }
+    }
+
+    // MARK: - Card
+
+    /// The full-bleed player card: media, gesture layer, and chrome.
+    /// Separated from the backdrop so interactive dismissal can scale
+    /// and round it as one piece.
+    private func playerCard(bottomInset: CGFloat) -> some View {
         ZStack(alignment: .top) {
-            Color.black.ignoresSafeArea()
+            Color.black
 
             mediaLayer
-                .ignoresSafeArea()
 
             // Transparent gesture receiver behind the chrome — tap to
             // dismiss, hold to pause, swipe down to leave.
-            GeometryReader { _ in
-                Color.black.opacity(0.001)
-                    .contentShape(Rectangle())
-                    .gesture(unifiedGesture)
-            }
-            .ignoresSafeArea()
+            Color.black.opacity(0.001)
+                .contentShape(Rectangle())
+                .gesture(unifiedGesture)
 
             VStack(spacing: 0) {
                 progressBar
@@ -84,26 +127,28 @@ struct ProofPlayerView: View {
                 Spacer()
 
                 captionOverlay
+
+                if !proof.isMine(myUserId) {
+                    ProofReactionBar { emoji in
+                        sendReaction(emoji)
+                    }
+                    .padding(.bottom, 18 + bottomInset)
+                } else {
+                    Color.clear.frame(height: bottomInset)
+                }
             }
-            .ignoresSafeArea(.container, edges: .top)
         }
-        .offset(y: dragOffset)
-        .statusBarHidden(true)
-        .onReceive(timer) { _ in tickProgress() }
-        .task { await loadMedia() }
-        .onDisappear {
-            player?.pause()
-            player = nil
-        }
-        .sheet(item: $reportTarget) { target in
-            ReportSheet(
-                reportedUserId: target.reportedUserId,
-                messageId: target.messageId,
-                subjectName: target.subjectName
-            )
-            .environment(auth)
-            .environment(moderation)
-        }
+    }
+
+    // MARK: - Reactions
+
+    /// One-tap reaction: bursts on screen, lands in the thread
+    /// optimistically as a big emoji note, and pings the sender.
+    private func sendReaction(_ emoji: String) {
+        didReact = true
+        // Give the moment a beat — pause briefly so the burst is seen.
+        clock.progress = min(clock.progress, 0.85)
+        Task { await message.sendNote(to: friend.id, text: emoji, myUserId: myUserId) }
     }
 
     // MARK: - Media
@@ -219,7 +264,7 @@ struct ProofPlayerView: View {
                 .multilineTextAlignment(.center)
                 .shadow(color: Color.black.opacity(0.5), radius: 6, x: 0, y: 1)
                 .padding(.horizontal, 28)
-                .padding(.bottom, 40)
+                .padding(.bottom, 22)
                 .frame(maxWidth: .infinity)
         }
     }
@@ -282,7 +327,14 @@ struct ProofPlayerView: View {
                     player?.pause()
                 }
                 if value.translation.height > 0 {
-                    dragOffset = value.translation.height
+                    drag.translation = value.translation
+                    let past = value.translation.height > 150
+                    if past != crossedDismissThreshold {
+                        crossedDismissThreshold = past
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    }
+                } else {
+                    drag.translation = .zero
                 }
             }
             .onEnded { value in
@@ -290,14 +342,16 @@ struct ProofPlayerView: View {
                 let pressDuration = Date().timeIntervalSince(start)
                 let movement = hypot(value.translation.width, value.translation.height)
                 pressStart = nil
+                crossedDismissThreshold = false
 
-                if value.translation.height > 120 {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                // Velocity-aware: a long pull or a quick flick both leave.
+                if PlayerDragMetrics.shouldDismiss(translation: value.translation, predicted: value.predictedEndTranslation) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     dismiss()
                     return
                 }
 
-                withAnimation(.easeOut(duration: 0.2)) { dragOffset = 0 }
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) { drag.translation = .zero }
                 isPaused = false
                 player?.play()
 

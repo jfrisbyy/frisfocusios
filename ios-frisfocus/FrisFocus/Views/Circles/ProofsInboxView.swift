@@ -75,6 +75,10 @@ struct ProofsInboxView: View {
     /// When set (from a tapped push), the inbox opens this person's 1:1
     /// thread automatically once its data has loaded.
     var initialPeerId: String? = nil
+    /// The specific message the push was about. When it resolves to a
+    /// proof, the auto-opened thread drops straight into the full-screen
+    /// player — the notification lands you inside the moment.
+    var initialMessageId: String? = nil
 
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
@@ -98,6 +102,8 @@ struct ProofsInboxView: View {
     @State private var proofFriend: RemoteProfile?
     /// Ensures a push-delivered `initialPeerId` only auto-opens once.
     @State private var didTryInitialPeer: Bool = false
+    /// The message id handed to the auto-opened thread, consumed once.
+    @State private var pendingInitialMessageId: String?
 
     private var myId: String? { auth.user?.id }
 
@@ -155,11 +161,18 @@ struct ProofsInboxView: View {
         }
         .task { await load() }
         .onDisappear { message.stopRealtime() }
-        .fullScreenCover(item: $openFriend) { friend in
-            ProofThreadView(friend: friend, message: message, myUserId: myId ?? "")
-                .environment(store)
-                .environment(auth)
-                .environment(moderation)
+        .fullScreenCover(item: $openFriend, onDismiss: {
+            pendingInitialMessageId = nil
+        }) { friend in
+            ProofThreadView(
+                friend: friend,
+                message: message,
+                myUserId: myId ?? "",
+                initialProofMessageId: pendingInitialMessageId
+            )
+            .environment(store)
+            .environment(auth)
+            .environment(moderation)
         }
         .fullScreenCover(item: $proofFriend) { friend in
             CaptureView(
@@ -225,6 +238,7 @@ struct ProofsInboxView: View {
               peerId != myId else { return }
         didTryInitialPeer = true
         guard !moderation.isBlocked(peerId) else { return }
+        pendingInitialMessageId = initialMessageId
         if let profile = message.profile(for: peerId) ?? friendGraph.friends.first(where: { $0.id == peerId }) {
             openFriend = profile
         } else if let fetched = await friendGraph.fetchProfile(id: peerId) {

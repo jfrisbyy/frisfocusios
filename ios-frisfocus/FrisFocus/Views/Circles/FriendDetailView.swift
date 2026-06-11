@@ -49,6 +49,10 @@ struct FriendDetailView: View {
     @State private var ringPulse: Bool = false
     @State private var ringFill: Double = 0
 
+    /// Zoom-transition namespace — the story player grows out of the
+    /// hero avatar and shrinks back into it on dismiss.
+    @Namespace private var storyZoom
+
     // MARK: - Derived
 
     private var tier: VisibilityTier { friend.sharesWithMe.tier }
@@ -138,7 +142,9 @@ struct FriendDetailView: View {
                 .presentationDragIndicator(.visible)
         }
         .fullScreenCover(isPresented: $showStories) {
-            StoryPlayerView(mode: .friend(friend)).environment(store)
+            StoryPlayerView(mode: .friend(friend))
+                .navigationTransition(.zoom(sourceID: "frienddetail-story", in: storyZoom))
+                .environment(store)
         }
         .fullScreenCover(isPresented: $showSendProof) {
             CaptureView(mode: .generalPost, initialDirectFriendId: friend.id).environment(store)
@@ -302,6 +308,7 @@ struct FriendDetailView: View {
         }
         .buttonStyle(.plain)
         .disabled(!hasAnyStories)
+        .matchedTransitionSource(id: "frienddetail-story", in: storyZoom)
         .accessibilityLabel(hasUnviewedStories ? "\(friend.displayName), \(unviewedStoryCount) new stories" : friend.displayName)
     }
 

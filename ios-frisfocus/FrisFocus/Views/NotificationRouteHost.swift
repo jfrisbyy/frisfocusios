@@ -30,10 +30,12 @@ struct NotificationRouteHost: View {
 
     var body: some View {
         switch route {
-        case .thread(let peerId):
+        case .thread(let peerId, let messageId):
             // The inbox owns its own header + close button (dismisses the
-            // cover) and opens the thread itself via `initialPeerId`.
-            ProofsInboxView(initialPeerId: peerId)
+            // cover) and opens the thread itself via `initialPeerId`. A
+            // proof push also carries the message id so the thread can
+            // drop straight into the full-screen player.
+            ProofsInboxView(initialPeerId: peerId, initialMessageId: messageId)
                 .environment(store)
                 .environment(auth)
                 .environment(moderation)

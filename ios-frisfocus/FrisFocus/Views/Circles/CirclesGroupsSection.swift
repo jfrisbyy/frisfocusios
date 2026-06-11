@@ -26,6 +26,9 @@ struct CirclesGroupsSection: View {
     @Environment(Store.self) private var store
 
     @Binding var isExpanded: Bool
+    /// Namespace for the group-story zoom transition — the player grows
+    /// out of the tapped story strip and shrinks back into it.
+    var zoomNamespace: Namespace.ID? = nil
     let onHeaderTap: () -> Void
     let onCircleTap: (FFCircle) -> Void
     let onStoryStripTap: (FFCircle) -> Void
@@ -122,6 +125,7 @@ struct CirclesGroupsSection: View {
                         case .parallel:
                             ParallelCircleCard(
                                 circle: circle,
+                                zoomNamespace: zoomNamespace,
                                 onTap: { onCircleTap(circle) },
                                 onStoryStripTap: { onStoryStripTap(circle) }
                             )
@@ -340,6 +344,7 @@ private struct MemberAvatarStack: View {
 private struct ParallelCircleCard: View {
     @Environment(Store.self) private var store
     let circle: FFCircle
+    var zoomNamespace: Namespace.ID? = nil
     let onTap: () -> Void
     let onStoryStripTap: () -> Void
 
@@ -455,6 +460,7 @@ private struct ParallelCircleCard: View {
                 style: .continuous
             )
         )
+        .zoomSource(id: "circlestory-\(circle.id.uuidString)", in: zoomNamespace)
     }
 
     // MARK: - Derived

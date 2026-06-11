@@ -29,7 +29,10 @@ import Supabase
 /// attaches to every payload.
 enum DeepLinkRoute: Identifiable, Equatable {
     /// Open the Proofs inbox straight into this person's 1:1 thread.
-    case thread(peerId: String)
+    /// When `messageId` resolves to a proof, the thread opens it in the
+    /// full-screen player directly — the push lands you *inside* the
+    /// moment, not on a list.
+    case thread(peerId: String, messageId: String? = nil)
     /// Open the Friends screen (a request was sent or accepted).
     case friends
     /// Open the shared-circles list (a circle invitation landed).
@@ -39,7 +42,7 @@ enum DeepLinkRoute: Identifiable, Equatable {
 
     var id: String {
         switch self {
-        case .thread(let peerId): return "thread:\(peerId)"
+        case .thread(let peerId, _): return "thread:\(peerId)"
         case .friends: return "friends"
         case .circles: return "circles"
         case .circle(let circleId): return "circle:\(circleId)"
@@ -53,7 +56,7 @@ enum DeepLinkRoute: Identifiable, Equatable {
         switch route {
         case "thread":
             guard let peerId = userInfo["peerId"] as? String, !peerId.isEmpty else { return nil }
-            self = .thread(peerId: peerId)
+            self = .thread(peerId: peerId, messageId: userInfo["messageId"] as? String)
         case "friends":
             self = .friends
         case "circles":

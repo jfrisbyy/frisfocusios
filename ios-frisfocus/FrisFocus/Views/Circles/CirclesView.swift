@@ -59,6 +59,10 @@ struct CirclesView: View {
     /// one just keeps the count fresh on the page.
     @State private var messageGraph = MessageGraphService()
 
+    /// Zoom-transition namespace: story players grow out of the exact
+    /// avatar / strip that opened them and shrink back into it.
+    @Namespace private var storyZoom
+
     /// Anchor ids for the section headers; the rail scrolls to these.
     private let friendsAnchor = "circles.friends"
     private let circlesAnchor = "circles.circles"
@@ -74,6 +78,7 @@ struct CirclesView: View {
                         CirclesFriendsSection(
                             isExpanded: $friendsExpanded,
                             directUnreadCount: directUnread,
+                            zoomNamespace: storyZoom,
                             onHeaderTap: { toggleFriends() },
                             onFriendTap: { friend, isFresh in
                                 handleFriendTap(friend: friend, isFresh: isFresh)
@@ -89,6 +94,7 @@ struct CirclesView: View {
 
                         CirclesGroupsSection(
                             isExpanded: $circlesExpanded,
+                            zoomNamespace: storyZoom,
                             onHeaderTap: { toggleCircles() },
                             onCircleTap: { circle in handleCircleTap(circle) },
                             onStoryStripTap: { circle in handleCircleStoryTap(circle) },
@@ -147,6 +153,7 @@ struct CirclesView: View {
             }
             .fullScreenCover(isPresented: $showMyStory) {
                 StoryPlayerView(mode: .mine)
+                    .navigationTransition(.zoom(sourceID: "mystory", in: storyZoom))
                     .environment(store)
             }
             .sheet(isPresented: $showDirect, onDismiss: {
@@ -342,6 +349,7 @@ struct CirclesView: View {
                         self.route = .friendDetail(tapped.id)
                     }
                 })
+                    .navigationTransition(.zoom(sourceID: "story-\(id.uuidString)", in: storyZoom))
                     .environment(store)
             } else {
                 CirclesPlaceholderView(
@@ -363,6 +371,7 @@ struct CirclesView: View {
         case .circleStory(let id):
             if let circle = store.circle(by: id) {
                 StoryPlayerView(mode: .circle(circle))
+                    .navigationTransition(.zoom(sourceID: "circlestory-\(id.uuidString)", in: storyZoom))
                     .environment(store)
             } else {
                 CirclesPlaceholderView(

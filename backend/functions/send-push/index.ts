@@ -49,6 +49,9 @@ interface PushRequest {
   circleId?: string;
   // Optional caption / note preview / task title — clipped before use.
   preview?: string;
+  // The direct-message row a proof/note push refers to, so the tapped
+  // notification can land directly inside the full-screen player.
+  messageId?: string;
 }
 
 interface PushCopy {
@@ -92,20 +95,23 @@ function buildCopy(
   preview: string | undefined,
   senderId: string,
   circleId: string | undefined,
+  messageId: string | undefined,
 ): PushCopy {
   const p = clip(preview);
+  const threadData = (): Record<string, string> =>
+    messageId ? { route: "thread", peerId: senderId, messageId } : { route: "thread", peerId: senderId };
   switch (type) {
     case "proof":
       return {
         title: senderName,
         body: p ? `📷 ${p}` : "Sent you a proof",
-        data: { route: "thread", peerId: senderId },
+        data: threadData(),
       };
     case "note":
       return {
         title: senderName,
         body: p || "Sent you a message",
-        data: { route: "thread", peerId: senderId },
+        data: threadData(),
       };
     case "friend_request":
       return {
@@ -257,7 +263,7 @@ Deno.serve(async (req) => {
       if (circle?.name) circleName = circle.name;
     }
 
-    const copy = buildCopy(payload.type, senderName, circleName, payload.preview, senderId, payload.circleId);
+    const copy = buildCopy(payload.type, senderName, circleName, payload.preview, senderId, payload.circleId, payload.messageId);
     const apsPayload = {
       aps: {
         alert: { title: copy.title, body: copy.body },

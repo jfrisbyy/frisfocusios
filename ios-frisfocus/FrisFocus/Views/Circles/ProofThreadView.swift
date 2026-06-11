@@ -27,6 +27,9 @@ struct ProofThreadView: View {
     /// Shared with the inbox so realtime + optimistic state stay in sync.
     let message: MessageGraphService
     let myUserId: String
+    /// A push-delivered message id. When it resolves to an incoming
+    /// proof, the thread opens it in the full-screen player right away.
+    var initialProofMessageId: String? = nil
 
     @State private var draft: String = ""
     @FocusState private var composerFocused: Bool
@@ -34,6 +37,11 @@ struct ProofThreadView: View {
     /// The proof open full-screen in the player, if any.
     @State private var playerProof: DirectMessage?
     @State private var reportTarget: ReportTarget?
+    /// Live presence for this pair — here / typing / watching cues.
+    @State private var presence = ThreadPresenceService()
+    /// Zoom-transition namespace: the player grows out of the exact
+    /// proof pill that was tapped and shrinks back into it on close.
+    @Namespace private var proofZoom
 
     private var thread: [DirectMessage] {
         message.thread(withFriendId: friend.id, myUserId: myUserId)
@@ -78,9 +86,16 @@ struct ProofThreadView: View {
             .environment(store)
         }
         .fullScreenCover(item: $playerProof) { proof in
-            ProofPlayerView(proof: proof, friend: friend, message: message, myUserId: myUserId)
-                .environment(auth)
-                .environment(moderation)
+            ProofPlayerView(
+                proof: proof,
+                friend: friend,
+                message: message,
+                myUserId: myUserId,
+                presence: presence
+            )
+            .navigationTransition(.zoom(sourceID: "proof-\(proof.id.uuidString)", in: proofZoom))
+            .environment(auth)
+            .environment(moderation)
         }
         .sheet(item: $reportTarget) { target in
             ReportSheet(
@@ -93,6 +108,22 @@ struct ProofThreadView: View {
         }
         .onAppear {
             Task { await message.markThreadRead(withFriendId: friend.id, myUserId: myUserId) }
+            openInitialProofIfNeeded()
+        }
+        .task { await presence.start(myUserId: myUserId, friendId: friend.id) }
+        .onDisappear { presence.stop() }
+    }
+
+    /// If a tapped push pointed at a specific incoming proof, open it in
+    /// the player once the thread has settled on screen.
+    private func openInitialProofIfNeeded() {
+        guard let raw = initialProofMessageId, let id = UUID(uuidString: raw) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+            guard playerProof == nil,
+                  let proof = thread.first(where: { $0.id == id }),
+                  proof.isProof,
+                  !proof.isMine(myUserId) else { return }
+            playerProof = proof
         }
     }
 
@@ -101,13 +132,25 @@ struct ProofThreadView: View {
     private var header: some View {
         HStack(spacing: 12) {
             HStack(spacing: 12) {
-                RemoteAvatarView(profile: friend, size: 40)
+                ZStack(alignment: .bottomTrailing) {
+                    RemoteAvatarView(profile: friend, size: 40)
+                    if presence.friendIsHere {
+                        Circle()
+                            .fill(Theme.alertGreen)
+                            .frame(width: 11, height: 11)
+                            .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 2))
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: presence.friendIsHere)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("PRIVATELY")
+                    Text(presenceEyebrow)
                         .font(.sans(9, weight: .medium))
                         .tracking(2)
-                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                        .foregroundStyle(presenceEyebrowColor)
+                        .contentTransition(.opacity)
+                        .animation(.easeInOut(duration: 0.2), value: presenceEyebrow)
                     Text(friend.displayName)
                         .font(.serif(20, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
@@ -158,6 +201,21 @@ struct ProofThreadView: View {
         }
     }
 
+    /// The eyebrow doubles as a live presence line — the quiet cue
+    /// that someone is on the other end right now.
+    private var presenceEyebrow: String {
+        switch presence.friendStatus {
+        case .typing: return "TYPING\u{2026}"
+        case .watching: return "WATCHING YOUR PROOF"
+        case .here: return "HERE NOW"
+        case nil: return "PRIVATELY"
+        }
+    }
+
+    private var presenceEyebrowColor: Color {
+        presence.friendIsHere ? Theme.alertGreen : Theme.textPrimary.opacity(0.5)
+    }
+
     // MARK: - Thread
 
     private var threadScroll: some View {
@@ -169,20 +227,43 @@ struct ProofThreadView: View {
                             message: item,
                             friend: friend,
                             isMine: item.isMine(myUserId),
+                            isPending: message.isPending(item.id),
+                            zoomNamespace: proofZoom,
                             onOpenProof: { openProof(item) },
                             onReplyWithProof: { replyWithProof() }
                         )
                         .id(item.id)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.65, anchor: item.isMine(myUserId) ? .bottomTrailing : .bottomLeading)
+                                .combined(with: .opacity),
+                            removal: .opacity
+                        ))
                     }
+
+                    if presence.friendIsTyping {
+                        TypingIndicatorBubble(accent: friend.signatureColor)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.7, anchor: .bottomLeading).combined(with: .opacity),
+                                removal: .opacity
+                            ))
+                    }
+
                     Color.clear.frame(height: 4).id(bottomAnchor)
                 }
                 .padding(.horizontal, Theme.pageHorizontalPadding)
                 .padding(.top, 16)
                 .padding(.bottom, 12)
+                .animation(.spring(response: 0.34, dampingFraction: 0.78), value: thread.map(\.id))
+                .animation(.spring(response: 0.34, dampingFraction: 0.78), value: presence.friendIsTyping)
             }
             .onAppear { scrollToBottom(proxy) }
             .onChange(of: thread.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.25)) { scrollToBottom(proxy) }
+            }
+            .onChange(of: presence.friendIsTyping) { _, isTyping in
+                if isTyping {
+                    withAnimation(.easeOut(duration: 0.25)) { scrollToBottom(proxy) }
+                }
             }
         }
     }
@@ -249,6 +330,13 @@ struct ProofThreadView: View {
                 .focused($composerFocused)
                 .submitLabel(.send)
                 .onSubmit(sendNote)
+                .onChange(of: draft) { _, newValue in
+                    // Broadcast typing while the user composes; the
+                    // service quietly falls back to "here" after a pause.
+                    if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        presence.noteTyping()
+                    }
+                }
 
                 if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: sendNote) {
@@ -286,6 +374,7 @@ struct ProofThreadView: View {
         guard !trimmed.isEmpty else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         draft = ""
+        presence.noteSent()
         Task { await message.sendNote(to: friend.id, text: trimmed, myUserId: myUserId) }
     }
 
@@ -313,6 +402,8 @@ private struct ProofThreadBubble: View {
     let message: DirectMessage
     let friend: RemoteProfile
     let isMine: Bool
+    var isPending: Bool = false
+    var zoomNamespace: Namespace.ID? = nil
     let onOpenProof: () -> Void
     let onReplyWithProof: () -> Void
 
@@ -325,34 +416,48 @@ private struct ProofThreadBubble: View {
             VStack(alignment: isMine ? .trailing : .leading, spacing: 5) {
                 if message.isProof {
                     proofPill
+                        .zoomSource(id: "proof-\(message.id.uuidString)", in: zoomNamespace)
                         .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: message.isWatched)
                 } else {
                     messageBubble
                 }
-                Text(ProofThreadFormat.elapsed(from: message.createdAt))
+                Text(isPending ? "sending\u{2026}" : ProofThreadFormat.elapsed(from: message.createdAt))
                     .font(.sans(10, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(0.4))
                     .padding(.horizontal, 4)
+                    .contentTransition(.opacity)
             }
+            .opacity(isPending ? 0.7 : 1)
+            .animation(.easeOut(duration: 0.2), value: isPending)
 
             if !isMine { Spacer(minLength: 48) }
         }
     }
 
+    @ViewBuilder
     private var messageBubble: some View {
-        Text(message.body ?? "")
-            .font(.sans(15, weight: .regular))
-            .foregroundStyle(isMine ? Theme.textCream : Theme.textPrimary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(isMine ? Theme.textPrimary : Color.white.opacity(0.85))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(isMine ? 0 : 0.08), lineWidth: 0.5)
-            )
+        let body = message.body ?? ""
+        if body.isEmojiOnlyMessage {
+            // A bare emoji reaction renders big and bubble-less — the
+            // burst that landed in the thread.
+            Text(body)
+                .font(.system(size: 44))
+                .padding(.horizontal, 2)
+        } else {
+            Text(body)
+                .font(.sans(15, weight: .regular))
+                .foregroundStyle(isMine ? Theme.textCream : Theme.textPrimary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(isMine ? Theme.textPrimary : Color.white.opacity(0.85))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Theme.textPrimary.opacity(isMine ? 0 : 0.08), lineWidth: 0.5)
+                )
+        }
     }
 
     // MARK: - Proof pill
@@ -453,6 +558,70 @@ private struct ProofThreadBubble: View {
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Typing indicator
+
+/// The classic three-dot "someone is typing" bubble, tinted with the
+/// friend's signature color and bouncing on a gentle stagger.
+private struct TypingIndicatorBubble: View {
+    let accent: Color
+
+    @State private var bouncing: Bool = false
+
+    var body: some View {
+        HStack {
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(accent.opacity(0.75))
+                        .frame(width: 7, height: 7)
+                        .offset(y: bouncing ? -4 : 1)
+                        .animation(
+                            .easeInOut(duration: 0.45)
+                                .repeatForever(autoreverses: true)
+                                .delay(Double(index) * 0.14),
+                            value: bouncing
+                        )
+                }
+            }
+            .padding(.horizontal, 15)
+            .padding(.vertical, 13)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.white.opacity(0.85))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+
+            Spacer(minLength: 48)
+        }
+        .onAppear { bouncing = true }
+        .accessibilityLabel("Typing")
+    }
+}
+
+// MARK: - Emoji-only detection
+
+extension String {
+    /// True for a short, pure-emoji message ("\u{2764}\u{FE0F}", "\u{1F525}\u{1F525}") — rendered big
+    /// and bubble-less in the thread, like a landed reaction.
+    var isEmojiOnlyMessage: Bool {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 3 else { return false }
+        guard trimmed.rangeOfCharacter(from: .alphanumerics) == nil else { return false }
+        for scalar in trimmed.unicodeScalars {
+            switch scalar.value {
+            case 0xFE0F, 0x200D, 0x20E3:
+                continue // variation selector / ZWJ / combining keycap
+            default:
+                if !scalar.properties.isEmoji { return false }
+            }
+        }
+        return true
     }
 }
 

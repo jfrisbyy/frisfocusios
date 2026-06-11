@@ -38,6 +38,9 @@ nonisolated struct PushPayload: Encodable, Sendable {
     let type: String
     let circleId: String?
     let preview: String?
+    /// The direct-message row this push is about (proof/note), so the
+    /// tap can deep-link straight into the player rather than the inbox.
+    let messageId: String?
 }
 
 /// Lenient decode of the function's response — we only fire-and-forget, so
@@ -54,14 +57,16 @@ enum PushService {
         to recipientId: String,
         kind: PushKind,
         circleId: String? = nil,
-        preview: String? = nil
+        preview: String? = nil,
+        messageId: String? = nil
     ) {
         guard !recipientId.isEmpty else { return }
         let payload = PushPayload(
             recipientId: recipientId,
             type: kind.rawValue,
             circleId: circleId,
-            preview: preview
+            preview: preview,
+            messageId: messageId
         )
         Task {
             do {

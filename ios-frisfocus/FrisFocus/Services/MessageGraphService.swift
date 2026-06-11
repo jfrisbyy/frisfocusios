@@ -152,6 +152,9 @@ struct DirectConversationSummary: Identifiable {
 final class MessageGraphService {
     /// Every message the signed-in user is part of, oldest first.
     var messages: [DirectMessage] = []
+    /// Ids of optimistic messages shown in-thread before the network
+    /// confirms them. The UI renders these slightly muted ("sending…").
+    var pendingMessageIds: Set<UUID> = []
     var isLoading = false
     var isWorking = false
     var errorMessage: String?
@@ -264,12 +267,33 @@ final class MessageGraphService {
     /// A resolved counterpart profile, for labeling threads / the viewer.
     func profile(for id: String) -> RemoteProfile? { profilesById[id] }
 
+    /// True while a message is optimistic — shown but not yet confirmed.
+    func isPending(_ id: UUID) -> Bool { pendingMessageIds.contains(id) }
+
     // MARK: Send
 
-    /// Send a quiet text note to a friend.
+    /// Send a quiet text note to a friend. Optimistic: the note appears
+    /// in the thread instantly and is swapped for the server row once
+    /// the insert confirms (or removed with an error if it fails).
     func sendNote(to recipientId: String, text: String, myUserId: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
+        let temp = DirectMessage(
+            id: UUID(),
+            senderId: myUserId,
+            recipientId: recipientId,
+            kind: .note,
+            body: trimmed,
+            mediaPath: nil,
+            mediaKind: nil,
+            mediaDuration: nil,
+            createdAt: Date(),
+            readAt: nil,
+            watchedAt: nil
+        )
+        appendOptimistic(temp)
+
         do {
             let created: DirectMessageRow = try await supabase
                 .from("direct_messages")
@@ -286,9 +310,10 @@ final class MessageGraphService {
                 .single()
                 .execute()
                 .value
-            appendIfNew(created)
-            PushService.send(to: recipientId, kind: .note, preview: trimmed)
+            confirmOptimistic(tempId: temp.id, with: created)
+            PushService.send(to: recipientId, kind: .note, preview: trimmed, messageId: created.id.uuidString)
         } catch {
+            removeOptimistic(tempId: temp.id)
             fail("Couldn't send your message.", error)
         }
     }
@@ -311,6 +336,23 @@ final class MessageGraphService {
         let contentType = mediaKind == .video ? "video/mp4" : "image/jpeg"
         let trimmedCaption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Optimistic pill: "You sent a proof" appears in the thread the
+        // moment the capture is confirmed, while the upload runs.
+        let temp = DirectMessage(
+            id: UUID(),
+            senderId: myUserId,
+            recipientId: recipientId,
+            kind: .proof,
+            body: (trimmedCaption?.isEmpty == false) ? trimmedCaption : nil,
+            mediaPath: nil,
+            mediaKind: mediaKind,
+            mediaDuration: durationSeconds,
+            createdAt: Date(),
+            readAt: nil,
+            watchedAt: nil
+        )
+        appendOptimistic(temp)
+
         do {
             _ = try await supabase.storage
                 .from("proofs")
@@ -331,9 +373,10 @@ final class MessageGraphService {
                 .single()
                 .execute()
                 .value
-            appendIfNew(created)
-            PushService.send(to: recipientId, kind: .proof, preview: trimmedCaption)
+            confirmOptimistic(tempId: temp.id, with: created)
+            PushService.send(to: recipientId, kind: .proof, preview: trimmedCaption, messageId: created.id.uuidString)
         } catch {
+            removeOptimistic(tempId: temp.id)
             fail("Couldn't send your proof.", error)
         }
     }
@@ -351,6 +394,28 @@ final class MessageGraphService {
         guard let message = mapRow(row), !messages.contains(where: { $0.id == message.id }) else { return }
         messages.append(message)
         messages.sort { $0.createdAt < $1.createdAt }
+    }
+
+    // MARK: Optimistic plumbing
+
+    private func appendOptimistic(_ message: DirectMessage) {
+        pendingMessageIds.insert(message.id)
+        messages.append(message)
+        messages.sort { $0.createdAt < $1.createdAt }
+    }
+
+    /// Swap the optimistic placeholder for the confirmed server row.
+    /// Order matters: remove the temp first so the list never shows a
+    /// duplicate frame.
+    private func confirmOptimistic(tempId: UUID, with row: DirectMessageRow) {
+        pendingMessageIds.remove(tempId)
+        messages.removeAll { $0.id == tempId }
+        appendIfNew(row)
+    }
+
+    private func removeOptimistic(tempId: UUID) {
+        pendingMessageIds.remove(tempId)
+        messages.removeAll { $0.id == tempId }
     }
 
     // MARK: Read / watched

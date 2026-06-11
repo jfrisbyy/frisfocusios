@@ -70,7 +70,10 @@ struct StoryPlayerView: View {
     /// leaf — not this whole player (see `PlaybackClock`).
     @State private var clock = PlaybackClock()
     @State private var isPaused: Bool = false
-    @State private var dragOffset: CGFloat = 0
+    /// Interactive dismissal — the card scales, rounds, and follows the
+    /// finger; the backdrop fades; release is velocity-aware.
+    @State private var drag = PlayerDragMetrics()
+    @State private var crossedDismissThreshold: Bool = false
     @State private var pressStart: Date?
 
     // MARK: - Reply composer
@@ -184,61 +187,19 @@ struct StoryPlayerView: View {
     // MARK: - Body
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.ignoresSafeArea()
-
-            if currentPost == nil {
-                emptyState
-            } else {
-                // Media fills the canvas.
-                mediaLayer
+        GeometryReader { proxy in
+            let bottomInset = proxy.safeAreaInsets.bottom
+            ZStack {
+                // The backdrop stays put and fades as the card is dragged.
+                Color.black
+                    .opacity(drag.backdropOpacity)
                     .ignoresSafeArea()
 
-                // Transparent gesture receiver behind the chrome. Tap
-                // zones, long-press pause and swipe-down dismiss all
-                // route through this single layer; the chrome on top
-                // (header, bottom row, reply field) intercepts its own
-                // hits because it draws actual content.
-                GeometryReader { geo in
-                    Color.black.opacity(0.001)
-                        .contentShape(Rectangle())
-                        .gesture(unifiedGesture(width: geo.size.width))
-                }
-                .ignoresSafeArea()
-
-                // Chrome: progress + header at the top, caption +
-                // composer at the bottom.
-                VStack(spacing: 0) {
-                    progressBars
-                        .padding(.horizontal, 10)
-                        .padding(.top, 54)
-
-                    header
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 12)
-
-                    if case .circle = mode {
-                        circleScopeToggle
-                            .padding(.top, 10)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    earnedBadgeOverlay
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.bottom, 8)
-
-                    captionOverlay
-                        .padding(.bottom, 6)
-
-                    bottomRow
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.bottom, 22)
-                }
-                .ignoresSafeArea(.container, edges: .top)
+                playerCard(bottomInset: bottomInset)
+                    .playerCardEffect(drag)
             }
+            .ignoresSafeArea()
         }
-        .offset(y: dragOffset)
         .statusBarHidden(true)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -314,6 +275,65 @@ struct StoryPlayerView: View {
         }
         .onChange(of: currentIndex) { _, _ in
             markCurrentViewed()
+        }
+    }
+
+    // MARK: - Card
+
+    /// The full-bleed player card: media, gesture layer, and chrome.
+    /// Separated from the backdrop so interactive dismissal can scale
+    /// and round it as one piece.
+    private func playerCard(bottomInset: CGFloat) -> some View {
+        ZStack(alignment: .top) {
+            Color.black
+
+            if currentPost == nil {
+                emptyState
+            } else {
+                // Media fills the canvas.
+                mediaLayer
+
+                // Transparent gesture receiver behind the chrome. Tap
+                // zones, long-press pause and swipe-down dismiss all
+                // route through this single layer; the chrome on top
+                // (header, bottom row, reply field) intercepts its own
+                // hits because it draws actual content.
+                GeometryReader { geo in
+                    Color.black.opacity(0.001)
+                        .contentShape(Rectangle())
+                        .gesture(unifiedGesture(width: geo.size.width))
+                }
+
+                // Chrome: progress + header at the top, caption +
+                // composer at the bottom.
+                VStack(spacing: 0) {
+                    progressBars
+                        .padding(.horizontal, 10)
+                        .padding(.top, 54)
+
+                    header
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.top, 12)
+
+                    if case .circle = mode {
+                        circleScopeToggle
+                            .padding(.top, 10)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    earnedBadgeOverlay
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.bottom, 8)
+
+                    captionOverlay
+                        .padding(.bottom, 6)
+
+                    bottomRow
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.bottom, 22 + bottomInset)
+                }
+            }
         }
     }
 
@@ -977,7 +997,14 @@ struct StoryPlayerView: View {
                     isPaused = true
                 }
                 if value.translation.height > 0 {
-                    dragOffset = value.translation.height
+                    drag.translation = value.translation
+                    let past = value.translation.height > 150
+                    if past != crossedDismissThreshold {
+                        crossedDismissThreshold = past
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    }
+                } else {
+                    drag.translation = .zero
                 }
             }
             .onEnded { value in
@@ -985,17 +1012,19 @@ struct StoryPlayerView: View {
                 let pressDuration = Date().timeIntervalSince(start)
                 let movement = hypot(value.translation.width, value.translation.height)
                 pressStart = nil
+                crossedDismissThreshold = false
 
-                // Swipe down → dismiss.
-                if value.translation.height > 120 {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                // Velocity-aware: a long pull or a quick flick both
+                // dismiss; the card flies back into its source avatar.
+                if PlayerDragMetrics.shouldDismiss(translation: value.translation, predicted: value.predictedEndTranslation) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     dismiss()
                     return
                 }
 
                 // Snap back to rest in case we offset for a partial
                 // drag.
-                withAnimation(.easeOut(duration: 0.2)) { dragOffset = 0 }
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) { drag.translation = .zero }
                 isPaused = false
 
                 // Short, low-movement release = tap. Long holds fall
