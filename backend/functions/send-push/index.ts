@@ -42,7 +42,13 @@ type PushType =
   | "circle_task"
   | "circle_progress"
   | "circle_mode"
-  | "golden_post";
+  | "golden_post"
+  | "cheer"
+  | "story_like"
+  | "story_comment"
+  | "pact_invite"
+  | "pact_accept"
+  | "focus_invite";
 
 interface PushRequest {
   recipientId: string;
@@ -161,6 +167,42 @@ function buildCopy(
         title: `Golden Hour · ${circleName}`,
         body: p ? `${senderName} made Golden Hour — ${p}` : `${senderName} made Golden Hour`,
         data: { route: "golden", circleId: circleId ?? "" },
+      };
+    case "cheer":
+      return {
+        title: senderName,
+        body: p ? `🌞 ${p}` : "sent you a cheer",
+        data: { route: "home" },
+      };
+    case "story_like":
+      return {
+        title: "FrisFocus",
+        body: `${senderName} liked your story`,
+        data: { route: "stories" },
+      };
+    case "story_comment":
+      return {
+        title: "FrisFocus",
+        body: p ? `${senderName} commented: ${p}` : `${senderName} commented on your story`,
+        data: { route: "stories" },
+      };
+    case "pact_invite":
+      return {
+        title: "FrisFocus",
+        body: p ? `${senderName} proposed a pact: ${p}` : `${senderName} proposed a pact`,
+        data: { route: "pacts" },
+      };
+    case "pact_accept":
+      return {
+        title: "FrisFocus",
+        body: p ? `${senderName} accepted your pact: ${p}` : `${senderName} accepted your pact`,
+        data: { route: "pacts" },
+      };
+    case "focus_invite":
+      return {
+        title: "FrisFocus",
+        body: p ? `${senderName} invited you to focus — ${p}` : `${senderName} invited you to focus together`,
+        data: { route: "grove" },
       };
   }
 }

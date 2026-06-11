@@ -58,6 +58,16 @@ final class Store {
     /// survives relaunch; missing on first load is treated as empty.
     var viewedStoryPostIds: Set<UUID> = [] { didSet { markDirty(.viewedStoryPostIds) } }
 
+    /// Real "seen by" data mirrored from the backend: postId → the
+    /// local ids of everyone who's viewed it. In-memory only — the
+    /// sync layer refills it on every refresh.
+    var storyViewerIds: [UUID: Set<UUID>] = [:]
+
+    /// The network sync bridge. Wired at sign-in by `SocialSyncService`;
+    /// social mutations below notify it so local changes write through
+    /// to Supabase (and realtime keeps this Store mirrored back).
+    @ObservationIgnored weak var social: SocialSyncService?
+
     // MARK: - Avoidance (penalties)
 
     /// User-defined behaviors to reduce. Standalone, not tied to a
@@ -420,10 +430,10 @@ final class Store {
             // timeline to look back on.
             self.circles = Store.withChapterTimelines(self.circles)
         } else {
-            // First launch — seed and immediately persist. Social
-            // seeds run in dependency order: friends → circles →
-            // completions / contributions, then media → posts →
-            // reactions (likes, comments).
+            // First launch — seed the user's own starter content and
+            // immediately persist. Social data is deliberately NOT
+            // seeded: friends, circles, stories, cheers, and pacts all
+            // come from the real synced graph once the user signs in.
             self.currentSeason = Store.seedSeason()
             self.tasks = Store.seedTasks()
             self.todos = Store.seedTodos()
@@ -431,64 +441,62 @@ final class Store {
             self.folders = Store.seedFolders()
             self.notes = Store.seedNotes()
 
-            let seededFriends = Store.seedFriends()
-            let seededCircles = Store.seedCircles(
-                friends: seededFriends,
-                userId: self.currentUserId
-            )
-            let seededMedia = Store.seedMediaAssets()
-            let seededPosts = Store.seedStoryPosts(
-                friends: seededFriends,
-                circles: seededCircles,
-                mediaAssets: seededMedia
-            )
-
-            self.friends = seededFriends
-            self.circles = Store.withChapterTimelines(seededCircles)
-            self.circleTaskCompletions = Store.seedCircleTaskCompletions(
-                circles: seededCircles,
-                friends: seededFriends,
-                userId: self.currentUserId
-            )
-            self.circleContributions = Store.seedCircleContributions(
-                circles: seededCircles,
-                friends: seededFriends,
-                userId: self.currentUserId
-            )
-            self.signalFacts = Store.seedSignalFacts(friends: seededFriends)
-            self.cheers = Store.seedCheers(
-                friends: seededFriends,
-                userId: self.currentUserId
-            )
-            self.mediaAssets = seededMedia
-
-            // The user's own story so the posted state is demoable.
-            let myStories = Store.seedMyStoryPosts(userId: self.currentUserId)
-            self.storyPosts = seededPosts + myStories
-
-            self.directShares = Store.seedDirectShares(
-                friends: seededFriends,
-                userId: self.currentUserId,
-                mediaAssets: seededMedia
-            )
-            var seededLikes = Store.seedLikes(posts: seededPosts, friends: seededFriends)
-            if let mine = myStories.first {
-                seededLikes += Store.seedMyLikes(post: mine, friends: seededFriends)
-            }
-            self.likes = seededLikes
-            self.comments = Store.seedComments(posts: seededPosts, friends: seededFriends)
-            let seededPacts = Store.seedPacts(friends: seededFriends, userId: self.currentUserId)
-            self.pacts = seededPacts
-            self.pactCompletions = Store.seedPactCompletions(
-                pacts: seededPacts,
-                userId: self.currentUserId
-            )
-
             // First-launch seed: assignments inside `init` don't fire
             // `didSet`, so mark everything dirty and write it through now.
             markAllDirty()
             flushPendingSaves()
         }
+
+        // One-time reset of the legacy local-only social graph (the
+        // fake demo friends and everything attributed to them). The
+        // user's own recent story posts keep their media and are queued
+        // for upload to their real account on next sign-in.
+        performSocialResetIfNeeded()
+    }
+
+    // MARK: - One-time social reset
+
+    private static let socialResetKey = "socialResetV1"
+    static let pendingStoryUploadsKey = "pendingStoryUploads"
+
+    /// Wipe every locally-fabricated social collection exactly once.
+    /// My own unexpired general posts that still have media survive —
+    /// they migrate to the signed-in account via `SocialSyncService`.
+    private func performSocialResetIfNeeded() {
+        guard !userDefaults.bool(forKey: Store.socialResetKey) else { return }
+        defer { userDefaults.set(true, forKey: Store.socialResetKey) }
+
+        let kept = storyPosts.filter { post in
+            guard post.authorId == currentUserId,
+                  post.circleId == nil,
+                  !post.isExpired(),
+                  let mediaId = post.mediaId,
+                  let asset = media(by: mediaId),
+                  asset.resolvedLocalURL != nil else { return false }
+            return true
+        }
+        if !kept.isEmpty {
+            userDefaults.set(kept.map { $0.id.uuidString }, forKey: Store.pendingStoryUploadsKey)
+        }
+        let keptMediaIds = Set(kept.compactMap { $0.mediaId })
+
+        friends = []
+        circles = []
+        circleTaskCompletions = []
+        circleContributions = []
+        signalFacts = []
+        cheers = []
+        likes = []
+        comments = []
+        directShares = []
+        pacts = []
+        pactCompletions = []
+        circleTaskRequests = []
+        sharedFocusBlocks = []
+        viewedStoryPostIds = []
+        storyPosts = kept
+        mediaAssets = mediaAssets.filter { keptMediaIds.contains($0.id) }
+        flushPendingSaves()
     }
 
     // MARK: - Persistence
@@ -745,10 +753,10 @@ final class Store {
         )
         activeSharedFocusBlock = block
 
-        // Seed presence: me in-block, full canopy; friends start
-        // in-block but with a softly varied tier so the grove reads
-        // as a living scene from the first frame.
-        var seeded: [FocusPresence] = [
+        // My own presence starts immediately; invited friends appear
+        // with their *actual* live state as the sync layer relays it —
+        // nothing is simulated.
+        focusPresences = [
             FocusPresence(
                 blockId: block.id,
                 userId: currentUserId,
@@ -757,19 +765,7 @@ final class Store {
                 updatedAt: Date()
             )
         ]
-        let tiers: [LeafTier] = [.full, .thinning, .full, .sparse]
-        for (i, fid) in capped.enumerated() {
-            seeded.append(
-                FocusPresence(
-                    blockId: block.id,
-                    userId: fid,
-                    state: .inBlock,
-                    leafTier: tiers[i % tiers.count],
-                    updatedAt: Date()
-                )
-            )
-        }
-        focusPresences = seeded
+        social?.groveStarted(block: block, invitedFriendIds: capped)
         return block
     }
 
@@ -791,34 +787,7 @@ final class Store {
         } else {
             focusPresences.append(new)
         }
-    }
-
-    /// Local simulation hook — randomly evolve a friend's presence so
-    /// the grove demonstrates the "stepped away" + nudge flow without
-    /// a backend. No-op once the relay is wired.
-    func simulateFriendPresenceTick() {
-        guard let block = activeSharedFocusBlock else { return }
-        let friendIds = block.participantIds.filter { $0 != currentUserId }
-        guard let pick = friendIds.randomElement() else { return }
-        guard let idx = focusPresences.firstIndex(where: { $0.userId == pick }) else { return }
-        var p = focusPresences[idx]
-        // Toggle stepped-away with a low probability; when it flips
-        // back to in-block, nudge the tier toward thinning to suggest
-        // a few leaves fell while they were gone.
-        if p.state == .inBlock {
-            if Double.random(in: 0...1) < 0.35 {
-                p.state = .steppedAway
-            }
-        } else {
-            p.state = .inBlock
-            if p.leafTier == .full {
-                p.leafTier = .thinning
-            } else if p.leafTier == .thinning && Double.random(in: 0...1) < 0.5 {
-                p.leafTier = .sparse
-            }
-        }
-        p.updatedAt = Date()
-        focusPresences[idx] = p
+        social?.grovePresenceChanged(blockId: block.id, state: state, leafTier: leafTier)
     }
 
     /// Stamp `endedAt` on the active shared block, append to history,
@@ -832,6 +801,7 @@ final class Store {
         activeSharedFocusBlock = nil
         focusPresences = []
         persistAll()
+        social?.groveEnded(blockId: block.id)
     }
 
     /// Friends who can be invited to a shared focus block. Right now
@@ -1599,18 +1569,19 @@ extension Store {
         }
 
         let nowCompleted: Bool
+        var completionId = UUID()
         if let existing {
             circleTaskCompletions.removeAll { $0.id == existing.id }
             nowCompleted = false
         } else {
-            circleTaskCompletions.append(
-                CircleTaskCompletion(
-                    circleId: circleId,
-                    circleTaskId: task.id,
-                    memberId: currentUserId,
-                    date: today
-                )
+            let completion = CircleTaskCompletion(
+                circleId: circleId,
+                circleTaskId: task.id,
+                memberId: currentUserId,
+                date: today
             )
+            completionId = completion.id
+            circleTaskCompletions.append(completion)
             nowCompleted = true
         }
 
@@ -1619,6 +1590,13 @@ extension Store {
         }
 
         persistAll()
+        social?.circleTaskToggled(
+            circleId: circleId,
+            taskId: task.id,
+            completionId: completionId,
+            completed: nowCompleted,
+            date: today
+        )
     }
 
     /// Apply a target completion state to a personal `FFTask`.
@@ -1816,14 +1794,14 @@ extension Store {
             return false
         }
         guard circle.canManageTasks(userId: currentUserId) else { return false }
-        circles[ci].tasks.append(
-            CircleTask(
-                title: draft.title,
-                pointValue: draft.pointValue,
-                linkedPersonalTaskId: draft.linkedPersonalTaskId
-            )
+        let newTask = CircleTask(
+            title: draft.title,
+            pointValue: draft.pointValue,
+            linkedPersonalTaskId: draft.linkedPersonalTaskId
         )
+        circles[ci].tasks.append(newTask)
         persistAll()
+        social?.circleTaskUpserted(circleId: circleId, task: newTask, position: circles[ci].tasks.count - 1)
         return true
     }
 
@@ -1855,6 +1833,7 @@ extension Store {
         circles[ci].tasks[ti].pointValue = draft.pointValue
         circles[ci].tasks[ti].linkedPersonalTaskId = draft.linkedPersonalTaskId
         persistAll()
+        social?.circleTaskUpserted(circleId: circleId, task: circles[ci].tasks[ti], position: ti)
         return true
     }
 
@@ -1884,6 +1863,7 @@ extension Store {
         // Sweep completions for the removed task so progress reads stay clean.
         circleTaskCompletions.removeAll { $0.circleTaskId == existingTaskId }
         persistAll()
+        social?.circleTaskRemoved(circleId: circleId, taskId: existingTaskId)
         return true
     }
 
@@ -2627,6 +2607,7 @@ extension Store {
             cheers[idx].readAt = Date()
         }
         persistAll()
+        social?.cheerStamped(cheers[idx])
     }
 
     /// Resolve the `Friend` who sent a given cheer, so the recipient
@@ -2644,15 +2625,17 @@ extension Store {
     func sendCheer(to friend: Friend, message: String) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        cheers.append(Cheer(
+        let cheer = Cheer(
             fromFriendId: currentUserId,
             fromName: "You",
             fromInitials: "Y",
             fromColorHex: "2C2C2A",
             toUserId: friend.id,
             message: trimmed
-        ))
+        )
+        cheers.append(cheer)
         persistAll()
+        social?.cheerSent(cheer)
     }
 
     // MARK: - C8b: posting media
@@ -2699,6 +2682,7 @@ extension Store {
             let mediaId = asset.id
             Task { [weak self] in await self?.ensureVideoPoster(mediaId: mediaId) }
         }
+        social?.storyPosted(post: post, asset: asset)
         return post
     }
 
@@ -3002,13 +2986,6 @@ extension Store {
               friends[idx].pointsAccess == nil else { return }
         friends[idx].pointsAccess = .requested
         persistAll()
-
-        if friends[idx].sharesWithMe.tier == .full {
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(2.4))
-                self?.grantExactPoints(friendId: friendId)
-            }
-        }
     }
 
     /// The friend said yes — their exact points are now visible to me.
@@ -3074,6 +3051,7 @@ extension Store {
               cheers[idx].readAt == nil else { return }
         cheers[idx].readAt = Date()
         persistAll()
+        social?.cheerStamped(cheers[idx])
     }
 
     /// Mark a story post as watched by the current user. Idempotent —
@@ -3083,6 +3061,10 @@ extension Store {
         guard !viewedStoryPostIds.contains(postId) else { return }
         viewedStoryPostIds.insert(postId)
         persistAll()
+        if let post = storyPosts.first(where: { $0.id == postId }),
+           post.authorId != currentUserId {
+            social?.storyViewed(postId: postId)
+        }
     }
 
     /// True when the friend has at least one unexpired general story
@@ -3146,6 +3128,7 @@ extension Store {
         comments.removeAll { $0.postId == postId }
         storyPosts.remove(at: idx)
         persistAll()
+        social?.storyDeleted(postId: postId)
     }
 
     // MARK: - Pacts
@@ -3236,18 +3219,19 @@ extension Store {
         }
 
         let nowCompleted: Bool
+        var completionId = UUID()
         if let existing {
             pactCompletions.removeAll { $0.id == existing.id }
             nowCompleted = false
         } else {
-            pactCompletions.append(
-                PactCompletion(
-                    pactId: pactId,
-                    taskId: task.id,
-                    userId: currentUserId,
-                    date: today
-                )
+            let completion = PactCompletion(
+                pactId: pactId,
+                taskId: task.id,
+                userId: currentUserId,
+                date: today
             )
+            completionId = completion.id
+            pactCompletions.append(completion)
             nowCompleted = true
         }
 
@@ -3256,6 +3240,13 @@ extension Store {
         }
 
         persistAll()
+        social?.pactCompletionToggled(
+            pactId: pactId,
+            taskId: task.id,
+            completionId: completionId,
+            date: today,
+            completed: nowCompleted
+        )
     }
 
     /// Create a new pact, addressed to a partner, status `.pending`.
@@ -3277,6 +3268,7 @@ extension Store {
         )
         pacts.append(pact)
         persistAll()
+        social?.pactProposed(pact)
         return pact
     }
 
@@ -3292,6 +3284,7 @@ extension Store {
         pacts[idx].endDate = end
         pacts[idx].status = .active
         persistAll()
+        social?.pactStatusChanged(pacts[idx])
     }
 
     /// Decline a pending pact. Terminal — the row stays so the user can
@@ -3301,6 +3294,7 @@ extension Store {
               pacts[idx].status == .pending else { return }
         pacts[idx].status = .declined
         persistAll()
+        social?.pactStatusChanged(pacts[idx])
     }
 
     /// End a pact early or after the window closes. Strips no
@@ -3309,6 +3303,7 @@ extension Store {
         guard let idx = pacts.firstIndex(where: { $0.id == pactId }) else { return }
         pacts[idx].status = .completed
         persistAll()
+        social?.pactStatusChanged(pacts[idx])
     }
 
     /// Walk away from a pact entirely. Removes the row and any
@@ -3318,6 +3313,7 @@ extension Store {
         pacts.removeAll { $0.id == pactId }
         pactCompletions.removeAll { $0.pactId == pactId }
         persistAll()
+        social?.pactLeft(pactId)
     }
 
     /// Lookup helpers. Return nil when the id is unknown — callers
@@ -3398,14 +3394,79 @@ extension Store {
         )
         circles.append(circle)
         persistAll()
+        social?.circleCreated(circle)
         return circle
     }
 
     // MARK: - Relationship hub (C-Restructure)
 
-    /// The witnessing texture of a friend's day. Deterministic — no
-    /// backend — so it never reshuffles between renders.
-    func friendDay(for friend: Friend) -> FriendDay { FriendDay.make(for: friend) }
+    /// The witnessing texture of a friend's day, built from the *real*
+    /// shared data we actually have: their circle check-offs and pact
+    /// completions. Honest by design — nothing is fabricated.
+    func friendDay(for friend: Friend) -> FriendDay {
+        let cal = Calendar.current
+        let today = Date()
+        let categories: [Category] = [.fitness, .health, .creative, .work, .spiritual, .apartment]
+        var tasks: [FriendDayTask] = []
+        var ci = 0
+
+        for circle in sharedCircles(withFriendId: friend.id) where circle.hasSharedList {
+            for task in circle.tasks {
+                let done = circleTaskCompletions.contains { c in
+                    c.circleId == circle.id
+                        && c.circleTaskId == task.id
+                        && c.memberId == friend.id
+                        && cal.isDate(c.date, inSameDayAs: today)
+                }
+                tasks.append(FriendDayTask(title: task.title, isDone: done, category: categories[ci % categories.count]))
+                ci += 1
+            }
+        }
+        let activePacts = sharedPacts(withFriendId: friend.id).filter { $0.status == .active }
+        for pact in activePacts {
+            for task in pact.tasks {
+                let done = pactCompletions.contains { c in
+                    c.pactId == pact.id
+                        && c.taskId == task.id
+                        && c.userId == friend.id
+                        && cal.isDate(c.date, inSameDayAs: today)
+                }
+                tasks.append(FriendDayTask(title: task.name, isDone: done, category: categories[ci % categories.count]))
+                ci += 1
+            }
+        }
+
+        // Rhythm: how much shared activity each of the last 10 days held.
+        let bars: [Double] = (0..<10).reversed().map { offset in
+            guard let day = cal.date(byAdding: .day, value: -offset, to: today) else { return 0 }
+            let count = circleTaskCompletions.filter {
+                $0.memberId == friend.id && cal.isDate($0.date, inSameDayAs: day)
+            }.count + pactCompletions.filter {
+                $0.userId == friend.id && cal.isDate($0.date, inSameDayAs: day)
+            }.count
+            return min(1.0, Double(count) / 3.0)
+        }
+        let momentumAvg = bars.reduce(0, +) / 10.0
+        let doneToday = tasks.filter { $0.isDone }.count
+        let activeDays = bars.filter { $0 > 0 }.count
+        let pact = activePacts.first
+
+        return FriendDay(
+            moodLine: doneToday > 0 ? "Showing up today." : "Quiet so far today.",
+            todayLogged: doneToday,
+            rhythmDays: activeDays,
+            weekHeldBack: false,
+            rhythmBars: bars,
+            rhythmSummary: momentumAvg > 0.5 ? "building" : (momentumAvg > 0.12 ? "finding rhythm" : "quiet lately"),
+            routines: [],
+            tasks: tasks,
+            focusText: "—",
+            focusSessions: 0,
+            milestoneTitle: pact?.title ?? "",
+            milestoneProgress: pact.map { "\(pactDaysKept(pact: $0, userId: friend.id)) days kept" } ?? "",
+            milestoneAddedToday: false
+        )
+    }
 
     /// A calm 0...1 ring fraction for a friend's day, respecting their
     /// pairwise visibility tier. Full → today's task completion; Open →
@@ -3590,62 +3651,26 @@ extension Store {
         storyViewers(forPost: postId).count
     }
 
-    /// The calm, read-only list of who's seen one of the user's own
-    /// posts. No backend, so it's derived deterministically: everyone
-    /// who reacted (liked or commented) is a viewer, then the list is
-    /// floored to a gentle base so a fresh post still reads witnessed,
-    /// filling with additional friends in a post-seeded order that
-    /// never reshuffles between renders. `didReact` marks a soft heart
-    /// beside anyone who liked the post.
+    /// The real, read-only list of who's seen one of the user's own
+    /// posts — actual viewers synced from the backend, plus anyone who
+    /// reacted. `didReact` marks a soft heart beside anyone who liked
+    /// the post. Nothing is fabricated.
     func storyViewers(forPost postId: UUID) -> [StoryViewer] {
         let likedIds = Set(likes.filter { $0.postId == postId }.map { $0.fromFriendId })
         let commentedIds = Set(comments.filter { $0.postId == postId }.map { $0.fromFriendId })
-        let reactorIds = likedIds.union(commentedIds)
+        let viewedIds = storyViewerIds[postId] ?? []
+        let allIds = likedIds.union(commentedIds).union(viewedIds)
 
-        // Reactors first, in stable `friends`-array order.
-        var viewers: [StoryViewer] = friends
-            .filter { reactorIds.contains($0.id) }
+        return friends
+            .filter { allIds.contains($0.id) }
             .map { StoryViewer(friend: $0, didReact: likedIds.contains($0.id)) }
-
-        // Floor so a fresh post still reads witnessed; matches the
-        // previous seen-count base so the number never shrinks.
-        let target = max(viewers.count, min(friends.count, 4))
-        if viewers.count < target {
-            let remaining = friends
-                .filter { !reactorIds.contains($0.id) }
-                .sorted { stableViewerKey($0.id, postId) < stableViewerKey($1.id, postId) }
-            for friend in remaining {
-                if viewers.count >= target { break }
-                viewers.append(StoryViewer(friend: friend, didReact: false))
-            }
-        }
-        return viewers
-    }
-
-    /// Stable per-(friend, post) ordering key — an FNV-1a hash over both
-    /// UUIDs' bytes so the "seen by" fill is deterministic across
-    /// launches (unlike `hashValue`, which is per-process randomized).
-    private func stableViewerKey(_ friendId: UUID, _ postId: UUID) -> UInt64 {
-        var hash: UInt64 = 1_469_598_103_934_665_603
-        func mix(_ id: UUID) {
-            let u = id.uuid
-            let bytes = [u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
-                         u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15]
-            for b in bytes {
-                hash ^= UInt64(b)
-                hash = hash &* 1_099_511_628_211
-            }
-        }
-        mix(friendId)
-        mix(postId)
-        return hash
     }
 
     // MARK: - Connection texture
 
-    /// Relationship texture for the "Since you connected" block. Real
-    /// signal (proofs + cheers exchanged) floored by tenure so the
-    /// block stays full even on a quiet day — calm, never a streak.
+    /// Relationship texture for the "Since you connected" block —
+    /// honest counts of what's actually been exchanged. No floors, no
+    /// fabrication: a young connection reads young.
     func connectionTexture(for friend: Friend) -> ConnectionTexture {
         let realProofs = directShares.filter { s in
             s.circleId == nil && (
@@ -3657,33 +3682,25 @@ extension Store {
             (c.fromFriendId == friend.id && c.toUserId == currentUserId) ||
             (c.fromFriendId == currentUserId && c.toUserId == friend.id)
         }.count
-
-        let months = connectedMonths(friend)
-        var seed = UInt64(abs(friend.id.uuidString.hashValue) % 9_999 + 1)
-        func bump(_ u: Int) -> Int {
-            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
-            return Int(seed % UInt64(max(1, u)))
-        }
-        let proofFloor = max(2, months * 2 + bump(5))
-        let cheerFloor = max(3, months * 8 + bump(6))
-        let milestones = 1 + bump(3)
+        let milestones = sharedCircles(withFriendId: friend.id).count
+            + sharedPacts(withFriendId: friend.id).filter { $0.status != .pending }.count
 
         return ConnectionTexture(
-            proofsTraded: max(realProofs, proofFloor),
-            cheersExchanged: max(realCheers, cheerFloor),
+            proofsTraded: realProofs,
+            cheersExchanged: realCheers,
             milestonesWitnessed: milestones,
             line: connectionLine(for: friend, milestones: milestones)
         )
     }
 
-    /// Warm, honest one-liner for the connection block. Aaron is pinned
-    /// to the reference; everyone else gets a calm generated line.
+    /// Warm, honest one-liner for the connection block, built from
+    /// what the two of you have actually done together.
     private func connectionLine(for friend: Friend, milestones: Int) -> String {
-        if friend.displayName == "Aaron" {
-            return "You were there for his \u{201C}day 1 of Heal.\u{201D} He\u{2019}s cheered every milestone you\u{2019}ve hit."
+        if milestones > 0 {
+            let what = milestones == 1 ? "a shared goal" : "\(milestones) shared goals"
+            return "You\u{2019}ve shown up alongside \(friend.displayName) through \(what)."
         }
-        let season = friend.currentSeasonName?.replacingOccurrences(of: " Season", with: "") ?? "this season"
-        return "You\u{2019}ve witnessed \(milestones) of \(friend.displayName)\u{2019}s milestones, and shown up through \(season)."
+        return "You and \(friend.displayName) are just getting started \u{2014} share a moment or propose a pact."
     }
 
     func likes(for postId: UUID) -> [Like] { likes.filter { $0.postId == postId } }
@@ -3775,980 +3792,5 @@ extension Store {
             let plural = remaining == 1 ? "other" : "others"
             return "Liked by \(leader) and \(remaining) \(plural)"
         }
-    }
-}
-
-// MARK: - Social seeds
-//
-// Believable starting graph so the C2+ UI prompts have material to
-// render the moment the app launches. Seeds run in dependency order
-// from `init()` so circles can reference both friends and the user's
-// stable id, and posts can reference their attached media.
-
-extension Store {
-    static func seedFriends() -> [Friend] {
-        let cal = Calendar.current
-        let now = Date()
-        return [
-            Friend(
-                displayName: "Aaron",
-                initials: "A",
-                accentColorHex: "3B6D11",
-                theirClearanceToMyData: .openByDefault,
-                currentSeasonName: "Heal Season",
-                currentSeasonDay: 12,
-                todayScore: 38,
-                hitGoalToday: false,
-                lastSignalAt: cal.date(byAdding: .minute, value: -14, to: now),
-                sharesWithMe: .full,
-                connectedAt: cal.date(byAdding: .month, value: -4, to: now)
-            ),
-            Friend(
-                displayName: "Madison",
-                initials: "M",
-                accentColorHex: "993556",
-                theirClearanceToMyData: .goalOnly,
-                currentSeasonName: "Reset Season",
-                currentSeasonDay: 5,
-                todayScore: nil,
-                hitGoalToday: false,
-                lastSignalAt: cal.date(byAdding: .hour, value: -2, to: now),
-                sharesWithMe: .open,
-                connectedAt: cal.date(byAdding: .month, value: -2, to: now)
-            ),
-            Friend(
-                displayName: "Devin",
-                initials: "D",
-                accentColorHex: "185FA5",
-                theirClearanceToMyData: .goalOnly,
-                currentSeasonName: "Build Season",
-                currentSeasonDay: 30,
-                todayScore: nil,
-                hitGoalToday: true,
-                lastSignalAt: cal.date(byAdding: .hour, value: -5, to: now),
-                sharesWithMe: .open,
-                connectedAt: cal.date(byAdding: .month, value: -6, to: now)
-            ),
-            Friend(
-                displayName: "Kennedy",
-                initials: "K",
-                accentColorHex: "7F77DD",
-                theirClearanceToMyData: .openByDefault,
-                currentSeasonName: "Quiet Season",
-                currentSeasonDay: 8,
-                todayScore: 8,
-                hitGoalToday: false,
-                lastSignalAt: cal.date(byAdding: .hour, value: -7, to: now),
-                sharesWithMe: .full,
-                connectedAt: cal.date(byAdding: .month, value: -3, to: now)
-            ),
-            Friend(
-                displayName: "Naomi",
-                initials: "N",
-                accentColorHex: "888780",
-                theirClearanceToMyData: .minimal,
-                currentSeasonName: "Renewal Season",
-                currentSeasonDay: 3,
-                todayScore: nil,
-                hitGoalToday: nil,
-                lastSignalAt: cal.date(byAdding: .day, value: -4, to: now),
-                sharesWithMe: .quiet,
-                connectedAt: cal.date(byAdding: .month, value: -1, to: now)
-            ),
-            // --- Expanded roster (indices 5...9) so every social surface
-            //     reads alive: more full-visibility days, more lit rows,
-            //     more circles + pacts to be a member of. ---
-            Friend(
-                displayName: "Theo",
-                initials: "T",
-                accentColorHex: "1F7A6D",
-                theirClearanceToMyData: .openByDefault,
-                currentSeasonName: "Build Season",
-                currentSeasonDay: 22,
-                todayScore: 44,
-                hitGoalToday: false,
-                lastSignalAt: cal.date(byAdding: .minute, value: -20, to: now),
-                sharesWithMe: .full,
-                connectedAt: cal.date(byAdding: .month, value: -7, to: now)
-            ),
-            Friend(
-                displayName: "Priya",
-                initials: "P",
-                accentColorHex: "C2641B",
-                theirClearanceToMyData: .openByDefault,
-                currentSeasonName: "Create Season",
-                currentSeasonDay: 16,
-                todayScore: 51,
-                hitGoalToday: true,
-                lastSignalAt: cal.date(byAdding: .minute, value: -35, to: now),
-                sharesWithMe: .full,
-                connectedAt: cal.date(byAdding: .month, value: -9, to: now)
-            ),
-            Friend(
-                displayName: "Marcus",
-                initials: "M",
-                accentColorHex: "A23B2E",
-                theirClearanceToMyData: .goalOnly,
-                currentSeasonName: "Strength Season",
-                currentSeasonDay: 47,
-                todayScore: nil,
-                hitGoalToday: true,
-                lastSignalAt: cal.date(byAdding: .hour, value: -3, to: now),
-                sharesWithMe: .open,
-                connectedAt: cal.date(byAdding: .month, value: -14, to: now)
-            ),
-            Friend(
-                displayName: "Sofia",
-                initials: "S",
-                accentColorHex: "8E6E83",
-                theirClearanceToMyData: .minimal,
-                currentSeasonName: "Reset Season",
-                currentSeasonDay: 6,
-                todayScore: nil,
-                hitGoalToday: nil,
-                lastSignalAt: cal.date(byAdding: .day, value: -2, to: now),
-                sharesWithMe: .quiet,
-                connectedAt: cal.date(byAdding: .month, value: -2, to: now)
-            ),
-            Friend(
-                displayName: "Jonah",
-                initials: "J",
-                accentColorHex: "2E4A8C",
-                theirClearanceToMyData: .openByDefault,
-                currentSeasonName: "Focus Season",
-                currentSeasonDay: 9,
-                todayScore: 19,
-                hitGoalToday: false,
-                lastSignalAt: cal.date(byAdding: .minute, value: -50, to: now),
-                sharesWithMe: .full,
-                connectedAt: cal.date(byAdding: .month, value: -5, to: now)
-            )
-        ]
-    }
-
-    static func seedCircles(friends: [Friend], userId: UUID) -> [FFCircle] {
-        guard friends.count >= 5 else { return [] }
-        let cal = Calendar.current
-        let now = Date()
-        let aaron = friends[0].id
-        let madison = friends[1].id
-        let devin = friends[2].id
-        let kennedy = friends[3].id
-        let naomi = friends[4].id
-
-        let run5kEnd = cal.date(byAdding: .day, value: 18, to: now) ?? now
-        let run5kStart = cal.date(byAdding: .day, value: -12, to: now) ?? now
-        let milesStart = cal.date(byAdding: .day, value: -45, to: now) ?? now
-        let aaronName = friends[0].displayName
-
-        let run5k = FFCircle(
-            name: "Run a 5K",
-            type: .parallel,
-            timeframe: .timeBoxed(endDate: run5kEnd),
-            memberIds: [userId, aaron, madison, devin],
-            tasks: [
-                CircleTask(title: "Run a mile", pointValue: nil, linkedPersonalTaskId: nil),
-                CircleTask(title: "Sleep 6+ hours", pointValue: nil, linkedPersonalTaskId: nil),
-                CircleTask(title: "Stretch 10 min", pointValue: nil, linkedPersonalTaskId: nil)
-            ],
-            collectiveUnit: nil,
-            collectiveTarget: nil,
-            collectiveProgress: nil,
-            createdAt: run5kStart,
-            ownerId: userId,
-            adminIds: [],
-            membersCanProposeTasks: false,
-            // Story: two weeks just present together, then Aaron added the
-            // shared list they're running now.
-            chapters: [
-                CircleChapter(
-                    objectives: [],
-                    title: "Just present",
-                    detail: "Everyone kept their own goals",
-                    startedAt: cal.date(byAdding: .day, value: -26, to: now) ?? now,
-                    endedAt: run5kStart,
-                    outcome: .returned,
-                    actorName: nil
-                ),
-                CircleChapter(
-                    objectives: [.sharedList],
-                    title: "Shared list",
-                    detail: "Run a mile · Sleep 6+ hours · Stretch 10 min",
-                    startedAt: run5kStart,
-                    endedAt: nil,
-                    outcome: .ongoing,
-                    actorName: aaronName
-                )
-            ]
-        )
-
-        let miles = FFCircle(
-            name: "1000 Miles Together",
-            type: .collective,
-            timeframe: .ongoing,
-            memberIds: [userId, aaron, madison, kennedy, naomi],
-            tasks: [],
-            collectiveUnit: "miles",
-            collectiveTarget: 1000,
-            collectiveProgress: 632,
-            createdAt: milesStart,
-            ownerId: userId,
-            adminIds: [aaron],
-            membersCanProposeTasks: false,
-            chapters: [
-                CircleChapter(
-                    objectives: [],
-                    title: "Just present",
-                    detail: "Found our footing together",
-                    startedAt: cal.date(byAdding: .day, value: -60, to: now) ?? now,
-                    endedAt: milesStart,
-                    outcome: .returned,
-                    actorName: nil
-                ),
-                CircleChapter(
-                    objectives: [.sharedNumber],
-                    title: "Shared number",
-                    detail: "1000 miles",
-                    startedAt: milesStart,
-                    endedAt: nil,
-                    outcome: .ongoing,
-                    actorName: nil
-                )
-            ]
-        )
-
-        // A presence-only Witness circle: no shared goal, just a calm room
-        // these friends inhabit. Its story shows a finished shared list
-        // they ran together before returning to simply being present.
-        let eveningsStart = cal.date(byAdding: .day, value: -50, to: now) ?? now
-        let eveningsSwitch = cal.date(byAdding: .day, value: -20, to: now) ?? now
-        let evenings = FFCircle(
-            name: "Evenings Together",
-            type: .witness,
-            timeframe: .ongoing,
-            memberIds: [userId, aaron, naomi, kennedy],
-            tasks: [],
-            collectiveUnit: nil,
-            collectiveTarget: nil,
-            collectiveProgress: nil,
-            createdAt: eveningsStart,
-            ownerId: userId,
-            adminIds: [],
-            membersCanProposeTasks: false,
-            chapters: [
-                CircleChapter(
-                    objectives: [.sharedList],
-                    title: "Shared list",
-                    detail: "A 30-day evening reset",
-                    startedAt: eveningsStart,
-                    endedAt: eveningsSwitch,
-                    outcome: .completed,
-                    actorName: nil
-                ),
-                CircleChapter(
-                    objectives: [],
-                    title: "Just present",
-                    detail: "Everyone keeps their own goals now",
-                    startedAt: eveningsSwitch,
-                    endedAt: nil,
-                    outcome: .ongoing,
-                    actorName: aaronName
-                )
-            ]
-        )
-
-        var result = [run5k, miles, evenings]
-
-        // Two more circles spanning the expanded roster so several
-        // friend profiles surface a populated "Together" section.
-        if friends.count >= 8 {
-            let theo = friends[5].id
-            let priya = friends[6].id
-            let pagesStart = cal.date(byAdding: .day, value: -10, to: now) ?? now
-            let pagesEnd = cal.date(byAdding: .day, value: 20, to: now) ?? now
-            let morningPages = FFCircle(
-                name: "Morning Pages",
-                type: .parallel,
-                timeframe: .timeBoxed(endDate: pagesEnd),
-                memberIds: [userId, aaron, priya, theo],
-                tasks: [
-                    CircleTask(title: "Write 500 words", pointValue: nil, linkedPersonalTaskId: nil),
-                    CircleTask(title: "No phone first hour", pointValue: nil, linkedPersonalTaskId: nil),
-                    CircleTask(title: "Read 10 pages", pointValue: nil, linkedPersonalTaskId: nil)
-                ],
-                collectiveUnit: nil,
-                collectiveTarget: nil,
-                collectiveProgress: nil,
-                createdAt: pagesStart,
-                ownerId: userId,
-                adminIds: [],
-                membersCanProposeTasks: false
-            )
-            result.append(morningPages)
-        }
-
-        if friends.count >= 10 {
-            let theo = friends[5].id
-            let marcus = friends[7].id
-            let jonah = friends[9].id
-            let plungeStart = cal.date(byAdding: .day, value: -30, to: now) ?? now
-            let coldPlunge = FFCircle(
-                name: "Cold Plunge Club",
-                type: .collective,
-                timeframe: .ongoing,
-                memberIds: [userId, marcus, jonah, theo, devin],
-                tasks: [],
-                collectiveUnit: "plunges",
-                collectiveTarget: 100,
-                collectiveProgress: 41,
-                createdAt: plungeStart,
-                ownerId: marcus,
-                adminIds: [userId],
-                membersCanProposeTasks: false
-            )
-            result.append(coldPlunge)
-        }
-
-        return result
-    }
-
-    /// Today's per-member completion for the parallel "Run a 5K"
-    /// circle. Aaron 3/3, Madison 2/3, the user 1/3, Devin 0/3.
-    static func seedCircleTaskCompletions(
-        circles: [FFCircle],
-        friends: [Friend],
-        userId: UUID
-    ) -> [CircleTaskCompletion] {
-        guard let run5k = circles.first(where: { $0.name == "Run a 5K" }),
-              run5k.tasks.count >= 3,
-              friends.count >= 3
-        else { return [] }
-
-        let now = Date()
-        let aaron = friends[0].id
-        let madison = friends[1].id
-        let runTask = run5k.tasks[0].id
-        let sleepTask = run5k.tasks[1].id
-        let stretchTask = run5k.tasks[2].id
-
-        var rows: [CircleTaskCompletion] = [
-            // Aaron — full sweep.
-            CircleTaskCompletion(circleId: run5k.id, circleTaskId: runTask, memberId: aaron, date: now),
-            CircleTaskCompletion(circleId: run5k.id, circleTaskId: sleepTask, memberId: aaron, date: now),
-            CircleTaskCompletion(circleId: run5k.id, circleTaskId: stretchTask, memberId: aaron, date: now),
-            // Madison — run + sleep.
-            CircleTaskCompletion(circleId: run5k.id, circleTaskId: runTask, memberId: madison, date: now),
-            CircleTaskCompletion(circleId: run5k.id, circleTaskId: sleepTask, memberId: madison, date: now),
-            // User — just the mile so far.
-            CircleTaskCompletion(circleId: run5k.id, circleTaskId: runTask, memberId: userId, date: now)
-            // Devin — nothing today; surfaces as 0/3 in the UI.
-        ]
-
-        // Morning Pages (parallel) — give it today's texture too so the
-        // second parallel card and its member-progress read alive.
-        if let pages = circles.first(where: { $0.name == "Morning Pages" }),
-           pages.tasks.count >= 3, friends.count >= 7 {
-            let priya = friends[6].id
-            let theo = friends[5].id
-            let write = pages.tasks[0].id
-            let phone = pages.tasks[1].id
-            let read = pages.tasks[2].id
-            rows += [
-                // You — write + read.
-                CircleTaskCompletion(circleId: pages.id, circleTaskId: write, memberId: userId, date: now),
-                CircleTaskCompletion(circleId: pages.id, circleTaskId: read, memberId: userId, date: now),
-                // Aaron — full sweep again.
-                CircleTaskCompletion(circleId: pages.id, circleTaskId: write, memberId: aaron, date: now),
-                CircleTaskCompletion(circleId: pages.id, circleTaskId: phone, memberId: aaron, date: now),
-                CircleTaskCompletion(circleId: pages.id, circleTaskId: read, memberId: aaron, date: now),
-                // Theo — write + phone.
-                CircleTaskCompletion(circleId: pages.id, circleTaskId: write, memberId: theo, date: now),
-                CircleTaskCompletion(circleId: pages.id, circleTaskId: phone, memberId: theo, date: now),
-                // Priya — just the writing so far.
-                CircleTaskCompletion(circleId: pages.id, circleTaskId: write, memberId: priya, date: now)
-            ]
-        }
-
-        return rows
-    }
-
-    /// Per-member contributions toward the "1000 Miles Together"
-    /// collective target. Sums to 632, matching the circle's seeded
-    /// `collectiveProgress`.
-    static func seedCircleContributions(
-        circles: [FFCircle],
-        friends: [Friend],
-        userId: UUID
-    ) -> [CircleContribution] {
-        guard let miles = circles.first(where: { $0.name == "1000 Miles Together" }),
-              friends.count >= 5
-        else { return [] }
-
-        let now = Date()
-        let aaron = friends[0].id
-        let madison = friends[1].id
-        let kennedy = friends[3].id
-        let naomi = friends[4].id
-
-        var rows: [CircleContribution] = [
-            CircleContribution(circleId: miles.id, memberId: aaron, amount: 198, date: now),
-            CircleContribution(circleId: miles.id, memberId: userId, amount: 158, date: now),
-            CircleContribution(circleId: miles.id, memberId: madison, amount: 124, date: now),
-            CircleContribution(circleId: miles.id, memberId: kennedy, amount: 92, date: now),
-            CircleContribution(circleId: miles.id, memberId: naomi, amount: 60, date: now)
-            // Sum: 198 + 158 + 124 + 92 + 60 = 632.
-        ]
-
-        // Cold Plunge Club (collective) — contributions sum to the
-        // circle's seeded progress (41) so the bar reads honestly.
-        if let plunge = circles.first(where: { $0.name == "Cold Plunge Club" }),
-           friends.count >= 10 {
-            let devin = friends[2].id
-            let theo = friends[5].id
-            let marcus = friends[7].id
-            let jonah = friends[9].id
-            rows += [
-                CircleContribution(circleId: plunge.id, memberId: marcus, amount: 15, date: now),
-                CircleContribution(circleId: plunge.id, memberId: userId, amount: 9, date: now),
-                CircleContribution(circleId: plunge.id, memberId: jonah, amount: 8, date: now),
-                CircleContribution(circleId: plunge.id, memberId: theo, amount: 6, date: now),
-                CircleContribution(circleId: plunge.id, memberId: devin, amount: 3, date: now)
-                // Sum: 15 + 9 + 8 + 6 + 3 = 41.
-            ]
-        }
-
-        return rows
-    }
-
-    /// Four facts spread across the social graph so the signal
-    /// generator (C2) has variety to render — a threshold hit, a
-    /// completed Must-Do, a returning category, and a volume high.
-    static func seedSignalFacts(friends: [Friend]) -> [SignalFact] {
-        guard friends.count >= 4 else { return [] }
-        let cal = Calendar.current
-        let now = Date()
-        let aaron = friends[0]
-        let madison = friends[1]
-        let devin = friends[2]
-        let kennedy = friends[3]
-
-        var facts: [SignalFact] = [
-            SignalFact(
-                ownerId: aaron.id,
-                kind: .threshold,
-                date: now,
-                createdAt: cal.date(byAdding: .minute, value: -14, to: now) ?? now,
-                score: aaron.todayScore,
-                goal: 50
-            ),
-            SignalFact(
-                ownerId: madison.id,
-                kind: .mustDo,
-                date: now,
-                createdAt: cal.date(byAdding: .hour, value: -2, to: now) ?? now,
-                taskName: "Morning pages",
-                category: "Spiritual"
-            ),
-            SignalFact(
-                ownerId: devin.id,
-                kind: .returning,
-                date: now,
-                createdAt: cal.date(byAdding: .hour, value: -5, to: now) ?? now,
-                taskName: "Lift",
-                category: "Fitness",
-                daysSince: 8
-            ),
-            SignalFact(
-                ownerId: kennedy.id,
-                kind: .volumeHigh,
-                date: now,
-                createdAt: cal.date(byAdding: .hour, value: -7, to: now) ?? now,
-                score: 47,
-                goal: 35
-            )
-        ]
-
-        // Expanded roster signals so the feed reads with more variety.
-        if friends.count >= 10 {
-            let theo = friends[5]
-            let priya = friends[6]
-            let jonah = friends[9]
-            facts += [
-                SignalFact(
-                    ownerId: theo.id,
-                    kind: .threshold,
-                    date: now,
-                    createdAt: cal.date(byAdding: .minute, value: -20, to: now) ?? now,
-                    score: theo.todayScore,
-                    goal: 40
-                ),
-                SignalFact(
-                    ownerId: priya.id,
-                    kind: .milestone,
-                    date: now,
-                    createdAt: cal.date(byAdding: .minute, value: -35, to: now) ?? now,
-                    milestoneTitle: "Finish the zine",
-                    milestoneDone: 7,
-                    milestoneTotal: 10
-                ),
-                SignalFact(
-                    ownerId: jonah.id,
-                    kind: .returning,
-                    date: now,
-                    createdAt: cal.date(byAdding: .minute, value: -50, to: now) ?? now,
-                    taskName: "Deep work",
-                    category: "Work",
-                    daysSince: 6
-                )
-            ]
-        }
-
-        return facts
-    }
-
-    /// One cheer landing today (shows in the homepage Season zone)
-    /// plus one from yesterday (lives in the store but doesn't
-    /// surface as active).
-    static func seedCheers(friends: [Friend], userId: UUID) -> [Cheer] {
-        guard friends.count >= 2 else { return [] }
-        let cal = Calendar.current
-        let now = Date()
-        let aaron = friends[0]
-        let madison = friends[1]
-
-        var result: [Cheer] = [
-            Cheer(
-                fromFriendId: aaron.id,
-                fromName: aaron.displayName,
-                fromInitials: aaron.initials,
-                fromColorHex: aaron.accentColorHex,
-                toUserId: userId,
-                message: "go get that EP done today 🔥",
-                sentAt: cal.date(byAdding: .hour, value: -3, to: now) ?? now
-            ),
-            Cheer(
-                fromFriendId: madison.id,
-                fromName: madison.displayName,
-                fromInitials: madison.initials,
-                fromColorHex: madison.accentColorHex,
-                toUserId: userId,
-                message: "proud of you, keep going",
-                sentAt: cal.date(byAdding: .hour, value: -1, to: now) ?? now
-            )
-        ]
-
-        if friends.count >= 7 {
-            let priya = friends[6]
-            result.append(
-                Cheer(
-                    fromFriendId: priya.id,
-                    fromName: priya.displayName,
-                    fromInitials: priya.initials,
-                    fromColorHex: priya.accentColorHex,
-                    toUserId: userId,
-                    message: "day 16 and still showing up ✨",
-                    sentAt: cal.date(byAdding: .minute, value: -40, to: now) ?? now
-                )
-            )
-        }
-
-        return result
-    }
-
-    /// Two placeholder media records. Neither has a real local URL —
-    /// the actual capture flow in a later prompt will write files
-    /// and patch `localURL` accordingly. Seeded so the C1 story-post
-    /// seed has something to reference for media-bearing posts.
-    static func seedMediaAssets() -> [MediaAsset] {
-        let now = Date()
-        func photo() -> MediaAsset {
-            MediaAsset(type: .photo, localURL: nil, remoteURL: nil, thumbnailURL: nil, durationSeconds: nil, createdAt: now)
-        }
-        func video() -> MediaAsset {
-            MediaAsset(type: .video, localURL: nil, remoteURL: nil, thumbnailURL: nil, durationSeconds: 6.0, createdAt: now)
-        }
-        // A small pool so proofs + posts can each reference distinct
-        // media. No real files — surfaces render placeholders.
-        return [photo(), video(), photo(), photo(), video()]
-    }
-
-    /// Three posts: two unexpired general stories and one circle
-    /// clip attached to the "Run a mile" task in the 5K circle.
-    static func seedStoryPosts(
-        friends: [Friend],
-        circles: [FFCircle],
-        mediaAssets: [MediaAsset]
-    ) -> [StoryPost] {
-        guard friends.count >= 2 else { return [] }
-        let cal = Calendar.current
-        let now = Date()
-        let aaron = friends[0]
-        let madison = friends[1]
-
-        let photos = mediaAssets.filter { $0.type == .photo }
-        let videos = mediaAssets.filter { $0.type == .video }
-        func photoId(_ i: Int) -> UUID? { photos.indices.contains(i) ? photos[i].id : photos.first?.id }
-
-        var posts: [StoryPost] = []
-
-        // Aaron general post — caption + photo.
-        posts.append(StoryPost(
-            authorId: aaron.id,
-            createdAt: cal.date(byAdding: .hour, value: -2, to: now) ?? now,
-            caption: "first morning in a long while where everything pointed the same direction.",
-            mediaId: photoId(0),
-            circleId: nil,
-            attachedCircleTaskId: nil
-        ))
-
-        // Madison general post — caption only.
-        posts.append(StoryPost(
-            authorId: madison.id,
-            createdAt: cal.date(byAdding: .hour, value: -4, to: now) ?? now,
-            caption: "slow morning, but the plan is set. small lift, then back to writing.",
-            mediaId: nil,
-            circleId: nil,
-            attachedCircleTaskId: nil
-        ))
-
-        // Expanded roster — a few more fresh, unviewed general stories
-        // so the rail lights up with gold rings on first launch.
-        if friends.count >= 10 {
-            let theo = friends[5]
-            let priya = friends[6]
-            let jonah = friends[9]
-            posts.append(StoryPost(
-                authorId: theo.id,
-                createdAt: cal.date(byAdding: .minute, value: -25, to: now) ?? now,
-                caption: "cold water, clear head. that's the whole trick.",
-                mediaId: photoId(1),
-                circleId: nil,
-                attachedCircleTaskId: nil
-            ))
-            posts.append(StoryPost(
-                authorId: priya.id,
-                createdAt: cal.date(byAdding: .minute, value: -45, to: now) ?? now,
-                caption: "7 of 10 pages of the zine done. it's becoming a real thing.",
-                mediaId: photoId(2),
-                circleId: nil,
-                attachedCircleTaskId: nil
-            ))
-            posts.append(StoryPost(
-                authorId: jonah.id,
-                createdAt: cal.date(byAdding: .hour, value: -3, to: now) ?? now,
-                caption: "slow day, but I opened the doc. that counts.",
-                mediaId: nil,
-                circleId: nil,
-                attachedCircleTaskId: nil
-            ))
-        }
-
-        // Aaron circle clip in the 5K circle, attached to the
-        // "Run a mile" task as the earned badge.
-        if let run5k = circles.first(where: { $0.name == "Run a 5K" }),
-           let runTask = run5k.tasks.first,
-           let videoMedia = videos.first {
-            posts.append(StoryPost(
-                authorId: aaron.id,
-                createdAt: cal.date(byAdding: .hour, value: -1, to: now) ?? now,
-                caption: "got the mile in.",
-                mediaId: videoMedia.id,
-                circleId: run5k.id,
-                attachedCircleTaskId: runTask.id
-            ))
-        }
-
-        // Theo circle clip in Morning Pages, attached to "Write 500 words".
-        if friends.count >= 6,
-           let pages = circles.first(where: { $0.name == "Morning Pages" }),
-           let writeTask = pages.tasks.first {
-            posts.append(StoryPost(
-                authorId: friends[5].id,
-                createdAt: cal.date(byAdding: .hour, value: -2, to: now) ?? now,
-                caption: "500 words before sunrise.",
-                mediaId: photoId(3),
-                circleId: pages.id,
-                attachedCircleTaskId: writeTask.id
-            ))
-        }
-
-        return posts
-    }
-
-    /// Seeded 1:1 proofs/messages so the threads + activity-row message
-    /// affordances read alive on first launch, matching the reference:
-    ///   • Aaron — an unread *message* (lights his row "OPEN").
-    ///   • Devin — an unread *proof* (lights his row "VIEW").
-    ///   • Madison — an already-read proof (history, stays quiet).
-    static func seedDirectShares(
-        friends: [Friend],
-        userId: UUID,
-        mediaAssets: [MediaAsset]
-    ) -> [DirectShare] {
-        guard friends.count >= 3 else { return [] }
-        let cal = Calendar.current
-        let now = Date()
-        let aaron = friends[0]
-        let madison = friends[1]
-        let devin = friends[2]
-        let photos = mediaAssets.filter { $0.type == .photo }
-        func photoId(_ i: Int) -> UUID? { photos.indices.contains(i) ? photos[i].id : photos.first?.id }
-
-        var shares: [DirectShare] = [
-            // Aaron — message, unread.
-            DirectShare(
-                authorId: aaron.id,
-                recipientFriendId: userId,
-                circleId: nil,
-                caption: "look where the trail opened up this morning",
-                mediaId: nil,
-                createdAt: cal.date(byAdding: .minute, value: -8, to: now) ?? now
-            ),
-            // You → Aaron — an earlier reply so the thread reads two-sided.
-            DirectShare(
-                authorId: userId,
-                recipientFriendId: aaron.id,
-                circleId: nil,
-                caption: "that's gorgeous. saving it for my run later",
-                mediaId: nil,
-                createdAt: cal.date(byAdding: .minute, value: -7, to: now) ?? now,
-                readAt: cal.date(byAdding: .minute, value: -7, to: now) ?? now
-            ),
-            // Devin — proof (has media), unread.
-            DirectShare(
-                authorId: devin.id,
-                recipientFriendId: userId,
-                circleId: nil,
-                caption: "made the morning ride \u{1F6B4}",
-                mediaId: photoId(0),
-                createdAt: cal.date(byAdding: .minute, value: -2, to: now) ?? now
-            ),
-            // Madison — proof, already read (keeps her row quiet).
-            DirectShare(
-                authorId: madison.id,
-                recipientFriendId: userId,
-                circleId: nil,
-                caption: "proof i actually made the 6am class \u{1F4AA}",
-                mediaId: nil,
-                createdAt: cal.date(byAdding: .hour, value: -6, to: now) ?? now,
-                readAt: cal.date(byAdding: .hour, value: -5, to: now) ?? now
-            )
-        ]
-
-        // Expanded roster — more lit rows + a couple of richer threads.
-        if friends.count >= 10 {
-            let theo = friends[5]
-            let priya = friends[6]
-            let jonah = friends[9]
-            shares += [
-                // Theo — proof, unread (lights his row "VIEW").
-                DirectShare(
-                    authorId: theo.id,
-                    recipientFriendId: userId,
-                    circleId: nil,
-                    caption: "day 9 of the plunge \u{1F976}",
-                    mediaId: photoId(1),
-                    createdAt: cal.date(byAdding: .minute, value: -4, to: now) ?? now
-                ),
-                // Priya — message, unread (lights her row "OPEN").
-                DirectShare(
-                    authorId: priya.id,
-                    recipientFriendId: userId,
-                    circleId: nil,
-                    caption: "can you read the first page when you get a sec?",
-                    mediaId: nil,
-                    createdAt: cal.date(byAdding: .minute, value: -12, to: now) ?? now
-                ),
-                // Jonah — older proof, already read (stays quiet).
-                DirectShare(
-                    authorId: jonah.id,
-                    recipientFriendId: userId,
-                    circleId: nil,
-                    caption: "finally back at the desk",
-                    mediaId: photoId(2),
-                    createdAt: cal.date(byAdding: .hour, value: -8, to: now) ?? now,
-                    readAt: cal.date(byAdding: .hour, value: -7, to: now) ?? now
-                ),
-                // You → Priya — your reply, so her thread reads two-sided.
-                DirectShare(
-                    authorId: userId,
-                    recipientFriendId: priya.id,
-                    circleId: nil,
-                    caption: "on it tonight \u{2728}",
-                    mediaId: nil,
-                    createdAt: cal.date(byAdding: .hour, value: -9, to: now) ?? now,
-                    readAt: cal.date(byAdding: .hour, value: -9, to: now) ?? now
-                )
-            ]
-        }
-
-        return shares
-    }
-
-    /// One of the user's own stories so the posted state + viewer
-    /// (seen-by, reactions, in-viewer "+ Add") are demoable on first
-    /// launch. Caption-only — no file needed on disk.
-    static func seedMyStoryPosts(userId: UUID) -> [StoryPost] {
-        let cal = Calendar.current
-        let now = Date()
-        return [
-            StoryPost(
-                authorId: userId,
-                createdAt: cal.date(byAdding: .hour, value: -2, to: now) ?? now,
-                caption: "Made the 6am class \u{1F4AA}",
-                mediaId: nil,
-                circleId: nil,
-                attachedCircleTaskId: nil
-            )
-        ]
-    }
-
-    /// Two likes on the user's own story so the viewer reads "\u{2661} 2".
-    static func seedMyLikes(post: StoryPost, friends: [Friend]) -> [Like] {
-        guard friends.count >= 3 else { return [] }
-        let aaron = friends[0]
-        let devin = friends[2]
-        return [
-            Like(postId: post.id, fromFriendId: aaron.id, fromName: aaron.displayName),
-            Like(postId: post.id, fromFriendId: devin.id, fromName: devin.displayName)
-        ]
-    }
-
-    /// A pair of likes on Aaron's general post so the feed reads
-    /// alive on first launch.
-    static func seedLikes(posts: [StoryPost], friends: [Friend]) -> [Like] {
-        guard let firstPost = posts.first, friends.count >= 3 else { return [] }
-        let madison = friends[1]
-        let devin = friends[2]
-        return [
-            Like(
-                postId: firstPost.id,
-                fromFriendId: madison.id,
-                fromName: madison.displayName
-            ),
-            Like(
-                postId: firstPost.id,
-                fromFriendId: devin.id,
-                fromName: devin.displayName
-            )
-        ]
-    }
-
-    /// One accepted pact with Aaron — "Write every day" — so the
-    /// detail surface has material to render on first launch. Started
-    /// five days ago, fourteen-day window, so the eyebrow reads with
-    /// real time pressure.
-    static func seedPacts(friends: [Friend], userId: UUID) -> [Pact] {
-        guard let aaron = friends.first else { return [] }
-        let cal = Calendar.current
-        let now = Date()
-        let start = cal.date(byAdding: .day, value: -5, to: cal.startOfDay(for: now)) ?? now
-        let end = cal.date(byAdding: .day, value: 14, to: start) ?? now
-
-        let writeTask = PactTask(
-            name: "Write — 20 minutes",
-            category: .creative,
-            linkedPersonalTaskId: nil
-        )
-
-        var result: [Pact] = [
-            Pact(
-                title: "Write every day",
-                proposerId: userId,
-                partnerId: aaron.id,
-                tasks: [writeTask],
-                durationDays: 14,
-                startDate: start,
-                endDate: end,
-                status: .active,
-                createdAt: start
-            )
-        ]
-
-        // A second active pact (with Jonah) and an incoming pending
-        // pact (from Priya) so both the live and the "accept / decline"
-        // states of a pact are demoable straight from a fresh install.
-        if friends.count >= 10 {
-            let priya = friends[6]
-            let jonah = friends[9]
-            let jStart = cal.date(byAdding: .day, value: -3, to: cal.startOfDay(for: now)) ?? now
-            let jEnd = cal.date(byAdding: .day, value: 10, to: jStart) ?? now
-            result.append(
-                Pact(
-                    title: "Cold shower streak",
-                    proposerId: userId,
-                    partnerId: jonah.id,
-                    tasks: [PactTask(name: "Cold shower", category: .health, linkedPersonalTaskId: nil)],
-                    durationDays: 10,
-                    startDate: jStart,
-                    endDate: jEnd,
-                    status: .active,
-                    createdAt: jStart
-                )
-            )
-            result.append(
-                Pact(
-                    title: "Read before bed",
-                    proposerId: priya.id,
-                    partnerId: userId,
-                    tasks: [PactTask(name: "Read 10 pages", category: .creative, linkedPersonalTaskId: nil)],
-                    durationDays: 10,
-                    startDate: nil,
-                    endDate: nil,
-                    status: .pending,
-                    createdAt: cal.date(byAdding: .hour, value: -4, to: now) ?? now
-                )
-            )
-        }
-
-        return result
-    }
-
-    /// Seed prior-day completions so both progress bars read non-zero
-    /// on the very first launch. "You" has four prior days kept;
-    /// Aaron has five. Today is intentionally left open so the
-    /// checkbox is something the user can tap immediately.
-    static func seedPactCompletions(pacts: [Pact], userId: UUID) -> [PactCompletion] {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-
-        func day(_ offset: Int) -> Date {
-            cal.date(byAdding: .day, value: -offset, to: today) ?? today
-        }
-
-        var rows: [PactCompletion] = []
-        // Seed every *active* pact: the partner kept every prior day in
-        // the window; you kept all but the most recent (a gentle gap),
-        // leaving today open to tap. Pending pacts get nothing.
-        for pact in pacts where pact.status == .active {
-            guard let task = pact.tasks.first, let start = pact.startDate else { continue }
-            let startDay = cal.startOfDay(for: start)
-            let elapsed = max(0, cal.dateComponents([.day], from: startDay, to: today).day ?? 0)
-            let priorDays = min(elapsed, pact.durationDays)
-            guard priorDays >= 1 else { continue }
-            let otherId = (pact.proposerId == userId) ? pact.partnerId : pact.proposerId
-            for offset in 1...priorDays {
-                rows.append(PactCompletion(pactId: pact.id, taskId: task.id, userId: otherId, date: day(offset)))
-                if offset > 1 {
-                    rows.append(PactCompletion(pactId: pact.id, taskId: task.id, userId: userId, date: day(offset)))
-                }
-            }
-        }
-        return rows
-    }
-
-    /// One short comment on the first post so threads have material.
-    static func seedComments(posts: [StoryPost], friends: [Friend]) -> [Comment] {
-        guard let firstPost = posts.first, friends.count >= 2 else { return [] }
-        let madison = friends[1]
-        return [
-            Comment(
-                postId: firstPost.id,
-                fromFriendId: madison.id,
-                fromName: madison.displayName,
-                fromInitials: madison.initials,
-                text: "felt this. so glad."
-            )
-        ]
     }
 }

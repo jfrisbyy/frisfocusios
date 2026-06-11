@@ -22,6 +22,10 @@ struct FrisFocusApp: App {
     /// synchronized local notifications, posts, and the sweep — so the
     /// golden orb is accurate on every surface.
     @State private var goldenHour = GoldenHourService()
+    /// The social sync bridge: mirrors the real friend graph, stories,
+    /// cheers, pacts, circles, and grove presence between Supabase and
+    /// the local Store, app-wide.
+    @State private var socialSync = SocialSyncService()
 
     var body: some Scene {
         WindowGroup {
@@ -33,6 +37,7 @@ struct FrisFocusApp: App {
                 .environment(cadenceLink)
                 .environment(messageGraph)
                 .environment(goldenHour)
+                .environment(socialSync)
                 .environment(appDelegate.notifications)
                 .preferredColorScheme(.light)
                 .statusBarHidden(false)

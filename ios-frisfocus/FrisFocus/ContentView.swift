@@ -24,6 +24,7 @@ struct ContentView: View {
     @Environment(CadenceLinkService.self) private var cadence
     @Environment(MessageGraphService.self) private var messageGraph
     @Environment(GoldenHourService.self) private var goldenHour
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
@@ -58,6 +59,10 @@ struct ContentView: View {
                     goldenHour.startRealtime(myUserId: myId)
                     await profileStore.load(myUserId: myId)
                     await moderation.loadBlocks(myUserId: myId)
+                    // The full social mirror: friends, stories, cheers,
+                    // pacts, circles, and grove presence — synced into
+                    // the Store and kept live over realtime.
+                    await socialSync.start(myUserId: myId, store: store)
                     await notifications.requestAuthorizationIfNeeded()
                     // Esengo link: refresh entitlements + silently credit
                     // any outcomes Cadence recorded while we were away.
@@ -69,6 +74,7 @@ struct ContentView: View {
                     goldenHour.clear()
                     profileStore.clear()
                     moderation.clear()
+                    socialSync.stop()
                     await cadence.refresh(myUserId: nil)
                 }
             }
@@ -90,6 +96,12 @@ struct ContentView: View {
                         // Re-resolve today's Golden Hour moment (a turns-mode
                         // pick may have landed) and refresh the alerts.
                         Task { await goldenHour.load(myUserId: myId) }
+                        // Catch up the social mirror and nudge the
+                        // test-user engine so simulated friends react.
+                        Task {
+                            await socialSync.refreshAll()
+                            socialSync.pokeEngine(trigger: "foreground")
+                        }
                     }
                 } else if newPhase == .background || newPhase == .inactive {
                     // Safety net: flush any debounced, not-yet-written

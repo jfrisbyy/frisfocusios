@@ -30,6 +30,12 @@ nonisolated enum PushKind: String, Sendable {
     case circleProgress = "circle_progress"
     case circleMode = "circle_mode"
     case goldenPost = "golden_post"
+    case cheer
+    case storyLike = "story_like"
+    case storyComment = "story_comment"
+    case pactInvite = "pact_invite"
+    case pactAccept = "pact_accept"
+    case focusInvite = "focus_invite"
 }
 
 /// The request body the `send-push` function reads (camelCase keys, matched

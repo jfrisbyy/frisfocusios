@@ -108,18 +108,6 @@ struct SharedFocusModeView: View {
                 }
                 .padding(.bottom, 36)
             }
-            // Slow simulated presence drift so the grove demonstrates
-            // the "stepped away" state without a backend. The hook
-            // is a no-op once real relay lands.
-            TimelineView(.periodic(from: .now, by: 18)) { ctx in
-                Color.clear
-                    .onChange(of: ctx.date) { _, _ in
-                        guard !sessionEnded else { return }
-                        store.simulateFriendPresenceTick()
-                    }
-            }
-            .allowsHitTesting(false)
-
             if showReturnOverlay {
                 returnFromLeaveOverlay
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
