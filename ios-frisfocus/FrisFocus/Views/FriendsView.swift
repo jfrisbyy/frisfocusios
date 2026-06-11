@@ -17,10 +17,13 @@ import SwiftUI
 struct FriendsView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(ModerationService.self) private var moderation
+    @Environment(SocialSyncService.self) private var socialSync
     @State private var service = FriendGraphService()
+    @State private var discover = DiscoverService()
     @State private var query: String = ""
     @State private var hasSearched: Bool = false
     @State private var reportTarget: ReportTarget?
+    @State private var discoverPreview: DiscoverSuggestion?
     @FocusState private var searchFocused: Bool
 
     private var myId: String? { auth.user?.id }
@@ -59,6 +62,11 @@ struct FriendsView: View {
             .environment(auth)
             .environment(moderation)
         }
+        .sheet(item: $discoverPreview) { suggestion in
+            DiscoverProfileSheet(suggestion: suggestion, graph: service)
+                .environment(auth)
+                .environment(socialSync)
+        }
     }
 
     @ViewBuilder
@@ -80,6 +88,7 @@ struct FriendsView: View {
                     addSection
                     if !service.incoming.isEmpty { incomingSection }
                     if !service.outgoing.isEmpty { outgoingSection }
+                    if !discoverSuggestions.isEmpty { discoverSection }
                     friendsSection
                 }
                 .padding(.horizontal, 20)
@@ -254,6 +263,59 @@ struct FriendsView: View {
         }
     }
 
+    // MARK: - Discover people
+
+    /// Suggestions still worth showing: blocked accounts are hidden, and
+    /// anyone who became a friend (or sent us a request) while on screen
+    /// drops out — freshly added people stay visible as Pending.
+    private var discoverSuggestions: [DiscoverSuggestion] {
+        guard let myId else { return [] }
+        return discover.suggestions.filter { suggestion in
+            guard !moderation.isBlocked(suggestion.profile.id) else { return false }
+            switch service.relationship(to: suggestion.profile.id, myUserId: myId) {
+            case .none, .requestSent: return true
+            case .friends, .requestReceived, .isMe: return false
+            }
+        }
+    }
+
+    private var discoverSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                sectionHeader("DISCOVER PEOPLE", subtitle: "People on FrisFocus you may know.")
+                Spacer()
+                NavigationLink {
+                    DiscoverPeopleView(graph: service, discover: discover)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("See all")
+                            .font(.sans(13, weight: .semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("See all suggestions")
+            }
+
+            ForEach(discoverSuggestions.prefix(6)) { suggestion in
+                DiscoverPersonRow(
+                    suggestion: suggestion,
+                    relationship: myId.map { service.relationship(to: suggestion.profile.id, myUserId: $0) } ?? .none,
+                    onOpen: { discoverPreview = suggestion },
+                    onAdd: {
+                        guard let myId else { return }
+                        Task {
+                            await service.sendRequest(to: suggestion.profile, myUserId: myId)
+                            socialSync.pokeEngine(trigger: "friend")
+                        }
+                    }
+                )
+            }
+        }
+    }
+
     // MARK: - Friends
 
     private var friendsSection: some View {
@@ -309,7 +371,7 @@ struct FriendsView: View {
             Text("No friends yet")
                 .font(.serif(18, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Add someone by @username, name, or email to start sharing circles, pacts, and stories.")
+            Text("Pick someone from Discover people above, or search by @username, name, or email to start sharing circles, pacts, and stories.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -409,6 +471,7 @@ struct FriendsView: View {
         guard let myId else { return }
         await service.load(myUserId: myId)
         service.startRealtime(myUserId: myId)
+        await discover.refresh(myUserId: myId, graph: service)
     }
 
     private func runSearch() async {
