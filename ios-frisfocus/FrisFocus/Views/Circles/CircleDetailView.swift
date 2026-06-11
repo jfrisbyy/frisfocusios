@@ -730,14 +730,8 @@ private struct CircleDetailMemberStack: View {
                     .padding(0.8)
             )
         } else if let friend = store.friend(by: id) {
-            ZStack {
-                Circle().fill(Color(hex: friend.accentColorHex))
-                Text(friend.initials)
-                    .font(.sans(11, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: diameter, height: diameter)
-            .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.85), lineWidth: 1.2))
+            FriendAvatarView(friend: friend, size: diameter)
+                .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.85), lineWidth: 1.2))
         } else {
             Circle()
                 .fill(Theme.textTertiary)

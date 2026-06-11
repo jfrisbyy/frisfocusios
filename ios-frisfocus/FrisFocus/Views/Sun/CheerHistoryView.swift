@@ -253,6 +253,7 @@ struct CheerHistoryView: View {
                 }
             } label: {
                 rowContent(
+                    friend: store.friend(forCheer: cheer),
                     avatarColor: Color(hex: cheer.fromColorHex),
                     initials: cheer.fromInitials,
                     message: cheer.message,
@@ -286,6 +287,7 @@ struct CheerHistoryView: View {
         let color = recipient.map { Color(hex: $0.accentColorHex) } ?? Theme.textTertiary
         let initials = recipient?.initials ?? "?"
         return rowContent(
+            friend: recipient,
             avatarColor: color,
             initials: initials,
             message: cheer.message,
@@ -308,6 +310,7 @@ struct CheerHistoryView: View {
     }
 
     private func rowContent(
+        friend: Friend?,
         avatarColor: Color,
         initials: String,
         message: String,
@@ -315,13 +318,12 @@ struct CheerHistoryView: View {
         reaction: String?
     ) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                Circle().fill(avatarColor)
-                Text(initials)
-                    .font(.sans(12, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: 34, height: 34)
+            FriendAvatarView(
+                friend: friend,
+                size: 34,
+                fallbackInitials: initials,
+                fallbackColor: avatarColor
+            )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("\u{201C}\(message)\u{201D}")

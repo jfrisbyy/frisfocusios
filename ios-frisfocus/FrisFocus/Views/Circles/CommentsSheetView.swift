@@ -95,13 +95,12 @@ struct CommentsSheetView: View {
             profileTarget = target
         } label: {
             HStack(alignment: .top, spacing: 10) {
-                ZStack {
-                    Circle().fill(isMine ? Theme.textPrimary : Color(hex: colorHex))
-                    Text(comment.fromInitials)
-                        .font(.sans(11, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
-                }
-                .frame(width: 28, height: 28)
+                FriendAvatarView(
+                    friend: isMine ? nil : friend,
+                    size: 28,
+                    fallbackInitials: comment.fromInitials,
+                    fallbackColor: isMine ? Theme.textPrimary : Color(hex: colorHex)
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     (

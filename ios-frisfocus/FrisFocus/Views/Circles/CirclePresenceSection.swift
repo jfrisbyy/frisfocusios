@@ -110,13 +110,12 @@ struct CirclePresenceSection: View {
             lineWidth: 2.5,
             trackOpacity: 0.16
         ) {
-            ZStack {
-                Circle().fill(isMe ? Theme.textPrimary : accentFor(id))
-                Text(initialsFor(id, isMe: isMe))
-                    .font(.sans(12, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: 34, height: 34)
+            FriendAvatarView(
+                friend: isMe ? nil : store.friend(by: id),
+                size: 34,
+                fallbackInitials: initialsFor(id, isMe: isMe),
+                fallbackColor: isMe ? Theme.textPrimary : accentFor(id)
+            )
         }
         .frame(width: 46, height: 46)
     }

@@ -336,14 +336,8 @@ private struct PactRowCard: View {
     }
 
     private func partnerDisc(_ friend: Friend) -> some View {
-        ZStack {
-            Circle().fill(Color(hex: friend.accentColorHex))
-            Text(friend.initials)
-                .font(.sans(10, weight: .semibold))
-                .foregroundStyle(Theme.textCream)
-        }
-        .frame(width: 22, height: 22)
-        .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.2))
+        FriendAvatarView(friend: friend, size: 22)
+            .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.2))
     }
 
     private var twoBars: some View {

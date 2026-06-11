@@ -137,14 +137,7 @@ struct FocusTogetherSheet: View {
             toggleFriend(friend)
         } label: {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(Color(hex: friend.accentColorHex) ?? Theme.textPrimary)
-                        .frame(width: 30, height: 30)
-                    Text(friend.initials)
-                        .font(.sans(11, weight: .semibold))
-                        .foregroundStyle(Theme.warmWheat)
-                }
+                FriendAvatarView(friend: friend, size: 30)
                 Text(friend.displayName)
                     .font(.serif(15, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(isCapped ? 0.45 : 0.95))

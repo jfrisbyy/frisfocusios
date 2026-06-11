@@ -1090,13 +1090,12 @@ struct CircleSettingsSheet: View {
                 profileTarget = target
             } label: {
                 HStack(spacing: 12) {
-                    ZStack {
-                        Circle().fill(accent)
-                        Text(initials)
-                            .font(.sans(13, weight: .semibold))
-                            .foregroundStyle(Theme.textCream)
-                    }
-                    .frame(width: 36, height: 36)
+                    FriendAvatarView(
+                        friend: isMe ? nil : store.friend(by: memberId),
+                        size: 36,
+                        fallbackInitials: initials,
+                        fallbackColor: accent
+                    )
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(displayName)

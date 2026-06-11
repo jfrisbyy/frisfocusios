@@ -116,7 +116,9 @@ private struct EdgeSwipeCameraModifier: ViewModifier {
         content
             .simultaneousGesture(cameraGesture)
             .fullScreenCover(isPresented: $showCamera) {
-                ShareCameraView(context: store.dayShareContext())
+                // Opens on the clean, overlay-free page — swipe on the
+                // viewfinder to reach the season and milestone cards.
+                ShareCameraView(subject: .blank)
             }
     }
 

@@ -314,38 +314,94 @@ private struct CircleCard: View {
     let myUserId: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Text(circle.name)
-                    .font(.serif(18, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                Spacer(minLength: 8)
-                kindChip
+        VStack(alignment: .leading, spacing: 0) {
+            if let url = circle.headerURL {
+                headerBanner(url)
             }
 
-            HStack(spacing: 10) {
-                RemoteCircleAvatarStack(
-                    members: circle.members,
-                    myUserId: myUserId,
-                    maxVisible: 4,
-                    diameter: 26,
-                    onDark: false
-                )
-                Text(membershipCaption)
-                    .font(.sans(12, weight: .regular))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-            }
+            VStack(alignment: .leading, spacing: 12) {
+                if circle.headerURL == nil {
+                    titleRow
+                }
 
-            progressRow
+                HStack(spacing: 10) {
+                    RemoteCircleAvatarStack(
+                        members: circle.members,
+                        myUserId: myUserId,
+                        maxVisible: 4,
+                        diameter: 26,
+                        onDark: false
+                    )
+                    Text(membershipCaption)
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                }
+
+                progressRow
+            }
+            .padding(14)
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.paperCream)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var titleRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(circle.name)
+                .font(.serif(18, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 8)
+            kindChip
+        }
+    }
+
+    /// The circle's shared header photo as a banner across the top of
+    /// the card — name and kind sit on a soft scrim so they stay
+    /// readable on any picture.
+    private func headerBanner(_ url: URL) -> some View {
+        Theme.textPrimary.opacity(0.08)
+            .frame(height: 112)
+            .overlay {
+                CachedImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Theme.textPrimary.opacity(0.08)
+                }
+                .allowsHitTesting(false)
+            }
+            .overlay {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: Color.black.opacity(0.18), location: 0.55),
+                        .init(color: Color.black.opacity(0.52), location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottomLeading) {
+                HStack(alignment: .bottom, spacing: 10) {
+                    Text(circle.name)
+                        .font(.serif(18, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+                    Spacer(minLength: 8)
+                    bannerKindChip
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+            }
+            .clipped()
+            .accessibilityHidden(true)
     }
 
     private var kindChip: some View {
@@ -356,6 +412,17 @@ private struct CircleCard: View {
             .padding(.vertical, 5)
             .background(circle.kind.tint.opacity(0.16))
             .clipShape(Capsule())
+    }
+
+    /// Kind chip variant legible on the photo banner.
+    private var bannerKindChip: some View {
+        Text(circle.kind.shortLabel)
+            .font(.sans(11, weight: .semibold))
+            .foregroundStyle(Theme.textCream)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.black.opacity(0.38)))
+            .overlay(Capsule().strokeBorder(Theme.textCream.opacity(0.3), lineWidth: 0.5))
     }
 
     private var membershipCaption: String {

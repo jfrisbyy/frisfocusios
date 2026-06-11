@@ -477,14 +477,8 @@ struct StoryPlayerView: View {
     }
 
     private func friendAvatar(_ friend: Friend) -> some View {
-        ZStack {
-            Circle().fill(Color(hex: friend.accentColorHex))
-            Text(friend.initials)
-                .font(.sans(13, weight: .medium))
-                .foregroundStyle(Theme.textCream)
-        }
-        .frame(width: 34, height: 34)
-        .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.5), lineWidth: 1))
+        FriendAvatarView(friend: friend, size: 34)
+            .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.5), lineWidth: 1))
     }
 
     /// The author avatar paired with the circle name in the header.
@@ -500,10 +494,7 @@ struct StoryPlayerView: View {
                     .font(.sans(13, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
             } else if let id = authorId, let friend = store.friend(by: id) {
-                Circle().fill(Color(hex: friend.accentColorHex))
-                Text(friend.initials)
-                    .font(.sans(13, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
+                FriendAvatarView(friend: friend, size: 34)
             } else {
                 // Author isn't in the local friend graph (a circle-only
                 // member). Fall back to a neutral disc tinted by the

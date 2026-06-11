@@ -168,13 +168,7 @@ struct ProposePactView: View {
             selectedFriendId = isSelected ? nil : friend.id
         } label: {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle().fill(Color(hex: friend.accentColorHex))
-                    Text(friend.initials)
-                        .font(.sans(13, weight: .semibold))
-                        .foregroundStyle(Theme.textCream)
-                }
-                .frame(width: 34, height: 34)
+                FriendAvatarView(friend: friend, size: 34)
 
                 Text(friend.displayName)
                     .font(.sans(15, weight: .medium))

@@ -22,6 +22,14 @@ struct ShareCompositionOverlayView: View {
 
     var body: some View {
         switch composition {
+        case .blank:
+            BlankShareOverlayView(
+                mode: mode,
+                username: username,
+                layer: layer,
+                bottomPadding: bottomPadding
+            )
+
         case .day(let context, let options):
             ShareOverlayView(
                 context: context,

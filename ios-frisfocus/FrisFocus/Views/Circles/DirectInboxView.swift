@@ -302,14 +302,8 @@ private struct ConversationRow: View {
     }
 
     private var avatar: some View {
-        ZStack {
-            Circle().fill(Color(hex: friend.accentColorHex))
-            Text(friend.initials)
-                .font(.sans(17, weight: .semibold))
-                .foregroundStyle(Theme.textCream)
-        }
-        .frame(width: 52, height: 52)
-        .overlay(Circle().strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 0.5))
+        FriendAvatarView(friend: friend, size: 52)
+            .overlay(Circle().strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 0.5))
     }
 
     @ViewBuilder
@@ -424,13 +418,7 @@ private struct NewProofPickerView: View {
             onPick(friend)
         } label: {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle().fill(Color(hex: friend.accentColorHex))
-                    Text(friend.initials)
-                        .font(.sans(16, weight: .semibold))
-                        .foregroundStyle(Theme.textCream)
-                }
-                .frame(width: 46, height: 46)
+                FriendAvatarView(friend: friend, size: 46)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(friend.displayName)

@@ -20,6 +20,12 @@ private struct HeaderCropTarget: Identifiable {
     let image: UIImage
 }
 
+/// Identifiable wrapper for the circular avatar crop screen.
+private struct AvatarCropTarget: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
 struct EditProfileView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(ProfileStore.self) private var profileStore
@@ -38,6 +44,7 @@ struct EditProfileView: View {
     @State private var location = LocationService()
 
     @State private var photoItem: PhotosPickerItem?
+    @State private var avatarCropTarget: AvatarCropTarget?
     @State private var pickedImage: UIImage?
 
     @State private var headerPhotoItem: PhotosPickerItem?
@@ -135,6 +142,11 @@ struct EditProfileView: View {
             ProfileHeaderCropView(image: target.image) { baked in
                 croppedHeader = baked
                 headerRemoved = false
+            }
+        }
+        .fullScreenCover(item: $avatarCropTarget) { target in
+            AvatarCropView(image: target.image) { baked in
+                pickedImage = baked
             }
         }
         .onChange(of: username) { _, newValue in
@@ -514,8 +526,10 @@ struct EditProfileView: View {
     private func loadPickedImage(_ item: PhotosPickerItem) async {
         if let data = try? await item.loadTransferable(type: Data.self),
            let image = UIImage(data: data) {
-            pickedImage = image
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            avatarCropTarget = AvatarCropTarget(image: image)
         }
+        photoItem = nil
     }
 
     private func loadPickedHeader(_ item: PhotosPickerItem) async {

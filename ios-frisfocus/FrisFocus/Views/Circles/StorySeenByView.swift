@@ -112,13 +112,7 @@ struct StorySeenByView: View {
             profileTarget = .friend(viewer.friend)
         } label: {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle().fill(Color(hex: viewer.friend.accentColorHex))
-                    Text(viewer.friend.initials)
-                        .font(.sans(16, weight: .semibold))
-                        .foregroundStyle(Theme.textCream)
-                }
-                .frame(width: 46, height: 46)
+                FriendAvatarView(friend: viewer.friend, size: 46)
 
                 Text(viewer.friend.displayName)
                     .font(.sans(15, weight: .medium))

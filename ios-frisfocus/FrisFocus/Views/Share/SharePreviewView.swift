@@ -817,12 +817,7 @@ struct SharePreviewView: View {
         let selected = audience.friendIds.contains(friend.id)
         return Button { toggleFriend(friend.id) } label: {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle().fill(Color(hex: friend.accentColorHex)).frame(width: 34, height: 34)
-                    Text(friend.initials)
-                        .font(.sans(13, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
-                }
+                FriendAvatarView(friend: friend, size: 34)
                 Text(friend.displayName)
                     .font(.sans(14, weight: .medium))
                     .foregroundStyle(Color.white)

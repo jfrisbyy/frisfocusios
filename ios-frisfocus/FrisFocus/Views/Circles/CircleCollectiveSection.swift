@@ -169,13 +169,12 @@ struct CircleCollectiveSection: View {
 
     @ViewBuilder
     private func avatar(for id: UUID, isMe: Bool) -> some View {
-        ZStack {
-            Circle().fill(isMe ? Theme.textPrimary : accentFor(id))
-            Text(initialsFor(id, isMe: isMe))
-                .font(.sans(12, weight: .semibold))
-                .foregroundStyle(Theme.textCream)
-        }
-        .frame(width: 32, height: 32)
+        FriendAvatarView(
+            friend: isMe ? nil : store.friend(by: id),
+            size: 32,
+            fallbackInitials: initialsFor(id, isMe: isMe),
+            fallbackColor: isMe ? Theme.textPrimary : accentFor(id)
+        )
         .overlay {
             if isMe {
                 Circle().strokeBorder(

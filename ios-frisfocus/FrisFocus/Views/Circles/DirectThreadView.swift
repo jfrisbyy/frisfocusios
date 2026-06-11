@@ -74,13 +74,7 @@ struct DirectThreadView: View {
                 profileTarget = .friend(friend)
             } label: {
                 HStack(spacing: 12) {
-                    ZStack {
-                        Circle().fill(Color(hex: friend.accentColorHex))
-                        Text(friend.initials)
-                            .font(.sans(15, weight: .semibold))
-                            .foregroundStyle(Theme.textCream)
-                    }
-                    .frame(width: 40, height: 40)
+                    FriendAvatarView(friend: friend, size: 40)
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text("PRIVATELY")

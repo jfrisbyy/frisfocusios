@@ -108,13 +108,12 @@ struct SeasonCheerCard: View {
                 }
             } label: {
                 HStack(alignment: .top, spacing: 12) {
-                    ZStack {
-                        Circle().fill(Color(hex: cheer.fromColorHex))
-                        Text(cheer.fromInitials)
-                            .font(.sans(11, weight: .medium))
-                            .foregroundStyle(Theme.textCream)
-                    }
-                    .frame(width: 28, height: 28)
+                    FriendAvatarView(
+                        friend: store.friend(forCheer: cheer),
+                        size: 28,
+                        fallbackInitials: cheer.fromInitials,
+                        fallbackColor: Color(hex: cheer.fromColorHex)
+                    )
                     .overlay(
                         Circle().strokeBorder(Theme.textCream.opacity(0.35), lineWidth: 0.5)
                     )
@@ -155,17 +154,24 @@ struct SeasonCheerCard: View {
         }
         .offset(x: offset)
         .opacity(1 - min(abs(offset) / 240, 0.7))
-        .gesture(
+        // Simultaneous so the drag is recognized even though the row's
+        // Button claims the touch — a plain `.gesture` here always lost
+        // to the tap, which made cheers clickable but never swipeable.
+        .simultaneousGesture(
             DragGesture(minimumDistance: 12)
                 .onChanged { value in
-                    // Only horizontal drags drive the swipe; vertical
-                    // motion is left to the page scroll.
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    // Lock to horizontal: once a drag starts sideways it
+                    // drives the swipe; vertical motion stays with the
+                    // page scroll and never moves the row.
+                    if dragOffsets[cheer.id] == nil {
+                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    }
                     dragOffsets[cheer.id] = value.translation.width
                 }
                 .onEnded { value in
+                    guard dragOffsets[cheer.id] != nil else { return }
                     let width = value.translation.width
-                    if abs(width) > 110 {
+                    if abs(width) > 110 || abs(value.predictedEndTranslation.width) > 260 {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         withAnimation(.easeOut(duration: 0.2)) {
                             dragOffsets[cheer.id] = width > 0 ? 600 : -600

@@ -239,6 +239,42 @@ private enum CirclesSectionHelpers {
     }
 }
 
+// MARK: - Header photo banner
+
+/// A circle's shared header photo as a banner across the top of its
+/// list card — a soft bottom gradient keeps whatever sits below it
+/// reading cleanly. Only rendered when the circle has a header set.
+private struct CircleCardHeaderBanner: View {
+    let url: URL
+
+    var body: some View {
+        Theme.textPrimary.opacity(0.08)
+            .frame(height: 78)
+            .overlay {
+                CachedImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Theme.textPrimary.opacity(0.08)
+                }
+                .allowsHitTesting(false)
+            }
+            .overlay {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: Color.black.opacity(0.10), location: 0.7),
+                        .init(color: Color.black.opacity(0.22), location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+            }
+            .clipped()
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Member avatar stack
 
 /// Compact overlapping stack of member discs. The user's avatar gets a
@@ -340,14 +376,8 @@ private struct MemberAvatarStack: View {
             )
             .overlay(Circle().strokeBorder(Theme.warmWheat.opacity(0.6), lineWidth: 0.5).padding(0.8))
         } else if let friend = store.friend(by: id) {
-            ZStack {
-                Circle().fill(Color(hex: friend.accentColorHex))
-                Text(friend.initials)
-                    .font(.sans(11, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: diameter, height: diameter)
-            .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.2))
+            FriendAvatarView(friend: friend, size: diameter)
+                .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.2))
         } else {
             ZStack {
                 Circle().fill(Theme.textTertiary)
@@ -381,12 +411,17 @@ private struct ParallelCircleCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: onTap) {
-                mainBlock
-                    .padding(.horizontal, 14)
-                    .padding(.top, 13)
-                    .padding(.bottom, 14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                VStack(spacing: 0) {
+                    if let url = circle.headerURL {
+                        CircleCardHeaderBanner(url: url)
+                    }
+                    mainBlock
+                        .padding(.horizontal, 14)
+                        .padding(.top, 13)
+                        .padding(.bottom, 14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -398,6 +433,7 @@ private struct ParallelCircleCard: View {
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                 .fill(Color.white.opacity(0.55))
         )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                 .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
@@ -539,33 +575,40 @@ private struct CollectiveCircleCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 11) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(CirclesSectionHelpers.eyebrowText(typeLabel: "COLLECTIVE", timeframe: circle.timeframe))
-                            .font(.sans(10, weight: .medium))
-                            .tracking(2)
-                            .foregroundStyle(Theme.textPrimary.opacity(0.55))
-
-                        Text(circle.name)
-                            .font(.serif(17, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-
-                    Spacer()
-
-                    MemberAvatarStack(memberIds: orderedMemberIdsByContribution, maxVisible: 1)
+            VStack(spacing: 0) {
+                if let url = circle.headerURL {
+                    CircleCardHeaderBanner(url: url)
                 }
 
-                togetherRow
+                VStack(alignment: .leading, spacing: 11) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(CirclesSectionHelpers.eyebrowText(typeLabel: "COLLECTIVE", timeframe: circle.timeframe))
+                                .font(.sans(10, weight: .medium))
+                                .tracking(2)
+                                .foregroundStyle(Theme.textPrimary.opacity(0.55))
+
+                            Text(circle.name)
+                                .font(.serif(17, weight: .medium))
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+
+                        Spacer()
+
+                        MemberAvatarStack(memberIds: orderedMemberIdsByContribution, maxVisible: 1)
+                    }
+
+                    togetherRow
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                     .fill(Color.white.opacity(0.55))
             )
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                     .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
@@ -660,37 +703,44 @@ private struct WitnessCircleCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 11) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(CirclesSectionHelpers.eyebrowText(typeLabel: "WITNESS", timeframe: circle.timeframe))
-                            .font(.sans(10, weight: .medium))
-                            .tracking(2)
-                            .foregroundStyle(tintDark.opacity(0.9))
-                        Text(circle.name)
-                            .font(.serif(17, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
+            VStack(spacing: 0) {
+                if let url = circle.headerURL {
+                    CircleCardHeaderBanner(url: url)
+                }
+
+                VStack(alignment: .leading, spacing: 11) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(CirclesSectionHelpers.eyebrowText(typeLabel: "WITNESS", timeframe: circle.timeframe))
+                                .font(.sans(10, weight: .medium))
+                                .tracking(2)
+                                .foregroundStyle(tintDark.opacity(0.9))
+                            Text(circle.name)
+                                .font(.serif(17, weight: .medium))
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                        Spacer()
+                        MemberAvatarStack(memberIds: circle.memberIds, maxVisible: 4)
                     }
-                    Spacer()
-                    MemberAvatarStack(memberIds: circle.memberIds, maxVisible: 4)
+                    HStack(spacing: 8) {
+                        Image(systemName: "moon.stars.fill")
+                            .font(.sans(11, weight: .semibold))
+                            .foregroundStyle(tint)
+                        Text("Just present · everyone on their own goals")
+                            .font(.sans(12, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                        Spacer(minLength: 0)
+                    }
                 }
-                HStack(spacing: 8) {
-                    Image(systemName: "moon.stars.fill")
-                        .font(.sans(11, weight: .semibold))
-                        .foregroundStyle(tint)
-                    Text("Just present · everyone on their own goals")
-                        .font(.sans(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.65))
-                    Spacer(minLength: 0)
-                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                     .fill(Color.white.opacity(0.55))
             )
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                     .strokeBorder(tint.opacity(0.22), lineWidth: 0.6)
@@ -716,30 +766,37 @@ private struct HybridCircleCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(CirclesSectionHelpers.eyebrowText(typeLabel: "HYBRID", timeframe: circle.timeframe))
-                            .font(.sans(10, weight: .medium))
-                            .tracking(2)
-                            .foregroundStyle(tintDark.opacity(0.9))
-                        Text(circle.name)
-                            .font(.serif(17, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                    Spacer()
-                    MemberAvatarStack(memberIds: circle.memberIds, maxVisible: 4)
+            VStack(spacing: 0) {
+                if let url = circle.headerURL {
+                    CircleCardHeaderBanner(url: url)
                 }
-                listRow
-                numberRow
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(CirclesSectionHelpers.eyebrowText(typeLabel: "HYBRID", timeframe: circle.timeframe))
+                                .font(.sans(10, weight: .medium))
+                                .tracking(2)
+                                .foregroundStyle(tintDark.opacity(0.9))
+                            Text(circle.name)
+                                .font(.serif(17, weight: .medium))
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                        Spacer()
+                        MemberAvatarStack(memberIds: circle.memberIds, maxVisible: 4)
+                    }
+                    listRow
+                    numberRow
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                     .fill(Color.white.opacity(0.55))
             )
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                     .strokeBorder(CircleType.hybrid.tint.opacity(0.25), lineWidth: 0.6)

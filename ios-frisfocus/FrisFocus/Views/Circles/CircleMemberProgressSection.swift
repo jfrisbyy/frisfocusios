@@ -208,13 +208,12 @@ private struct MemberProgressRow: View {
                 )
             )
         } else {
-            ZStack {
-                Circle().fill(accentColor)
-                Text(initials)
-                    .font(.sans(12, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: 32, height: 32)
+            FriendAvatarView(
+                friend: store.friend(by: memberId),
+                size: 32,
+                fallbackInitials: initials,
+                fallbackColor: accentColor
+            )
             .overlay(Circle().strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5))
         }
     }

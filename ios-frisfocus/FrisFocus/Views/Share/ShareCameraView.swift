@@ -49,6 +49,13 @@ struct ShareCameraView: View {
     @State private var result: CaptureResult?
     @State private var showLayers: Bool = false
 
+    /// The swipeable overlay carousel — built once on appear: nothing →
+    /// the season day card → one card per milestone (→ the journal card
+    /// when that's how the camera was opened). The entry subject is
+    /// always one of the pages and starts selected.
+    @State private var pages: [ShareCardSubject] = []
+    @State private var pageIndex: Int = 0
+
     init(
         subject: ShareCardSubject,
         attachContext: ProofAttachContext = .none,
@@ -89,10 +96,18 @@ struct ShareCameraView: View {
             ?? "me"
     }
 
+    /// The overlay the viewfinder is currently showing — the selected
+    /// carousel page (falling back to the entry subject pre-build).
+    private var currentSubject: ShareCardSubject {
+        guard pages.indices.contains(pageIndex) else { return subject }
+        return pages[pageIndex]
+    }
+
     /// The subject frozen together with the current overlay options —
     /// what the preview and the renderer will draw.
     private var composition: ShareCardComposition {
-        switch subject {
+        switch currentSubject {
+        case .blank: return .blank
         case .day(let context): return .day(context, options)
         case .milestone(let context): return .milestone(context, milestoneOptions)
         case .note(let context): return .note(context)
@@ -100,14 +115,28 @@ struct ShareCameraView: View {
     }
 
     private var isDaySubject: Bool {
-        if case .day = subject { return true }
+        if case .day = currentSubject { return true }
         return false
     }
 
-    /// The journal card has no disclosure layers — hide the button.
+    /// Only the day and milestone cards have disclosure layers.
     private var hasLayers: Bool {
-        if case .note = subject { return false }
-        return true
+        switch currentSubject {
+        case .day, .milestone: return true
+        case .blank, .note: return false
+        }
+    }
+
+    /// Short name for the active overlay, shown beside the dots.
+    private var overlayLabel: String {
+        switch currentSubject {
+        case .blank: return "No overlay"
+        case .day(let context):
+            if case .week = context.sun { return "Your week" }
+            return "Season"
+        case .milestone(let context): return context.title
+        case .note: return "Journal"
+        }
     }
 
     var body: some View {
@@ -131,6 +160,8 @@ struct ShareCameraView: View {
                 },
                 bottomPadding: 168
             )
+            .id(pageIndex)
+            .transition(.opacity)
             .ignoresSafeArea(edges: .bottom)
 
             // Photo flash.
@@ -145,7 +176,9 @@ struct ShareCameraView: View {
             }
         }
         .statusBarHidden()
+        .simultaneousGesture(overlayCarouselGesture)
         .onAppear {
+            buildPages()
             Task { await camera.requestAccessAndStart() }
         }
         .onDisappear {
@@ -184,7 +217,7 @@ struct ShareCameraView: View {
 
     @ViewBuilder
     private var layersSheet: some View {
-        switch subject {
+        switch currentSubject {
         case .day:
             ShareLayersSheet(options: $options)
                 .presentationDetents([.height(330)])
@@ -195,9 +228,86 @@ struct ShareCameraView: View {
                 .presentationDetents([.height(440)])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
-        case .note:
+        case .blank, .note:
             EmptyView()
         }
+    }
+
+    // MARK: - Overlay carousel
+
+    /// Builds the carousel once: nothing → the day card → every
+    /// milestone of the season (→ the journal card for note captures).
+    /// The entry subject's exact context is reused so deep entry points
+    /// (a past day, the week, a specific milestone) keep their data.
+    private func buildPages() {
+        guard pages.isEmpty else { return }
+        var built: [ShareCardSubject] = [.blank]
+
+        if case .day(let context) = subject {
+            built.append(.day(context))
+        } else {
+            built.append(.day(store.dayShareContext()))
+        }
+
+        var milestonePages = store.currentSeason.milestones
+            .sorted { $0.weekNumber < $1.weekNumber }
+            .prefix(8)
+            .map { ShareCardSubject.milestone(store.milestoneShareContext(for: $0)) }
+        if case .milestone(let context) = subject,
+           !milestonePages.contains(.milestone(context)) {
+            milestonePages.insert(.milestone(context), at: 0)
+        }
+        built.append(contentsOf: milestonePages)
+
+        if case .note(let context) = subject {
+            built.append(.note(context))
+        }
+
+        pages = built
+        pageIndex = built.firstIndex(of: subject) ?? 0
+    }
+
+    /// Horizontal swipe anywhere on the viewfinder steps through the
+    /// overlay pages (wrapping at the ends). Never fires mid-recording
+    /// or while a shutter press is armed, and vertical drags pass.
+    private var overlayCarouselGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard pages.count > 1, !isRecording, pressTimerTask == nil, result == nil else { return }
+                let width = value.translation.width
+                guard abs(width) > 48, abs(width) > abs(value.translation.height) else { return }
+                let step = width < 0 ? 1 : -1
+                let next = (pageIndex + step + pages.count) % pages.count
+                UISelectionFeedbackGenerator().selectionChanged()
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    pageIndex = next
+                }
+            }
+    }
+
+    /// Dots + the active overlay's name, floating above the shutter.
+    private var overlayIndicator: some View {
+        VStack(spacing: 7) {
+            HStack(spacing: 5) {
+                ForEach(pages.indices, id: \.self) { idx in
+                    Circle()
+                        .fill(Color.white.opacity(idx == pageIndex ? 0.95 : 0.35))
+                        .frame(width: idx == pageIndex ? 6 : 5, height: idx == pageIndex ? 6 : 5)
+                }
+            }
+            Text(overlayLabel)
+                .font(.sans(12, weight: .semibold))
+                .tracking(0.4)
+                .foregroundStyle(Color.white.opacity(0.92))
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color.black.opacity(0.35)))
+        }
+        .animation(.easeInOut(duration: 0.2), value: pageIndex)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Overlay: \(overlayLabel)")
+        .accessibilityHint("Swipe left or right on the viewfinder to change the overlay")
     }
 
     // MARK: - Top bar
@@ -255,6 +365,11 @@ struct ShareCameraView: View {
 
     private var bottomControls: some View {
         VStack(spacing: 14) {
+            if pages.count > 1 && !isRecording {
+                overlayIndicator
+                    .transition(.opacity)
+            }
+
             shutterRow
 
             // First-use gesture hint — replaces the old mode toggle.

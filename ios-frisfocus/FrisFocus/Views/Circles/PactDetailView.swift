@@ -257,14 +257,8 @@ struct PactDetailView: View {
     }
 
     private func partnerDisc(_ friend: Friend) -> some View {
-        ZStack {
-            Circle().fill(Color(hex: friend.accentColorHex))
-            Text(friend.initials)
-                .font(.sans(11, weight: .semibold))
-                .foregroundStyle(Theme.textCream)
-        }
-        .frame(width: 28, height: 28)
-        .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.6), lineWidth: 1))
+        FriendAvatarView(friend: friend, size: 28)
+            .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.6), lineWidth: 1))
     }
 
     // MARK: - Anti-competition line

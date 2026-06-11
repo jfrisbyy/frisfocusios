@@ -13,6 +13,9 @@ import Foundation
 
 /// What the share camera is composing over.
 enum ShareCardSubject: Equatable {
+    /// No overlay at all — a clean viewfinder. Outside shares still
+    /// carry the attribution watermark; in-app sends stay fully clean.
+    case blank
     case day(ShareDayContext)
     case milestone(ShareMilestoneContext)
     /// A capture headed for the journal — minimal overlay (date plus a
@@ -23,6 +26,7 @@ enum ShareCardSubject: Equatable {
 /// A subject plus its overlay options — everything the preview and the
 /// renderer need to draw the exact card the viewfinder showed.
 enum ShareCardComposition: Equatable {
+    case blank
     case day(ShareDayContext, ShareOverlayOptions)
     case milestone(ShareMilestoneContext, MilestoneShareOptions)
     case note(ShareNoteContext)
