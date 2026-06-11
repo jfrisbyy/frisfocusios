@@ -75,15 +75,19 @@ private nonisolated struct CircleRow: Codable, Sendable {
     let collectiveUnit: String?
     let collectiveTarget: Double?
     let createdAt: String?
+    let visibility: String?
+    let joinRule: String?
+    let description: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, type
+        case id, name, type, visibility, description
         case ownerId = "owner_id"
         case timeframeKind = "timeframe_kind"
         case endDate = "end_date"
         case collectiveUnit = "collective_unit"
         case collectiveTarget = "collective_target"
         case createdAt = "created_at"
+        case joinRule = "join_rule"
     }
 }
 
@@ -146,14 +150,18 @@ private nonisolated struct CircleInsert: Encodable, Sendable {
     let endDate: String?
     let collectiveUnit: String?
     let collectiveTarget: Double?
+    let visibility: String
+    let joinRule: String
+    let description: String?
 
     enum CodingKeys: String, CodingKey {
-        case name, type
+        case name, type, visibility, description
         case ownerId = "owner_id"
         case timeframeKind = "timeframe_kind"
         case endDate = "end_date"
         case collectiveUnit = "collective_unit"
         case collectiveTarget = "collective_target"
+        case joinRule = "join_rule"
     }
 }
 
@@ -265,6 +273,82 @@ private nonisolated struct InvitationStatusUpdate: Encodable, Sendable {
     }
 }
 
+/// Owner-side edit of a circle's sharing posture: private/public, the
+/// join rule for public circles, and the short directory description.
+private nonisolated struct CircleSharingUpdate: Encodable, Sendable {
+    let visibility: String
+    let joinRule: String
+    let description: String?
+
+    enum CodingKeys: String, CodingKey {
+        case visibility, description
+        case joinRule = "join_rule"
+    }
+}
+
+private nonisolated struct JoinRequestInsert: Encodable, Sendable {
+    let circleId: String
+    let requesterId: String
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case circleId = "circle_id"
+        case requesterId = "requester_id"
+    }
+}
+
+private nonisolated struct JoinRequestRow: Codable, Sendable {
+    let id: UUID
+    let circleId: UUID
+    let requesterId: String
+    let status: String
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status
+        case circleId = "circle_id"
+        case requesterId = "requester_id"
+        case createdAt = "created_at"
+    }
+}
+
+private nonisolated struct DiscoverParams: Encodable, Sendable {
+    let search: String?
+}
+
+/// One row of the public-circles directory, returned by the
+/// `discover_public_circles` RPC. Carries only the circle's headline
+/// (name, shape, goal, member count) — never member identities or
+/// anyone's personal activity.
+nonisolated struct DiscoverableCircle: Codable, Sendable, Identifiable, Hashable {
+    let id: UUID
+    let name: String
+    let type: String
+    let timeframeKind: String
+    let endDate: String?
+    let collectiveUnit: String?
+    let collectiveTarget: Double?
+    let description: String?
+    let joinRule: String
+    let memberCount: Int
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, description
+        case timeframeKind = "timeframe_kind"
+        case endDate = "end_date"
+        case collectiveUnit = "collective_unit"
+        case collectiveTarget = "collective_target"
+        case joinRule = "join_rule"
+        case memberCount = "member_count"
+        case createdAt = "created_at"
+    }
+
+    var kind: CircleKind { CircleKind(rawValue: type) ?? .parallel }
+    var isOpenJoin: Bool { joinRule != "approval" }
+}
+
 // MARK: - Assembled view model
 
 /// One circle plus everything needed to render it: resolved member
@@ -281,11 +365,20 @@ struct SharedCircle: Identifiable {
     let createdAt: Date?
     let collectiveUnit: String?
     let collectiveTarget: Double?
+    /// 'private' (invite only, the default) or 'public' (discoverable).
+    var visibility: String = "private"
+    /// For public circles: 'open' (anyone joins instantly) or 'approval'.
+    var joinRule: String = "open"
+    /// The owner-written blurb shown in the public directory.
+    var descriptionText: String?
     let members: [RemoteProfile]
     let roles: [String: String]
     var tasks: [CircleTaskRow]
     var completions: [CircleCompletionRow]
     var contributions: [CircleContributionRow]
+
+    var isPublic: Bool { visibility == "public" }
+    var requiresApproval: Bool { isPublic && joinRule == "approval" }
 
     func profile(_ userId: String) -> RemoteProfile? { members.first { $0.id == userId } }
 
@@ -326,6 +419,15 @@ struct SharedCircle: Identifiable {
     }
 }
 
+/// A pending ask to join a public approval-required circle, with the
+/// requester's profile resolved so the owner can act on it.
+struct CircleJoinRequest: Identifiable {
+    let id: UUID
+    let circleId: UUID
+    let requester: RemoteProfile
+    let createdAt: Date?
+}
+
 /// A pending invitation to join a circle, with the circle's headline
 /// details and the inviter's profile resolved for display.
 struct CircleInvitation: Identifiable {
@@ -345,6 +447,14 @@ struct CircleInvitation: Identifiable {
 final class CircleGraphService {
     var circles: [SharedCircle] = []
     var invitations: [CircleInvitation] = []
+    /// Public circles the user isn't in — the Discover directory.
+    var discovered: [DiscoverableCircle] = []
+    var isDiscovering = false
+    /// Circle ids the user has a pending join request for, so Discover
+    /// can render "Requested" instead of the request button.
+    var myPendingRequestCircleIds: Set<UUID> = []
+    /// Pending join requests for the circle currently being managed.
+    var joinRequests: [CircleJoinRequest] = []
     var isLoading = false
     var isWorking = false
     var errorMessage: String?
@@ -400,7 +510,7 @@ final class CircleGraphService {
 
             async let circleRowsReq: [CircleRow] = supabase
                 .from("circles")
-                .select("id, owner_id, name, type, timeframe_kind, end_date, collective_unit, collective_target, created_at")
+                .select("id, owner_id, name, type, timeframe_kind, end_date, collective_unit, collective_target, created_at, visibility, join_rule, description")
                 .in("id", values: circleIds)
                 .execute().value
             async let memberRowsReq: [CircleMemberRow] = supabase
@@ -450,6 +560,9 @@ final class CircleGraphService {
                     createdAt: Self.parseDate(row.createdAt),
                     collectiveUnit: row.collectiveUnit,
                     collectiveTarget: row.collectiveTarget,
+                    visibility: row.visibility ?? "private",
+                    joinRule: row.joinRule ?? "open",
+                    descriptionText: row.description,
                     members: memberProfiles.sorted {
                         $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
                     },
@@ -479,7 +592,10 @@ final class CircleGraphService {
         collectiveUnit: String?,
         collectiveTarget: Double?,
         memberIds: [String],
-        myUserId: String
+        myUserId: String,
+        visibility: String = "private",
+        joinRule: String = "open",
+        description: String? = nil
     ) async -> Bool {
         isWorking = true
         defer { isWorking = false }
@@ -494,7 +610,10 @@ final class CircleGraphService {
                     timeframeKind: isOngoing ? "ongoing" : "time_boxed",
                     endDate: isOngoing ? nil : endDate.map(Self.isoString),
                     collectiveUnit: kind == .collective ? collectiveUnit?.trimmedNonEmpty : nil,
-                    collectiveTarget: kind == .collective ? collectiveTarget : nil
+                    collectiveTarget: kind == .collective ? collectiveTarget : nil,
+                    visibility: visibility,
+                    joinRule: joinRule,
+                    description: description?.trimmedNonEmpty
                 ))
                 .select("id, owner_id, name, type, timeframe_kind, end_date, collective_unit, collective_target")
                 .single()
@@ -795,6 +914,177 @@ final class CircleGraphService {
             invitations.removeAll { $0.id == invitation.id }
         } catch {
             fail("Couldn't decline the invite.", error)
+        }
+    }
+
+    // MARK: Public circles (Discover)
+
+    /// Load the public directory — circles the user is NOT in, with
+    /// member counts resolved server-side. `search` filters by name or
+    /// description.
+    func loadDiscover(search: String? = nil, myUserId: String) async {
+        isDiscovering = true
+        defer { isDiscovering = false }
+        do {
+            let rows: [DiscoverableCircle] = try await supabase
+                .rpc("discover_public_circles", params: DiscoverParams(search: search?.trimmedNonEmpty))
+                .execute()
+                .value
+            discovered = rows
+            await loadMyPendingRequests(myUserId: myUserId)
+        } catch {
+            fail("Couldn't load public circles.", error)
+        }
+    }
+
+    /// Circle ids with a pending join request from the signed-in user.
+    func loadMyPendingRequests(myUserId: String) async {
+        do {
+            let rows: [JoinRequestRow] = try await supabase
+                .from("circle_join_requests")
+                .select("id, circle_id, requester_id, status, created_at")
+                .eq("requester_id", value: myUserId)
+                .eq("status", value: "pending")
+                .execute()
+                .value
+            myPendingRequestCircleIds = Set(rows.map { $0.circleId })
+        } catch {
+            print("[CircleGraph] loadMyPendingRequests failed: \(error)")
+        }
+    }
+
+    /// Join an open public circle instantly (RLS verifies the circle is
+    /// public + open). On success the circle lands in `circles`.
+    @discardableResult
+    func joinPublicCircle(circleId: UUID, myUserId: String) async -> Bool {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await supabase
+                .from("circle_members")
+                .insert(CircleMemberInsert(circleId: circleId.uuidString, userId: myUserId, role: "member"))
+                .execute()
+            discovered.removeAll { $0.id == circleId }
+            await load(myUserId: myUserId)
+            return true
+        } catch {
+            fail("Couldn't join the circle.", error)
+            return false
+        }
+    }
+
+    /// Ask to join an approval-required public circle. Idempotent — a
+    /// re-request resets any earlier declined ask back to pending.
+    @discardableResult
+    func requestToJoin(circleId: UUID, myUserId: String) async -> Bool {
+        do {
+            try await supabase
+                .from("circle_join_requests")
+                .upsert(
+                    JoinRequestInsert(circleId: circleId.uuidString, requesterId: myUserId, status: "pending"),
+                    onConflict: "circle_id,requester_id"
+                )
+                .execute()
+            myPendingRequestCircleIds.insert(circleId)
+            return true
+        } catch {
+            fail("Couldn't send your request.", error)
+            return false
+        }
+    }
+
+    /// Pending join requests for a circle, with requester profiles
+    /// resolved (owner/admin only — RLS scopes the read).
+    func loadJoinRequests(circleId: UUID) async {
+        do {
+            let rows: [JoinRequestRow] = try await supabase
+                .from("circle_join_requests")
+                .select("id, circle_id, requester_id, status, created_at")
+                .eq("circle_id", value: circleId.uuidString)
+                .eq("status", value: "pending")
+                .order("created_at", ascending: true)
+                .execute()
+                .value
+            guard !rows.isEmpty else {
+                joinRequests.removeAll { $0.circleId == circleId }
+                return
+            }
+            let profiles = try await fetchProfiles(ids: Array(Set(rows.map { $0.requesterId })))
+            let resolved: [CircleJoinRequest] = rows.compactMap { row in
+                guard let profile = profiles[row.requesterId] else { return nil }
+                return CircleJoinRequest(
+                    id: row.id,
+                    circleId: row.circleId,
+                    requester: profile,
+                    createdAt: Self.parseDate(row.createdAt)
+                )
+            }
+            joinRequests.removeAll { $0.circleId == circleId }
+            joinRequests.append(contentsOf: resolved)
+        } catch {
+            print("[CircleGraph] loadJoinRequests failed: \(error)")
+        }
+    }
+
+    /// Approve a join request: add them as a member, stamp the request.
+    func approveJoinRequest(_ request: CircleJoinRequest, myUserId: String) async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await supabase
+                .from("circle_members")
+                .insert(CircleMemberInsert(circleId: request.circleId.uuidString, userId: request.requester.id, role: "member"))
+                .execute()
+            try await supabase
+                .from("circle_join_requests")
+                .update(InvitationStatusUpdate(status: "approved", respondedAt: Self.isoString(Date())))
+                .eq("id", value: request.id.uuidString)
+                .execute()
+            joinRequests.removeAll { $0.id == request.id }
+            await load(myUserId: myUserId)
+        } catch {
+            fail("Couldn't approve the request.", error)
+        }
+    }
+
+    /// Decline a join request — the asker can re-request later.
+    func declineJoinRequest(_ request: CircleJoinRequest) async {
+        do {
+            try await supabase
+                .from("circle_join_requests")
+                .update(InvitationStatusUpdate(status: "declined", respondedAt: Self.isoString(Date())))
+                .eq("id", value: request.id.uuidString)
+                .execute()
+            joinRequests.removeAll { $0.id == request.id }
+        } catch {
+            fail("Couldn't decline the request.", error)
+        }
+    }
+
+    /// Owner-side sharing edit: flip private/public, set the join rule,
+    /// and write the directory description.
+    func updateCircleSharing(
+        circleId: UUID,
+        visibility: String,
+        joinRule: String,
+        description: String?,
+        myUserId: String
+    ) async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await supabase
+                .from("circles")
+                .update(CircleSharingUpdate(
+                    visibility: visibility,
+                    joinRule: joinRule,
+                    description: description?.trimmedNonEmpty
+                ))
+                .eq("id", value: circleId.uuidString)
+                .execute()
+            await load(myUserId: myUserId)
+        } catch {
+            fail("Couldn't update sharing.", error)
         }
     }
 

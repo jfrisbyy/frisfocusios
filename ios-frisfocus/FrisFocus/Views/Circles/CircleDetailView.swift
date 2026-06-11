@@ -372,7 +372,7 @@ struct CircleDetailView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left")
                         .font(.sans(15, weight: .medium))
-                    Text("People")
+                    Text("Friends")
                         .font(.sans(14, weight: .regular))
                 }
                 .foregroundStyle(Theme.textCream)
@@ -381,7 +381,7 @@ struct CircleDetailView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Back to People")
+            .accessibilityLabel("Back to Friends")
 
             Spacer()
 

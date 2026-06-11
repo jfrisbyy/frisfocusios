@@ -262,14 +262,14 @@ struct FriendDetailView: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left").font(.sans(15, weight: .medium))
-                    Text("People").font(.sans(14, weight: .regular))
+                    Text("Friends").font(.sans(14, weight: .regular))
                 }
                 .foregroundStyle(Theme.textCream)
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Back to People")
+            .accessibilityLabel("Back to Friends")
 
             Spacer()
 

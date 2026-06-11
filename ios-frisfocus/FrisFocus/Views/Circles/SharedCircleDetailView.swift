@@ -38,6 +38,7 @@ struct SharedCircleDetailView: View {
     @State private var showDeleteConfirm = false
     @State private var showInvite = false
     @State private var showOurStory = false
+    @State private var showSharingSheet = false
     @State private var showNumberForm = false
     @State private var numberUnit = ""
     @State private var numberTarget = ""
@@ -71,6 +72,7 @@ struct SharedCircleDetailView: View {
         .task {
             service.startRealtime(myUserId: myUserId)
             await friendService.load(myUserId: myUserId)
+            await service.loadJoinRequests(circleId: circleId)
         }
         .onChange(of: service.circles.map(\.id)) { _, ids in
             if !ids.contains(circleId) { dismiss() }
@@ -133,6 +135,26 @@ struct SharedCircleDetailView: View {
                 )
             }
         }
+        .sheet(isPresented: $showSharingSheet) {
+            if let circle {
+                CircleSharingSheet(
+                    circle: circle,
+                    onSave: { visibility, joinRule, description in
+                        Task {
+                            await service.updateCircleSharing(
+                                circleId: circleId,
+                                visibility: visibility,
+                                joinRule: joinRule,
+                                description: description,
+                                myUserId: myUserId
+                            )
+                        }
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
     }
 
     // MARK: - Scaffold
@@ -156,9 +178,13 @@ struct SharedCircleDetailView: View {
                         collectiveBody(circle)
                     }
                     if canManage {
+                        joinRequestsSection(circle)
                         sharedGoalsSection(circle)
                     }
                     goldenHourSection(circle)
+                    if canManage {
+                        visibilitySection(circle)
+                    }
                     membershipFooter(circle)
                 }
                 .padding(.horizontal, Theme.pageHorizontalPadding)
@@ -169,7 +195,10 @@ struct SharedCircleDetailView: View {
         .background(Theme.warmWheat)
         .ignoresSafeArea(edges: .top)
         .scrollDismissesKeyboard(.interactively)
-        .refreshable { await service.load(myUserId: myUserId) }
+        .refreshable {
+            await service.load(myUserId: myUserId)
+            await service.loadJoinRequests(circleId: circleId)
+        }
     }
 
     private var missing: some View {
@@ -1138,6 +1167,146 @@ struct SharedCircleDetailView: View {
         withAnimation(.easeInOut(duration: 0.18)) { showNumberForm = false }
         numberUnit = ""
         numberTarget = ""
+    }
+
+    // MARK: - Join requests (owner/admin)
+
+    /// Pending asks from Discover for approval-required circles. Only
+    /// rendered for owner/admin (RLS scopes the data the same way).
+    @ViewBuilder
+    private func joinRequestsSection(_ circle: SharedCircle) -> some View {
+        let requests = service.joinRequests.filter { $0.circleId == circle.id }
+        if !requests.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    sectionEyebrow("WANT TO JOIN")
+                    Text("\(requests.count)")
+                        .font(.sans(10, weight: .bold))
+                        .foregroundStyle(Theme.textCream)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Theme.sunWarm))
+                }
+
+                VStack(spacing: 8) {
+                    ForEach(requests) { request in
+                        joinRequestRow(request)
+                    }
+                }
+            }
+        }
+    }
+
+    private func joinRequestRow(_ request: CircleJoinRequest) -> some View {
+        HStack(spacing: 12) {
+            RemoteCircleAvatar(profile: request.requester, size: 38)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(request.requester.displayName)
+                    .font(.sans(14.5, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text("Asked to join")
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Task { await service.declineJoinRequest(request) }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.textPrimary.opacity(0.06)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Decline \(request.requester.displayName)")
+
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                Task { await service.approveJoinRequest(request, myUserId: myUserId) }
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.sans(13, weight: .bold))
+                    .foregroundStyle(Theme.textCream)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.alertGreen))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(service.isWorking)
+            .accessibilityLabel("Approve \(request.requester.displayName)")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .fill(Color.white.opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .strokeBorder(Theme.sunWarm.opacity(0.35), lineWidth: 0.8)
+        )
+    }
+
+    // MARK: - Visibility (owner/admin)
+
+    /// Compact readout of the circle's sharing posture with an edit
+    /// affordance — private stays the calm default; public shows the
+    /// join rule so the owner always knows what's open.
+    private func visibilitySection(_ circle: SharedCircle) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showSharingSheet = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: circle.isPublic ? "globe" : "lock.fill")
+                    .font(.sans(14, weight: .semibold))
+                    .foregroundStyle(circle.isPublic ? Theme.sunShadow : Theme.textPrimary.opacity(0.55))
+                    .frame(width: 36, height: 36)
+                    .background(
+                        Circle().fill(circle.isPublic ? Theme.sunWarm.opacity(0.18) : Theme.textPrimary.opacity(0.05))
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(circle.isPublic ? "Public circle" : "Private circle")
+                        .font(.sans(14.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(circle.isPublic
+                         ? (circle.requiresApproval
+                            ? "In Discover · requests come to you"
+                            : "In Discover · anyone can join")
+                         : "Invite only — not in Discover")
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+
+                Spacer()
+
+                Text("Edit")
+                    .font(.sans(13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                Image(systemName: "chevron.right")
+                    .font(.sans(11, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.35))
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(circle.isPublic ? "Public circle. Edit sharing." : "Private circle. Edit sharing.")
     }
 
     // MARK: - Footer (leave / delete)

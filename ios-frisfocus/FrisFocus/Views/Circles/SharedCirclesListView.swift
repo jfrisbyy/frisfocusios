@@ -62,6 +62,7 @@ struct SharedCirclesListView: View {
                     intro
                     if !service.invitations.isEmpty { invitationsSection }
                     startButton
+                    discoverLink
 
                     if service.isLoading && service.circles.isEmpty {
                         ProgressView()
@@ -220,6 +221,31 @@ struct SharedCirclesListView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+    }
+
+    /// Quiet secondary entry into the public-circles directory.
+    private var discoverLink: some View {
+        NavigationLink {
+            DiscoverCirclesView()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.system(size: 14, weight: .medium))
+                Text("Discover public circles")
+                    .font(.sans(14, weight: .medium))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .opacity(0.5)
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(0.7))
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .background(Theme.paperCream.opacity(0.7))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Discover public circles")
     }
 
     // MARK: - Empty / signed-out states

@@ -243,6 +243,48 @@ export type Database = {
           },
         ]
       }
+      circle_join_requests: {
+        Row: {
+          circle_id: string
+          created_at: string
+          id: string
+          requester_id: string
+          responded_at: string | null
+          status: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          id?: string
+          requester_id: string
+          responded_at?: string | null
+          status?: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          id?: string
+          requester_id?: string
+          responded_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_join_requests_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_join_requests_requester_id_fkey"
+            columns: ["requester_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_members: {
         Row: {
           circle_id: string
@@ -371,34 +413,43 @@ export type Database = {
           collective_target: number | null
           collective_unit: string | null
           created_at: string
+          description: string | null
           end_date: string | null
           id: string
+          join_rule: string
           name: string
           owner_id: string
           timeframe_kind: string
           type: string
+          visibility: string
         }
         Insert: {
           collective_target?: number | null
           collective_unit?: string | null
           created_at?: string
+          description?: string | null
           end_date?: string | null
           id?: string
+          join_rule?: string
           name: string
           owner_id: string
           timeframe_kind?: string
           type?: string
+          visibility?: string
         }
         Update: {
           collective_target?: number | null
           collective_unit?: string | null
           created_at?: string
+          description?: string | null
           end_date?: string | null
           id?: string
+          join_rule?: string
           name?: string
           owner_id?: string
           timeframe_kind?: string
           type?: string
+          visibility?: string
         }
         Relationships: [
           {
@@ -825,6 +876,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      discover_public_circles: {
+        Args: { search?: string }
+        Returns: {
+          collective_target: number
+          collective_unit: string
+          created_at: string
+          description: string
+          end_date: string
+          id: string
+          join_rule: string
+          member_count: number
+          name: string
+          timeframe_kind: string
+          type: string
+        }[]
+      }
       esengo_has_product: { Args: { p_product: string }; Returns: boolean }
       is_blocked: { Args: { other_id: string }; Returns: boolean }
       is_circle_member: { Args: { p_circle_id: string }; Returns: boolean }

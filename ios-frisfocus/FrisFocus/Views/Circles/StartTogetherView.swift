@@ -16,6 +16,8 @@ import UIKit
 struct StartTogetherView: View {
     let onMakePact: () -> Void
     let onStartCircle: () -> Void
+    /// Browse public circles anyone can join.
+    var onDiscover: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -48,6 +50,16 @@ struct StartTogetherView: View {
                     blurb: "A shared goal with a few friends — run the same list, or build toward one number together.",
                     action: { tap(onStartCircle) }
                 )
+                if let onDiscover {
+                    optionCard(
+                        tint: Theme.sunShadow,
+                        icon: "sparkle.magnifyingglass",
+                        eyebrow: "OPEN TO ANYONE",
+                        title: "Discover public circles",
+                        blurb: "Browse circles people have opened up — join instantly or ask to join.",
+                        action: { tap(onDiscover) }
+                    )
+                }
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
             .padding(.top, 20)

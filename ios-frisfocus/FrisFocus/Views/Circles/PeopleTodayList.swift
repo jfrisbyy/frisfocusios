@@ -2,8 +2,10 @@
 //  PeopleTodayList.swift
 //  FrisFocus
 //
-//  The "TODAY" list on the People page — every friend as a hairline-
-//  divided row directly on the parchment. No cards. Privacy-first:
+//  The "TODAY" list on the Friends page — every friend as a hairline-
+//  divided row directly on the parchment. No cards. Privacy-first.
+//  Collapsed by default (the first few friends + a quiet "Show all"
+//  row) so friends and circles share one glance; expandable in place.
 //
 //   • Ring avatar (50 pt) — fills proportionally to how close they are
 //     to their daily goal. Only the RATIO is ever shared. Goal reached
@@ -30,6 +32,30 @@ struct PeopleTodayList: View {
     /// Open the 1:1 proof/message thread with this friend.
     let onActionTap: (Friend) -> Void
 
+    /// Collapsed by default — the page should show stories, a handful
+    /// of friends, and circles in one glance.
+    @State private var showAll: Bool = false
+
+    /// How many rows the collapsed list shows. Friends with something
+    /// waiting (unread proof/note) are floated into view first so the
+    /// collapse never hides a pending interaction.
+    private let collapsedCount: Int = 4
+
+    private var orderedFriends: [Friend] {
+        store.friends.sorted { a, b in
+            let aUnread = store.unreadCount(fromFriendId: a.id) > 0
+            let bUnread = store.unreadCount(fromFriendId: b.id) > 0
+            if aUnread != bUnread { return aUnread }
+            return false
+        }
+    }
+
+    private var visibleFriends: [Friend] {
+        showAll ? orderedFriends : Array(orderedFriends.prefix(collapsedCount))
+    }
+
+    private var hiddenCount: Int { max(0, store.friends.count - collapsedCount) }
+
     var body: some View {
         VStack(spacing: 0) {
             labelRow
@@ -37,7 +63,7 @@ struct PeopleTodayList: View {
                 .padding(.top, 18)
                 .padding(.bottom, 4)
 
-            ForEach(Array(store.friends.enumerated()), id: \.element.id) { idx, friend in
+            ForEach(Array(visibleFriends.enumerated()), id: \.element.id) { idx, friend in
                 if idx > 0 {
                     hairline
                 }
@@ -47,7 +73,36 @@ struct PeopleTodayList: View {
                     onActionTap: { onActionTap(friend) }
                 )
             }
+
+            if hiddenCount > 0 {
+                hairline
+                showAllRow
+            }
         }
+    }
+
+    /// The quiet expand/collapse affordance closing the list.
+    private var showAllRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeInOut(duration: 0.28)) {
+                showAll.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(showAll ? "Show fewer" : "Show all \(store.friends.count) friends")
+                    .font(.sans(13, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.sans(10, weight: .semibold))
+                    .rotationEffect(.degrees(showAll ? 180 : 0))
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(0.55))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(showAll ? "Show fewer friends" : "Show all \(store.friends.count) friends")
     }
 
     private var labelRow: some View {

@@ -2,11 +2,11 @@
 //  CirclesView.swift
 //  FrisFocus
 //
-//  The "People" page — the social room reached from the sundial.
-//  ("Circles" now refers exclusively to the groups feature inside it.)
+//  The "Friends" page — the social room reached from the sundial.
+//  ("Circles" refers exclusively to the groups feature inside it.)
 //
 //  Structure, top to bottom:
-//   • Slim header — "People" in the serif face, send icon + the
+//   • Slim header — "Friends" in the serif face, send icon + the
 //     user's gold-ringed avatar at right. No hero block.
 //   • Story row — previews fill the ring (thumbnail discs, bright
 //     season ring unwatched / thin grey watched / ring-less plain).
@@ -17,7 +17,7 @@
 //   • "Your circles" — the groups feature, unchanged mechanics.
 //
 //  The page sits on warm parchment with a whisper of a vertical
-//  gradient (lighter at top). The side rail snaps between TODAY and
+//  gradient (lighter at top). The side rail snaps between FRIENDS and
 //  CIRCLES; the Sundial paints `.circles` active here.
 //
 
@@ -43,6 +43,9 @@ struct CirclesView: View {
     @State private var showStartTogether: Bool = false
     @State private var pendingCreate: CreateKind? = nil
     @State private var activeCreate: CreateKind? = nil
+    /// Set while the start/join chooser dismisses so Discover pushes
+    /// only after the sheet has fully closed.
+    @State private var pendingDiscover: Bool = false
     @State private var showStoryCapture: Bool = false
     @State private var showMyStory: Bool = false
     @State private var showDirect: Bool = false
@@ -65,9 +68,11 @@ struct CirclesView: View {
     @Namespace private var storyZoom
 
     /// Anchor ids for the section headers; the rail scrolls to these.
-    private let friendsAnchor = "people.today"
-    private let circlesAnchor = "people.circles"
-    private let scrollSpace = "peopleScroll"
+    /// The friends anchor sits on the page header so FRIENDS jumps all
+    /// the way to the very top (header + stories), not just the list.
+    private let friendsAnchor = "friends.top"
+    private let circlesAnchor = "friends.circles"
+    private let scrollSpace = "friendsScroll"
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -79,6 +84,8 @@ struct CirclesView: View {
                     VStack(spacing: 0) {
                         header
                             .padding(.top, 8)
+                            .id(friendsAnchor)
+                            .background(sectionTopTracker(.friends))
 
                         PeopleStoryRow(
                             userInitials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
@@ -92,8 +99,6 @@ struct CirclesView: View {
                             onAddFriendTap: { handleAddFriendTap() }
                         )
                         .padding(.top, 18)
-                        .id(friendsAnchor)
-                        .background(sectionTopTracker(.friends))
 
                         hairline
                             .padding(.top, 16)
@@ -110,7 +115,8 @@ struct CirclesView: View {
                             onCircleTap: { circle in handleCircleTap(circle) },
                             onStoryStripTap: { circle in handleCircleStoryTap(circle) },
                             onStartJoinTap: { handleStartJoinTap() },
-                            onPactTap: { pact in handlePactTap(pact) }
+                            onPactTap: { pact in handlePactTap(pact) },
+                            onDiscoverTap: { handleDiscoverTap() }
                         )
                         .id(circlesAnchor)
                         .background(sectionTopTracker(.circles))
@@ -212,6 +218,9 @@ struct CirclesView: View {
                 if let kind = pendingCreate {
                     pendingCreate = nil
                     activeCreate = kind
+                } else if pendingDiscover {
+                    pendingDiscover = false
+                    route = .discoverCircles
                 }
             }) {
                 StartTogetherView(
@@ -222,9 +231,13 @@ struct CirclesView: View {
                     onStartCircle: {
                         pendingCreate = .circle
                         showStartTogether = false
+                    },
+                    onDiscover: {
+                        pendingDiscover = true
+                        showStartTogether = false
                     }
                 )
-                .presentationDetents([.height(340)])
+                .presentationDetents([.height(440)])
                 .presentationDragIndicator(.visible)
             }
             .fullScreenCover(item: $activeCreate) { kind in
@@ -253,11 +266,11 @@ struct CirclesView: View {
 
     // MARK: - Header
 
-    /// One airy line: "People" in the serif face, send icon + the
+    /// One airy line: "Friends" in the serif face, send icon + the
     /// user's avatar at right. No hero, no eyebrow.
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
-            Text("People")
+            Text("Friends")
                 .font(.serif(30, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
 
@@ -357,7 +370,7 @@ struct CirclesView: View {
         route = hasStories ? .friendStory(friend.id) : .friendDetail(friend.id)
     }
 
-    /// TODAY rows always open the friend detail — story viewing lives
+    /// Friend rows always open the friend detail — story viewing lives
     /// in the story row, the detail is the relationship hub.
     private func handleRowTap(_ friend: Friend) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -415,6 +428,11 @@ struct CirclesView: View {
         showStartTogether = true
     }
 
+    private func handleDiscoverTap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        route = .discoverCircles
+    }
+
     @ViewBuilder
     private func destination(for route: CirclesRoute) -> some View {
         let _ = route
@@ -434,7 +452,7 @@ struct CirclesView: View {
                 StoryPlayerView(mode: .friend(friend), onShowFriendProfile: { tapped in
                     // Pop the player, then push the friend's full
                     // profile onto the same nav stack so back lands
-                    // on the People page rather than the closed
+                    // on the Friends page rather than the closed
                     // story.
                     self.route = nil
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -483,6 +501,9 @@ struct CirclesView: View {
                     eyebrow: "PACT"
                 )
             }
+        case .discoverCircles:
+            DiscoverCirclesView()
+                .environment(auth)
         }
     }
 
@@ -556,7 +577,7 @@ struct CirclesView: View {
 
 // MARK: - Routes
 
-/// Navigation destinations reachable from the People page. Each case
+/// Navigation destinations reachable from the Friends page. Each case
 /// stores the UUID of the underlying record so the destination can
 /// re-fetch the live model on render rather than capturing stale data.
 enum CirclesRoute: Hashable {
@@ -565,6 +586,7 @@ enum CirclesRoute: Hashable {
     case circleDetail(UUID)
     case circleStory(UUID)
     case pactDetail(UUID)
+    case discoverCircles
 }
 
 /// Which "start something together" flow to present after the chooser

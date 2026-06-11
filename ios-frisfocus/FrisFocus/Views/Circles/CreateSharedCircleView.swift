@@ -36,6 +36,12 @@ struct CreateSharedCircleView: View {
     @State private var timeframe: TimeframeChoice = .thirtyDays
     @State private var isCreating = false
 
+    // Visibility — private (invite only) is the default; public circles
+    // land in the Discover directory with an owner-chosen join rule.
+    @State private var isPublic: Bool = false
+    @State private var requiresApproval: Bool = false
+    @State private var descriptionText: String = ""
+
     enum TimeframeChoice: Hashable, CaseIterable, Identifiable {
         case ongoing, twoWeeks, thirtyDays, sixtyDays
         var id: Self { self }
@@ -71,7 +77,9 @@ struct CreateSharedCircleView: View {
 
     private var canCreate: Bool {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !selectedFriendIds.isEmpty else { return false }
+              // A public circle can start with just the owner — members
+              // arrive through Discover. Private circles need invitees.
+              (!selectedFriendIds.isEmpty || isPublic) else { return false }
         switch kind {
         case .witness:
             return true
@@ -102,6 +110,7 @@ struct CreateSharedCircleView: View {
                         targetSection
                     }
                     durationSection
+                    visibilitySection
                     createSection
                 }
                 .padding(.horizontal, Theme.pageHorizontalPadding)
@@ -444,6 +453,122 @@ struct CreateSharedCircleView: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+    // MARK: - Visibility
+
+    private var visibilitySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionEyebrow("WHO CAN FIND IT")
+            VStack(spacing: 8) {
+                visibilityRow(
+                    isPublicChoice: false,
+                    icon: "lock.fill",
+                    title: "Private",
+                    blurb: "Invite only — the circle never appears in Discover."
+                )
+                visibilityRow(
+                    isPublicChoice: true,
+                    icon: "globe",
+                    title: "Public",
+                    blurb: "Anyone can find it in Discover and join."
+                )
+            }
+
+            if isPublic {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        joinRuleChip(approval: false, label: "Open — anyone joins")
+                        joinRuleChip(approval: true, label: "Approval — ask first")
+                    }
+
+                    TextField("A line about the circle (shown in Discover)", text: $descriptionText, axis: .vertical)
+                        .font(.sans(14, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary)
+                        .tint(Theme.textPrimary)
+                        .lineLimit(2...4)
+                        .padding(.vertical, 13)
+                        .padding(.horizontal, 14)
+                        .background(fieldBackground)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: isPublic)
+    }
+
+    private func visibilityRow(isPublicChoice: Bool, icon: String, title: String, blurb: String) -> some View {
+        let isSelected = isPublic == isPublicChoice
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeInOut(duration: 0.18)) { isPublic = isPublicChoice }
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .strokeBorder(
+                            isSelected ? Theme.sunShadow : Theme.textPrimary.opacity(0.3),
+                            lineWidth: isSelected ? 6 : 1.6
+                        )
+                        .frame(width: 22, height: 22)
+                }
+                .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Image(systemName: icon)
+                            .font(.sans(11, weight: .semibold))
+                            .foregroundStyle(isSelected ? Theme.sunShadow : Theme.textPrimary.opacity(0.45))
+                        Text(title)
+                            .font(.sans(15, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                    Text(blurb)
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.65))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? Theme.sunShadow.opacity(0.5) : Theme.textPrimary.opacity(0.08),
+                        lineWidth: isSelected ? 1.4 : 0.5
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func joinRuleChip(approval: Bool, label: String) -> some View {
+        let isSelected = requiresApproval == approval
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeInOut(duration: 0.18)) { requiresApproval = approval }
+        } label: {
+            Text(label)
+                .font(.sans(12.5, weight: isSelected ? .semibold : .regular))
+                .foregroundStyle(isSelected ? Theme.textCream : Theme.textPrimary.opacity(0.75))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(isSelected ? Theme.textPrimary : Theme.textPrimary.opacity(0.06))
+                )
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
     // MARK: - Create
 
     private var createSection: some View {
@@ -472,7 +597,9 @@ struct CreateSharedCircleView: View {
             .disabled(!canCreate || isCreating)
             .accessibilityLabel("Create the circle")
 
-            Text("You're the owner. The friends you pick get an invite to join — you can invite more anytime.")
+            Text(isPublic
+                 ? "You're the owner. The circle will appear in Discover — friends you pick still get a direct invite."
+                 : "You're the owner. The friends you pick get an invite to join — you can invite more anytime.")
                 .font(.serifItalic(13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 .multilineTextAlignment(.center)
@@ -520,7 +647,10 @@ struct CreateSharedCircleView: View {
             collectiveUnit: kind == .collective ? unitText : nil,
             collectiveTarget: kind == .collective ? targetValue : nil,
             memberIds: Array(selectedFriendIds),
-            myUserId: myUserId
+            myUserId: myUserId,
+            visibility: isPublic ? "public" : "private",
+            joinRule: (isPublic && requiresApproval) ? "approval" : "open",
+            description: isPublic ? descriptionText : nil
         )
         if ok { dismiss() }
     }

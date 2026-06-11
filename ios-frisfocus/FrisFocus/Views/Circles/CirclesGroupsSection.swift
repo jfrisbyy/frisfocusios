@@ -35,6 +35,8 @@ struct CirclesGroupsSection: View {
     let onStartJoinTap: () -> Void
     /// A pact is a circle of two — surfaced here alongside circles.
     var onPactTap: ((Pact) -> Void)? = nil
+    /// Open the public-circles directory.
+    var onDiscoverTap: (() -> Void)? = nil
 
     /// Active + pending pacts the user is in, shown as two-person
     /// circle cards in this same section.
@@ -111,6 +113,7 @@ struct CirclesGroupsSection: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                 startJoinRow
+                discoverRow
             }
         } else {
             VStack(spacing: 12) {
@@ -150,6 +153,8 @@ struct CirclesGroupsSection: View {
 
                 startJoinRow
                     .padding(.top, 4)
+
+                discoverRow
             }
         }
     }
@@ -178,6 +183,31 @@ struct CirclesGroupsSection: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Start a circle or join one")
+    }
+
+    /// Quiet text row into the public directory — deliberately lighter
+    /// than the dashed start/join row so it reads as a side door.
+    @ViewBuilder
+    private var discoverRow: some View {
+        if let onDiscoverTap {
+            Button(action: onDiscoverTap) {
+                HStack(spacing: 7) {
+                    Image(systemName: "sparkle.magnifyingglass")
+                        .font(.sans(12, weight: .medium))
+                    Text("Discover public circles")
+                        .font(.sans(13, weight: .regular))
+                    Image(systemName: "chevron.right")
+                        .font(.sans(10, weight: .semibold))
+                        .opacity(0.6)
+                }
+                .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Discover public circles")
+        }
     }
 }
 

@@ -271,8 +271,8 @@ private struct ProfileQuickCardOverlay: View {
     private var shortcuts: some View {
         HStack(spacing: 6) {
             shortcutTile(.editProfile, icon: "person.crop.circle", title: "Profile")
-            shortcutTile(.friends, icon: "person.2.fill", title: "Friends")
-            shortcutTile(.circles, icon: "circle.hexagongrid.fill", title: "People")
+            shortcutTile(.friends, icon: "person.2.fill", title: "Add")
+            shortcutTile(.circles, icon: "circle.hexagongrid.fill", title: "Friends")
             shortcutTile(.proofs, icon: "paperplane.fill", title: "Proofs", showDot: unreadCount > 0)
         }
         .padding(.vertical, 12)

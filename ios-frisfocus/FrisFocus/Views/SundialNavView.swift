@@ -584,7 +584,7 @@ struct SundialNavView: View {
         }
         .buttonStyle(.plain)
         .position(x: pt.x, y: pt.y)
-        .accessibilityLabel(circlesBadgeCount > 0 ? "People, \(circlesBadgeCount) unread" : "People")
+        .accessibilityLabel(circlesBadgeCount > 0 ? "Friends, \(circlesBadgeCount) unread" : "Friends")
         .accessibilityAddTraits(active == .circles ? .isSelected : [])
     }
 
