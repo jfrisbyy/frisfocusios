@@ -271,11 +271,35 @@ struct FriendDetailView: View {
         .background(heroBackground)
     }
 
+    /// The friend's custom header background, when they've set one.
+    /// Prefers the synced Friend record; falls back to the cached
+    /// remote profile for people resolved outside the friend list.
+    private var headerPhotoURL: URL? {
+        liveFriend.headerURL ?? remoteProfile?.headerURL
+    }
+
     private var heroBackground: some View {
-        ZStack {
+        let hasPhoto = headerPhotoURL != nil
+        return ZStack {
             accent
+            if let headerPhotoURL {
+                Color.clear
+                    .overlay {
+                        CachedImage(url: headerPhotoURL) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            accent
+                        }
+                    }
+                    .clipped()
+                    .allowsHitTesting(false)
+            }
+            // A slightly deeper wash over a photo keeps the cream
+            // identity text and action buttons perfectly readable.
             LinearGradient(
-                colors: [Color.black.opacity(0.34), Color.black.opacity(0.04), Color.black.opacity(0.10)],
+                colors: hasPhoto
+                    ? [Color.black.opacity(0.48), Color.black.opacity(0.22), Color.black.opacity(0.30)]
+                    : [Color.black.opacity(0.34), Color.black.opacity(0.04), Color.black.opacity(0.10)],
                 startPoint: .top,
                 endPoint: .bottom
             )

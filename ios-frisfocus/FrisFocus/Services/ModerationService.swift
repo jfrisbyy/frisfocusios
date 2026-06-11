@@ -89,7 +89,7 @@ final class ModerationService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url")
+                .select("id, email, name, username, avatar_url, header_url")
                 .in("id", values: Array(blockedIds))
                 .execute()
                 .value

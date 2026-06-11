@@ -150,6 +150,11 @@ struct Friend: Codable, Identifiable {
     var accentColorHex: String
     var avatarURL: URL?
 
+    /// Optional custom header background the friend set for their
+    /// profile page. Optional so friends persisted before this landed
+    /// decode cleanly (missing key → nil → signature-color band).
+    var headerURL: URL?
+
     /// What this friend is allowed to see about me.
     var theirClearanceToMyData: SharingSettings = SharingSettings()
 

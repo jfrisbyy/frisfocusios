@@ -12,6 +12,13 @@ import SwiftUI
 import PhotosUI
 import UIKit
 
+/// Identifiable wrapper so `fullScreenCover(item:)` can present the
+/// header crop screen for a freshly picked image.
+private struct HeaderCropTarget: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
 struct EditProfileView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(ProfileStore.self) private var profileStore
@@ -23,6 +30,11 @@ struct EditProfileView: View {
 
     @State private var photoItem: PhotosPickerItem?
     @State private var pickedImage: UIImage?
+
+    @State private var headerPhotoItem: PhotosPickerItem?
+    @State private var headerCropTarget: HeaderCropTarget?
+    @State private var croppedHeader: UIImage?
+    @State private var headerRemoved: Bool = false
 
     @State private var usernameStatus: UsernameStatus = .idle
     @State private var checkTask: Task<Void, Never>?
@@ -37,6 +49,21 @@ struct EditProfileView: View {
 
     private var currentPhotoURL: URL? {
         profileStore.myProfile?.photoURL ?? auth.user?.photoURL
+    }
+
+    private var currentHeaderURL: URL? { profileStore.myProfile?.headerURL }
+
+    /// Whether the preview is currently showing a custom header —
+    /// either freshly cropped or already saved (and not just removed).
+    private var hasCustomHeader: Bool {
+        croppedHeader != nil || (!headerRemoved && currentHeaderURL != nil)
+    }
+
+    /// The user's own signature color — the default band friends see
+    /// when no header photo is set.
+    private var myAccent: Color {
+        if let myId { return Color(hex: RemoteIDMapper.accentHex(forRemoteId: myId)) }
+        return Theme.textPrimary
     }
 
     private var initials: String {
@@ -58,7 +85,7 @@ struct EditProfileView: View {
 
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 28) {
-                photoPicker
+                headerSection
                 nameField
                 usernameField
             }
@@ -89,6 +116,16 @@ struct EditProfileView: View {
             guard let newItem else { return }
             Task { await loadPickedImage(newItem) }
         }
+        .onChange(of: headerPhotoItem) { _, newItem in
+            guard let newItem else { return }
+            Task { await loadPickedHeader(newItem) }
+        }
+        .fullScreenCover(item: $headerCropTarget) { target in
+            ProfileHeaderCropView(image: target.image) { baked in
+                croppedHeader = baked
+                headerRemoved = false
+            }
+        }
         .onChange(of: username) { _, newValue in
             let sanitized = ProfileStore.sanitizeUsername(newValue)
             if sanitized != newValue {
@@ -104,35 +141,122 @@ struct EditProfileView: View {
         }
     }
 
-    // MARK: - Photo
+    // MARK: - Header + photo
 
-    private var photoPicker: some View {
-        VStack(spacing: 12) {
-            PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                ZStack(alignment: .bottomTrailing) {
-                    avatar
-                        .frame(width: 104, height: 104)
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(Theme.sunWarm, lineWidth: 2))
-                        .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 4)
+    /// The classic profile layout: a live banner preview (the exact
+    /// shape friends see) with the avatar overlapping its bottom edge.
+    private var headerSection: some View {
+        VStack(spacing: 0) {
+            headerBanner
 
-                    ZStack {
-                        Circle().fill(Theme.textPrimary)
-                        Image(systemName: "camera.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.textCream)
-                    }
-                    .frame(width: 32, height: 32)
-                    .overlay(Circle().stroke(Theme.warmWheat, lineWidth: 2))
-                }
-            }
-            .buttonStyle(.plain)
+            photoPicker
+                .offset(y: -46)
+                .padding(.bottom, -46)
 
             Text("Tap to change your photo")
                 .font(.sans(12, weight: .regular))
                 .foregroundStyle(Theme.textSecondary)
+                .padding(.top, 10)
+
+            if hasCustomHeader {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        croppedHeader = nil
+                        headerRemoved = true
+                    }
+                } label: {
+                    Text("Remove header photo")
+                        .font(.sans(12, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// Banner preview at the profile hero's true aspect ratio. The
+    /// signature color sits underneath, so the photo never flashes
+    /// empty while loading — same as the real profile band.
+    private var headerBanner: some View {
+        ZStack(alignment: .bottomTrailing) {
+            myAccent
+                .aspectRatio(ProfileHeaderCropView.aspect, contentMode: .fit)
+                .overlay {
+                    headerImage
+                        .allowsHitTesting(false)
+                }
+                .overlay(
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.22), .clear, Color.black.opacity(0.10)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .allowsHitTesting(false)
+                )
+                .clipShape(.rect(cornerRadius: 20))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 1)
+                )
+
+            PhotosPicker(selection: $headerPhotoItem, matching: .images, photoLibrary: .shared()) {
+                ZStack {
+                    Circle().fill(Theme.textPrimary)
+                    Image(systemName: "photo.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                }
+                .frame(width: 34, height: 34)
+                .overlay(Circle().stroke(Theme.warmWheat, lineWidth: 2))
+            }
+            .buttonStyle(.plain)
+            .padding(10)
+            .accessibilityLabel("Change header background")
+        }
+    }
+
+    @ViewBuilder
+    private var headerImage: some View {
+        if let croppedHeader {
+            Image(uiImage: croppedHeader)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else if !headerRemoved, let url = currentHeaderURL {
+            CachedImage(url: url) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                myAccent
+            }
+        }
+    }
+
+    private var photoPicker: some View {
+        PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+            ZStack(alignment: .bottomTrailing) {
+                avatar
+                    .frame(width: 104, height: 104)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Theme.sunWarm, lineWidth: 2))
+                    .padding(4)
+                    .background(Circle().fill(Theme.warmWheat))
+                    .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 4)
+
+                ZStack {
+                    Circle().fill(Theme.textPrimary)
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                }
+                .frame(width: 32, height: 32)
+                .overlay(Circle().stroke(Theme.warmWheat, lineWidth: 2))
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -273,6 +397,15 @@ struct EditProfileView: View {
         }
     }
 
+    private func loadPickedHeader(_ item: PhotosPickerItem) async {
+        if let data = try? await item.loadTransferable(type: Data.self),
+           let image = UIImage(data: data) {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            headerCropTarget = HeaderCropTarget(image: image)
+        }
+        headerPhotoItem = nil
+    }
+
     private func scheduleUsernameCheck() {
         checkTask?.cancel()
         let candidate = username
@@ -303,11 +436,23 @@ struct EditProfileView: View {
             avatarUrl = uploaded
         }
 
+        var headerEdit: ProfileHeaderEdit = .keep
+        if let croppedHeader {
+            isUploading = true
+            let uploaded = await profileStore.uploadHeader(croppedHeader, myUserId: myId)
+            isUploading = false
+            guard let uploaded else { return }
+            headerEdit = .set(uploaded)
+        } else if headerRemoved, profileStore.myProfile?.headerUrl != nil {
+            headerEdit = .remove
+        }
+
         let ok = await profileStore.save(
             name: name,
             username: username.isEmpty ? nil : username,
             email: auth.user?.email,
             avatarUrl: avatarUrl,
+            header: headerEdit,
             myUserId: myId
         )
         if ok { dismiss() }

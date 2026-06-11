@@ -46,15 +46,20 @@ struct DiscoverProfileSheet: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topTrailing) {
             Theme.warmWheat.ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                closeRow
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    headerBanner
 
-                ScrollView(.vertical, showsIndicators: false) {
+                    avatar
+                        .padding(4)
+                        .background(Circle().fill(Theme.warmWheat))
+                        .offset(y: -44)
+                        .padding(.bottom, -44)
+
                     VStack(spacing: 14) {
-                        avatar
                         identity
                         if let bio, !bio.isEmpty {
                             Text(bio)
@@ -68,10 +73,14 @@ struct DiscoverProfileSheet: View {
                             .padding(.top, 6)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 8)
+                    .padding(.top, 12)
                     .padding(.bottom, 36)
                 }
             }
+
+            closeButton
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
         }
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
@@ -81,25 +90,47 @@ struct DiscoverProfileSheet: View {
 
     // MARK: - Pieces
 
-    private var closeRow: some View {
-        HStack {
-            Spacer()
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(Theme.textPrimary.opacity(0.06)))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
+    private var closeButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            dismiss()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.8))
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Theme.warmWheat.opacity(0.92)))
+                .contentShape(Circle())
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close")
+    }
+
+    /// Their header photo behind the top of the card — signature color
+    /// underneath so nothing flashes empty while it loads (and as the
+    /// default band when no photo is set).
+    private var headerBanner: some View {
+        profile.signatureColor
+            .frame(height: 118)
+            .overlay {
+                if let url = profile.headerURL {
+                    CachedImage(url: url) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        profile.signatureColor
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+            .overlay(
+                LinearGradient(
+                    colors: [Color.black.opacity(0.18), .clear, Theme.warmWheat.opacity(0.16)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+            )
+            .clipped()
     }
 
     private var avatar: some View {

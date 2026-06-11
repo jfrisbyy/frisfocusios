@@ -99,7 +99,7 @@ final class DiscoverService {
             // Tier 2 — the newest accounts on the app.
             let newest: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url")
+                .select("id, email, name, username, avatar_url, header_url")
                 .order("created_at", ascending: false)
                 .limit(Self.newestLimit)
                 .execute()
@@ -115,7 +115,7 @@ final class DiscoverService {
             if !missingIds.isEmpty {
                 let extra: [RemoteProfile] = try await supabase
                     .from("profiles")
-                    .select("id, email, name, username, avatar_url")
+                    .select("id, email, name, username, avatar_url, header_url")
                     .in("id", values: Array(missingIds))
                     .execute()
                     .value

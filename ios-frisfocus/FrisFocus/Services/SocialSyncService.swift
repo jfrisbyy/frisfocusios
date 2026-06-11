@@ -200,7 +200,7 @@ final class SocialSyncService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url")
+                .select("id, email, name, username, avatar_url, header_url")
                 .in("id", values: Array(missing))
                 .execute()
                 .value
@@ -269,6 +269,7 @@ final class SocialSyncService {
                 friend.displayName = profile.displayName
                 friend.initials = profile.initials
                 friend.avatarURL = profile.photoURL
+                friend.headerURL = profile.headerURL
                 if friend.connectedAt == nil { friend.connectedAt = since }
                 friend.sharesWithMe = .full
                 mapped.append(friend)

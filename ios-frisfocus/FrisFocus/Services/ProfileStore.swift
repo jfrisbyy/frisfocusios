@@ -26,22 +26,50 @@ private nonisolated struct ProfileIdRow: Decodable, Sendable {
     let id: String
 }
 
+/// How a save should treat the header background: leave it alone,
+/// point it at a freshly uploaded image, or clear it back to the
+/// default signature-color band (an explicit SQL NULL).
+nonisolated enum ProfileHeaderEdit: Sendable {
+    case keep
+    case set(String)
+    case remove
+}
+
 /// Partial upsert of the user's own profile. Optional fields use
-/// `encodeIfPresent` (synthesized), so a `nil` is omitted from the
-/// payload and leaves that column untouched — never accidentally
-/// nulled. `id` anchors the upsert to the PK.
+/// `encodeIfPresent`, so a `nil` is omitted from the payload and
+/// leaves that column untouched — never accidentally nulled. The
+/// header is the exception: it encodes an explicit null on `.remove`
+/// and is omitted entirely on `.keep`. `id` anchors the upsert to
+/// the PK.
 private nonisolated struct ProfileEditUpsert: Encodable, Sendable {
     let id: String
     let email: String?
     let name: String?
     let username: String?
     let avatarUrl: String?
+    let header: ProfileHeaderEdit
     let updatedAt: String
 
     enum CodingKeys: String, CodingKey {
         case id, email, name, username
         case avatarUrl = "avatar_url"
+        case headerUrl = "header_url"
         case updatedAt = "updated_at"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(email, forKey: .email)
+        try c.encodeIfPresent(name, forKey: .name)
+        try c.encodeIfPresent(username, forKey: .username)
+        try c.encodeIfPresent(avatarUrl, forKey: .avatarUrl)
+        switch header {
+        case .keep: break
+        case .set(let url): try c.encode(url, forKey: .headerUrl)
+        case .remove: try c.encodeNil(forKey: .headerUrl)
+        }
+        try c.encode(updatedAt, forKey: .updatedAt)
     }
 }
 
@@ -78,7 +106,7 @@ final class ProfileStore {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url")
+                .select("id, email, name, username, avatar_url, header_url")
                 .eq("id", value: myUserId)
                 .limit(1)
                 .execute()
@@ -142,6 +170,7 @@ final class ProfileStore {
         username: String?,
         email: String?,
         avatarUrl: String?,
+        header: ProfileHeaderEdit = .keep,
         myUserId: String
     ) async -> Bool {
         isSaving = true
@@ -159,9 +188,10 @@ final class ProfileStore {
                     name: trimmedName.isEmpty ? nil : trimmedName,
                     username: (cleanUsername?.isEmpty == false) ? cleanUsername : nil,
                     avatarUrl: avatarUrl,
+                    header: header,
                     updatedAt: Self.iso.string(from: Date())
                 ))
-                .select("id, email, name, username, avatar_url")
+                .select("id, email, name, username, avatar_url, header_url")
                 .single()
                 .execute()
                 .value
@@ -197,6 +227,27 @@ final class ProfileStore {
             return url.absoluteString
         } catch {
             fail("Couldn't upload your photo.", error)
+            return nil
+        }
+    }
+
+    /// Upload a pre-cropped header background to the public avatars
+    /// bucket under the user's own folder and return its public URL.
+    /// The crop screen bakes the framing in, so this only downsizes.
+    func uploadHeader(_ image: UIImage, myUserId: String) async -> String? {
+        guard let data = downscaledJPEG(image, maxDimension: 1400) else {
+            fail("Couldn't process that photo.", NSError(domain: "ProfileStore", code: -2))
+            return nil
+        }
+        let path = "\(myUserId)/header_\(UUID().uuidString).jpg"
+        do {
+            _ = try await supabase.storage
+                .from("avatars")
+                .upload(path, data: data, options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: true))
+            let url = try supabase.storage.from("avatars").getPublicURL(path: path)
+            return url.absoluteString
+        } catch {
+            fail("Couldn't upload your header photo.", error)
             return nil
         }
     }

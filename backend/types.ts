@@ -1108,6 +1108,7 @@ export type Database = {
           bio: string | null
           created_at: string | null
           email: string | null
+          header_url: string | null
           id: string
           is_test: boolean
           name: string | null
@@ -1119,6 +1120,7 @@ export type Database = {
           bio?: string | null
           created_at?: string | null
           email?: string | null
+          header_url?: string | null
           id: string
           is_test?: boolean
           name?: string | null
@@ -1130,6 +1132,7 @@ export type Database = {
           bio?: string | null
           created_at?: string | null
           email?: string | null
+          header_url?: string | null
           id?: string
           is_test?: boolean
           name?: string | null

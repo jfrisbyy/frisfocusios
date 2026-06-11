@@ -26,10 +26,15 @@ nonisolated struct RemoteProfile: Codable, Identifiable, Sendable, Hashable {
     let name: String?
     let username: String?
     let avatarUrl: String?
+    /// Optional custom profile-header background image. Decoded with
+    /// `decodeIfPresent` (synthesized for optionals), so selects that
+    /// don't include the column still decode cleanly.
+    var headerUrl: String?
 
     enum CodingKeys: String, CodingKey {
         case id, email, name, username
         case avatarUrl = "avatar_url"
+        case headerUrl = "header_url"
     }
 
     var displayName: String {
@@ -56,6 +61,11 @@ nonisolated struct RemoteProfile: Codable, Identifiable, Sendable, Hashable {
 
     var photoURL: URL? {
         guard let avatarUrl, let url = URL(string: avatarUrl) else { return nil }
+        return url
+    }
+
+    var headerURL: URL? {
+        guard let headerUrl, let url = URL(string: headerUrl) else { return nil }
         return url
     }
 }
@@ -283,7 +293,7 @@ final class FriendGraphService {
         do {
             let results: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url")
+                .select("id, email, name, username, avatar_url, header_url")
                 .or("username.ilike.*\(safe)*,name.ilike.*\(safe)*,email.ilike.*\(safe)*")
                 .limit(20)
                 .execute()
@@ -300,7 +310,7 @@ final class FriendGraphService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url")
+                .select("id, email, name, username, avatar_url, header_url")
                 .eq("id", value: id)
                 .limit(1)
                 .execute()
@@ -446,7 +456,7 @@ final class FriendGraphService {
         guard !ids.isEmpty else { return [:] }
         let rows: [RemoteProfile] = try await supabase
             .from("profiles")
-            .select("id, email, name, username, avatar_url")
+            .select("id, email, name, username, avatar_url, header_url")
             .in("id", values: ids)
             .execute()
             .value
