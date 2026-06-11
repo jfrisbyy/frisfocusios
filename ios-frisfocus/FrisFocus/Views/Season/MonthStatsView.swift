@@ -1,85 +1,62 @@
 //
-//  WeekStatsView.swift
+//  MonthStatsView.swift
 //  FrisFocus
 //
-//  Full-screen statistics, opened from the "This week" card on the
-//  season dashboard or the week score in the home header. Styled in
-//  the same deep-sky glass language so it reads as a continuation of
-//  the expanded season view.
-//
-//  Structure: top bar (title + close) → Week · Month · Season scope
-//  switcher → the active scope's content. Week keeps the pager,
-//  seven-day chart with goal line and tappable bars, day breakdown,
-//  week summary, gains & losses, and the "vs last week" strip. Month
-//  and Season live in MonthStatsView / SeasonStatsView; tapping a
-//  week bar in the season chart jumps back into that week's detail.
-//  Periods with no activity show a quiet empty state instead.
+//  The Month scope of the stats screen. A month pager (arrows + swipe)
+//  above a bar chart of every day in the month with a goal line and
+//  tappable bars, then the selected day's breakdown, a month summary
+//  (total, average per day, best day, goal days), gains & losses, and
+//  a "vs the month before" strip. Quiet empty state when nothing was
+//  logged in the visible month.
 //
 
 import SwiftUI
 import UIKit
 
-struct WeekStatsView: View {
+struct MonthStatsView: View {
     @Environment(Store.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.sunSky) private var sky
 
-    /// The three zoom levels of the stats page.
-    private enum StatsScope: String, CaseIterable {
-        case week = "Week"
-        case month = "Month"
-        case season = "Season"
-    }
-
-    @State private var scope: StatsScope = .week
-    /// 0 = current week, -1 = last week, and so on back to the week of
-    /// the earliest log entry.
-    @State private var weekOffset: Int = 0
+    /// 0 = current month, -1 = last month, back to the month of the
+    /// earliest log entry.
+    @State private var monthOffset: Int = 0
     @State private var selectedDay: Date? = Calendar.current.startOfDay(for: Date())
-    /// Bars grow from the baseline when the view opens or the week flips.
     @State private var barsRevealed: Bool = false
 
-    // Glass-on-sky tokens — matching SeasonInlineDetailView.
     private let glassFill = Color.white.opacity(0.10)
     private let glassStroke = Color.white.opacity(0.18)
 
     private let positiveAreaHeight: CGFloat = 140
-    private let negativeAreaHeight: CGFloat = 26
+    private let negativeAreaHeight: CGFloat = 22
 
     private var cal: Calendar { Calendar.current }
     private var today: Date { cal.startOfDay(for: Date()) }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            backdrop
+        VStack(spacing: 14) {
+            monthPager
 
-            VStack(spacing: 0) {
-                topBar
-                scopeSwitcher
+            if monthEntries.isEmpty {
+                emptyMonthCard
+            } else {
+                chartCard
 
-                ScrollView(showsIndicators: false) {
-                    Group {
-                        switch scope {
-                        case .week:
-                            weekContent
-                        case .month:
-                            MonthStatsView()
-                                .transition(.opacity)
-                        case .season:
-                            SeasonStatsView { offset in
-                                jumpToWeek(offset)
-                            }
-                            .transition(.opacity)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 10)
-                    .padding(.bottom, 40)
+                if let day = selectedDay, dayIsInMonth(day) {
+                    StatsDayDetailCard(day: day)
+                        .transition(.opacity.combined(with: .offset(y: -10)))
+                }
+
+                monthSummaryCard
+                gainsAndLossesCard
+
+                if monthOffset > earliestMonthOffset {
+                    comparisonStrip
                 }
             }
         }
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: selectedDay)
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: monthOffset)
         .onAppear { barsRevealed = true }
-        .onChange(of: weekOffset) { _, newOffset in
+        .onChange(of: monthOffset) { _, newOffset in
             barsRevealed = false
             selectedDay = newOffset == 0 ? today : nil
             Task {
@@ -89,161 +66,27 @@ struct WeekStatsView: View {
         }
     }
 
-    // MARK: - Backdrop
+    // MARK: - Month pager
 
-    /// Same deepened sky as the inline season detail — gradient, stars,
-    /// grain — so the stats page feels like part of the landscape.
-    private var backdrop: some View {
-        let palette = sky.palette
-        let top = palette.skyStops.last ?? Theme.skyLow
-        let deep = Color.lerpHSL(top, Color(hex: 0x05080A), t: 0.5)
-
-        return ZStack(alignment: .top) {
-            LinearGradient(
-                colors: [top, deep, deep],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-
-            StarFieldView()
-                .frame(height: 380)
-                .opacity(0.3)
-
-            FilmGrainView(strength: 0.16)
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-    }
-
-    // MARK: - Scope switcher
-
-    /// The Week · Month · Season pill row — the page's zoom control.
-    private var scopeSwitcher: some View {
-        HStack(spacing: 4) {
-            ForEach(StatsScope.allCases, id: \.self) { item in
-                Button {
-                    guard item != scope else { return }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                        scope = item
-                    }
-                } label: {
-                    Text(item.rawValue)
-                        .font(.sans(12, weight: scope == item ? .semibold : .regular))
-                        .foregroundStyle(
-                            scope == item ? Theme.textPrimary : Theme.textCream.opacity(0.8)
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(scope == item ? Theme.textCream : Color.clear)
-                        .clipShape(Capsule())
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(item.rawValue) stats")
-                .accessibilityAddTraits(scope == item ? .isSelected : [])
-            }
-        }
-        .padding(4)
-        .background(glassFill)
-        .clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(glassStroke, lineWidth: 0.5))
-        .padding(.horizontal, 20)
-    }
-
-    /// Jumps from the season chart into one specific week's detail.
-    private func jumpToWeek(_ offset: Int) {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-            weekOffset = offset
-            scope = .week
-        }
-    }
-
-    // MARK: - Week scope content
-
-    private var weekContent: some View {
-        VStack(spacing: 14) {
-            weekPager
-
-            if weekEntries.isEmpty {
-                emptyWeekCard
-            } else {
-                chartCard
-
-                if let day = selectedDay, dayIsInWeek(day) {
-                    StatsDayDetailCard(day: day)
-                        .transition(.opacity.combined(with: .offset(y: -10)))
-                }
-
-                weekSummaryCard
-                gainsAndLossesCard
-
-                if weekOffset > earliestWeekOffset {
-                    comparisonStrip
-                }
-            }
-        }
-        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: selectedDay)
-        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: weekOffset)
-    }
-
-    // MARK: - Top bar
-
-    private var topBar: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Stats")
-                    .font(.serif(22, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-                Text(store.currentSeason.name)
-                    .font(.sans(11, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.55))
-            }
-
-            Spacer()
-
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.textCream.opacity(0.85))
-                    .frame(width: 36, height: 36)
-                    .background(glassFill)
-                    .clipShape(Circle())
-                    .overlay(Circle().strokeBorder(glassStroke, lineWidth: 0.5))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close stats")
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 14)
-        .padding(.bottom, 14)
-    }
-
-    // MARK: - Week pager
-
-    private var weekPager: some View {
+    private var monthPager: some View {
         HStack(spacing: 10) {
             pagerArrow(iconName: "chevron.left", enabled: canGoBack) {
-                weekOffset -= 1
+                monthOffset -= 1
             }
 
             VStack(spacing: 2) {
-                Text(weekTitle)
+                Text(monthTitle)
                     .font(.serif(17, weight: .medium))
                     .foregroundStyle(Theme.textCream)
                     .contentTransition(.numericText())
-                Text(weekSubtitle)
+                Text(monthSubtitle)
                     .font(.sans(10, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.55))
             }
             .frame(maxWidth: .infinity)
 
             pagerArrow(iconName: "chevron.right", enabled: canGoForward) {
-                weekOffset += 1
+                monthOffset += 1
             }
         }
         .padding(.vertical, 10)
@@ -279,44 +122,36 @@ struct WeekStatsView: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .accessibilityLabel(iconName == "chevron.left" ? "Previous week" : "Next week")
+        .accessibilityLabel(iconName == "chevron.left" ? "Previous month" : "Next month")
     }
 
-    private var canGoBack: Bool { weekOffset > earliestWeekOffset }
-    private var canGoForward: Bool { weekOffset < 0 }
+    private var canGoBack: Bool { monthOffset > earliestMonthOffset }
+    private var canGoForward: Bool { monthOffset < 0 }
 
-    /// How far back the pager may travel — the week containing the
-    /// earliest log entry, as a non-positive offset from this week.
-    private var earliestWeekOffset: Int {
+    private var earliestMonthOffset: Int {
         guard let earliest = store.logEntries.map(\.date).min(),
-              let earliestWeek = cal.dateInterval(of: .weekOfYear, for: earliest),
-              let currentWeek = cal.dateInterval(of: .weekOfYear, for: Date())
+              let earliestMonth = cal.dateInterval(of: .month, for: earliest),
+              let currentMonth = cal.dateInterval(of: .month, for: Date())
         else { return 0 }
-        let weeks = cal.dateComponents(
-            [.weekOfYear],
-            from: earliestWeek.start,
-            to: currentWeek.start
-        ).weekOfYear ?? 0
-        return -max(0, weeks)
+        let months = cal.dateComponents(
+            [.month],
+            from: earliestMonth.start,
+            to: currentMonth.start
+        ).month ?? 0
+        return -max(0, months)
     }
 
-    private var weekTitle: String {
-        let start = weekInterval.start
-        let end = cal.date(byAdding: .day, value: 6, to: start) ?? start
-        let startFormatter = DateFormatter()
-        startFormatter.dateFormat = "MMM d"
-        let endFormatter = DateFormatter()
-        endFormatter.dateFormat = cal.isDate(start, equalTo: end, toGranularity: .month)
-            ? "d"
-            : "MMM d"
-        return "\(startFormatter.string(from: start)) – \(endFormatter.string(from: end))"
+    private var monthTitle: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter.string(from: monthInterval.start)
     }
 
-    private var weekSubtitle: String {
-        switch weekOffset {
-        case 0: return "this week"
-        case -1: return "last week"
-        default: return "\(-weekOffset) weeks ago"
+    private var monthSubtitle: String {
+        switch monthOffset {
+        case 0: return "this month"
+        case -1: return "last month"
+        default: return "\(-monthOffset) months ago"
         }
     }
 
@@ -329,7 +164,7 @@ struct WeekStatsView: View {
                 goalLine
             }
 
-            dayLabelsRow
+            axisRow
         }
         .padding(14)
         .background(glassFill)
@@ -347,12 +182,12 @@ struct WeekStatsView: View {
                     if dx < 0, canGoForward {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                            weekOffset += 1
+                            monthOffset += 1
                         }
                     } else if dx > 0, canGoBack {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                            weekOffset -= 1
+                            monthOffset -= 1
                         }
                     }
                 }
@@ -360,8 +195,8 @@ struct WeekStatsView: View {
     }
 
     private var barsRow: some View {
-        HStack(alignment: .top, spacing: 8) {
-            ForEach(Array(weekDays.enumerated()), id: \.element) { index, day in
+        HStack(alignment: .top, spacing: 2) {
+            ForEach(Array(monthDays.enumerated()), id: \.element) { index, day in
                 barColumn(for: day, index: index)
             }
         }
@@ -381,7 +216,6 @@ struct WeekStatsView: View {
             }
         } label: {
             VStack(spacing: 0) {
-                // Positive region — bars grow upward from the baseline.
                 ZStack(alignment: .bottom) {
                     Color.clear
                         .frame(height: positiveAreaHeight)
@@ -394,31 +228,29 @@ struct WeekStatsView: View {
                             index: index
                         )
                     } else if !future {
-                        // Zero (or negative) day — a quiet stub at the baseline.
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        RoundedRectangle(cornerRadius: 1, style: .continuous)
                             .fill(Color.white.opacity(isSelected ? 0.4 : 0.18))
                             .frame(height: 3)
                     } else {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        RoundedRectangle(cornerRadius: 1, style: .continuous)
                             .fill(Color.white.opacity(0.08))
                             .frame(height: 3)
                     }
                 }
 
-                // Negative region — only present when the week has a loss day.
                 if negativeMagnitude > 0 {
                     ZStack(alignment: .top) {
                         Color.clear
                             .frame(height: negativeAreaHeight)
 
                         if score < 0 {
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                                 .fill(Theme.alertRed.opacity(isSelected ? 0.95 : 0.7))
                                 .frame(height: negativeHeight(for: score))
                                 .scaleEffect(y: barsRevealed ? 1 : 0.001, anchor: .top)
                                 .animation(
                                     .spring(response: 0.5, dampingFraction: 0.8)
-                                        .delay(0.04 * Double(index)),
+                                        .delay(0.012 * Double(index)),
                                     value: barsRevealed
                                 )
                         }
@@ -437,7 +269,7 @@ struct WeekStatsView: View {
     private func barShape(score: Int, isSelected: Bool, height: CGFloat, index: Int) -> some View {
         let hitGoal = score >= store.currentSeason.dailyGoal
 
-        RoundedRectangle(cornerRadius: 4, style: .continuous)
+        RoundedRectangle(cornerRadius: 2, style: .continuous)
             .fill(
                 hitGoal
                     ? AnyShapeStyle(
@@ -451,11 +283,11 @@ struct WeekStatsView: View {
             )
             .frame(height: height)
             .shadow(
-                color: hitGoal ? Theme.sunOuter.opacity(0.5) : .clear,
-                radius: 4
+                color: hitGoal ? Theme.sunOuter.opacity(0.4) : .clear,
+                radius: 2.5
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .strokeBorder(
                         isSelected ? Theme.textCream.opacity(0.9) : Color.clear,
                         lineWidth: 1
@@ -464,17 +296,16 @@ struct WeekStatsView: View {
             .scaleEffect(y: barsRevealed ? 1 : 0.001, anchor: .bottom)
             .animation(
                 .spring(response: 0.5, dampingFraction: 0.8)
-                    .delay(0.04 * Double(index)),
+                    .delay(0.012 * Double(index)),
                 value: barsRevealed
             )
     }
 
-    /// Dashed goal marker drawn across the positive region.
     private var goalLine: some View {
         let offsetFromBottom = negativeRegionTotal + goalLineHeight
 
         return HStack(spacing: 6) {
-            Line()
+            StatsGoalLineShape()
                 .stroke(
                     Theme.textCream.opacity(0.35),
                     style: StrokeStyle(lineWidth: 1, dash: [4, 4])
@@ -490,40 +321,32 @@ struct WeekStatsView: View {
         .allowsHitTesting(false)
     }
 
-    private var dayLabelsRow: some View {
-        HStack(spacing: 8) {
-            ForEach(weekDays, id: \.self) { day in
-                let isSelected = selectedDay.map { cal.isDate($0, inSameDayAs: day) } ?? false
-                let isToday = cal.isDate(day, inSameDayAs: today)
+    /// 31 bars are too tight for per-day labels — anchor the axis with
+    /// the first day, mid-month, and the last day instead.
+    private var axisRow: some View {
+        let lastDay = monthDays.count
 
-                VStack(spacing: 1) {
-                    Text(weekdayLetter(for: day))
-                        .font(.sans(10, weight: isSelected ? .semibold : .regular))
-                    Text("\(cal.component(.day, from: day))")
-                        .font(.sans(9, weight: .regular))
-                        .opacity(0.7)
-                }
-                .foregroundStyle(
-                    Theme.textCream.opacity(isSelected ? 0.95 : (isToday ? 0.8 : 0.5))
-                )
-                .frame(maxWidth: .infinity)
-            }
+        return HStack {
+            Text("1")
+            Spacer()
+            Text("15")
+            Spacer()
+            Text("\(lastDay)")
         }
+        .font(.sans(9, weight: .regular))
+        .foregroundStyle(Theme.textCream.opacity(0.5))
+        .padding(.horizontal, 2)
     }
 
     // MARK: - Chart math
 
-    /// Highest value the positive region must fit — at least the daily
-    /// goal so the goal line always sits inside the chart.
     private var positiveMagnitude: Int {
-        let maxScore = weekDays.map { dayScore(on: $0) }.max() ?? 0
+        let maxScore = monthDays.map { dayScore(on: $0) }.max() ?? 0
         return max(store.currentSeason.dailyGoal, maxScore, 1)
     }
 
-    /// Deepest loss in the week (as a positive number); 0 when the week
-    /// has no negative day, which removes the negative region entirely.
     private var negativeMagnitude: Int {
-        let minScore = weekDays.map { dayScore(on: $0) }.min() ?? 0
+        let minScore = monthDays.map { dayScore(on: $0) }.min() ?? 0
         return max(0, -minScore)
     }
 
@@ -544,12 +367,6 @@ struct WeekStatsView: View {
         return max(3, CGFloat(-score) / CGFloat(negativeMagnitude) * (negativeAreaHeight - 4))
     }
 
-    private func weekdayLetter(for day: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEEE"
-        return formatter.string(from: day)
-    }
-
     private func accessibilityDayLabel(_ day: Date, score: Int, future: Bool) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE MMMM d"
@@ -558,37 +375,28 @@ struct WeekStatsView: View {
         return "\(name), \(score) points"
     }
 
-    // MARK: - Week summary
+    // MARK: - Month summary
 
-    private var weekSummaryCard: some View {
-        let total = weekTotal
-        let goal = store.currentSeason.weeklyGoal
-
-        return VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Week summary")
+    private var monthSummaryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Month summary")
 
             HStack(alignment: .lastTextBaseline, spacing: 0) {
-                Text("\(total)")
+                Text("\(monthTotal)")
                     .font(.serif(30, weight: .medium))
-                    .foregroundStyle(total < 0 ? Theme.alertRed : Theme.textCream)
+                    .foregroundStyle(monthTotal < 0 ? Theme.alertRed : Theme.textCream)
                     .contentTransition(.numericText())
-                Text(" / \(goal)")
+                Text(" points")
                     .font(.sans(14, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.5))
 
                 Spacer()
-
-                Text(total >= goal ? "goal reached" : "\(goal - total) to go")
-                    .font(.sans(11, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.55))
             }
-
-            progressTrack(ratio(total, goal))
 
             HStack(spacing: 10) {
                 summaryStat(label: "Avg / day", value: "\(averagePerDay)")
                 summaryStat(label: "Best day", value: bestDayLabel)
-                summaryStat(label: "Goal days", value: "\(goalDaysCount) of 7")
+                summaryStat(label: "Goal days", value: "\(goalDaysCount) of \(elapsedDayCount)")
             }
             .padding(.top, 2)
         }
@@ -620,29 +428,33 @@ struct WeekStatsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    /// Average over elapsed days for the current week, over all seven
-    /// for completed weeks — so a Tuesday doesn't read as a slump.
+    /// Days of this month that have already happened — current month
+    /// counts only elapsed days so mid-month averages stay honest.
+    private var elapsedDayCount: Int {
+        max(1, monthDays.filter { $0 <= today }.count)
+    }
+
     private var averagePerDay: Int {
-        let days = weekOffset == 0
-            ? max(1, weekDays.filter { $0 <= today }.count)
-            : 7
-        return Int((Double(weekTotal) / Double(days)).rounded())
+        Int((Double(monthTotal) / Double(elapsedDayCount)).rounded())
     }
 
     private var bestDayLabel: String {
-        let scored = weekDays
+        let scored = monthDays
             .filter { $0 <= today }
             .map { (day: $0, score: dayScore(on: $0)) }
         guard let best = scored.max(by: { $0.score < $1.score }), best.score > 0 else {
             return "—"
         }
         let formatter = DateFormatter()
-        formatter.dateFormat = "EEE"
+        formatter.dateFormat = "MMM d"
         return "\(formatter.string(from: best.day)) · \(best.score)"
     }
 
     private var goalDaysCount: Int {
-        weekDays.filter { dayScore(on: $0) >= store.currentSeason.dailyGoal }.count
+        monthDays
+            .filter { $0 <= today }
+            .filter { dayScore(on: $0) >= store.currentSeason.dailyGoal }
+            .count
     }
 
     // MARK: - Gains & losses
@@ -723,17 +535,17 @@ struct WeekStatsView: View {
     }
 
     private func points(for type: LogEntryType) -> Int {
-        weekEntries
+        monthEntries
             .filter { $0.entryType == type }
             .map(\.pointsEarned)
             .reduce(0, +)
     }
 
-    // MARK: - vs last week
+    // MARK: - vs last month
 
     private var comparisonStrip: some View {
-        let current = weekTotal
-        let previous = previousWeekTotal
+        let current = monthTotal
+        let previous = previousMonthTotal
         let diff = current - previous
         let trendingUp = diff >= 0
 
@@ -745,13 +557,13 @@ struct WeekStatsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(
                     diff == 0
-                        ? "Even with the week before"
-                        : "\(abs(diff)) points \(trendingUp ? "ahead of" : "behind") the week before"
+                        ? "Even with the month before"
+                        : "\(abs(diff)) points \(trendingUp ? "ahead of" : "behind") the month before"
                 )
                 .font(.sans(13, weight: .medium))
                 .foregroundStyle(Theme.textCream)
 
-                Text("\(current) this week · \(previous) the week before")
+                Text("\(current) this month · \(previous) the month before")
                     .font(.sans(10, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.55))
             }
@@ -767,15 +579,15 @@ struct WeekStatsView: View {
         )
     }
 
-    // MARK: - Empty week
+    // MARK: - Empty month
 
-    private var emptyWeekCard: some View {
+    private var emptyMonthCard: some View {
         VStack(spacing: 10) {
             Image(systemName: "moon.stars")
                 .font(.system(size: 26, weight: .light))
                 .foregroundStyle(Theme.textCream.opacity(0.45))
 
-            Text("A quiet week.")
+            Text("A quiet month.")
                 .font(.serif(17, weight: .medium))
                 .foregroundStyle(Theme.textCream)
 
@@ -802,68 +614,36 @@ struct WeekStatsView: View {
             .foregroundStyle(Theme.textCream.opacity(0.6))
     }
 
-    /// Slim glowing progress bar — same warm gradient as the dashboard.
-    @ViewBuilder
-    private func progressTrack(_ progress: Double) -> some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.white.opacity(0.12))
+    // MARK: - Month data
 
-                if progress > 0 {
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [Theme.sunShadow, Theme.sunWarm],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: max(5, proxy.size.width * progress))
-                        .shadow(color: Theme.sunOuter.opacity(0.55), radius: 3)
-                }
-            }
-            .animation(.easeOut(duration: 0.6), value: progress)
-        }
-        .frame(height: 4)
+    private var monthInterval: DateInterval {
+        let anchor = cal.date(byAdding: .month, value: monthOffset, to: Date()) ?? Date()
+        return cal.dateInterval(of: .month, for: anchor)
+            ?? DateInterval(start: today, duration: 30 * 86_400)
     }
 
-    private func ratio(_ value: Int, _ total: Int) -> Double {
-        guard total > 0 else { return 0 }
-        return min(1, max(0, Double(value) / Double(total)))
-    }
-
-    // MARK: - Week data
-
-    /// The calendar week being viewed, honouring the locale's first
-    /// weekday (Sunday in en_US, Monday elsewhere).
-    private var weekInterval: DateInterval {
-        let anchor = cal.date(byAdding: .weekOfYear, value: weekOffset, to: Date()) ?? Date()
-        return cal.dateInterval(of: .weekOfYear, for: anchor)
-            ?? DateInterval(start: today, duration: 7 * 86_400)
-    }
-
-    private var weekDays: [Date] {
-        (0..<7).compactMap {
-            cal.date(byAdding: .day, value: $0, to: weekInterval.start)
+    private var monthDays: [Date] {
+        let dayCount = cal.range(of: .day, in: .month, for: monthInterval.start)?.count ?? 30
+        return (0..<dayCount).compactMap {
+            cal.date(byAdding: .day, value: $0, to: monthInterval.start)
         }
     }
 
-    private func dayIsInWeek(_ day: Date) -> Bool {
-        weekDays.contains { cal.isDate($0, inSameDayAs: day) }
+    private func dayIsInMonth(_ day: Date) -> Bool {
+        day >= monthInterval.start && day < monthInterval.end
     }
 
-    private var weekEntries: [LogEntry] {
-        entries(in: weekInterval)
+    private var monthEntries: [LogEntry] {
+        entries(in: monthInterval)
     }
 
-    private var weekTotal: Int {
-        weekEntries.map(\.pointsEarned).reduce(0, +)
+    private var monthTotal: Int {
+        monthEntries.map(\.pointsEarned).reduce(0, +)
     }
 
-    private var previousWeekTotal: Int {
-        let anchor = cal.date(byAdding: .weekOfYear, value: weekOffset - 1, to: Date()) ?? Date()
-        guard let interval = cal.dateInterval(of: .weekOfYear, for: anchor) else { return 0 }
+    private var previousMonthTotal: Int {
+        let anchor = cal.date(byAdding: .month, value: monthOffset - 1, to: Date()) ?? Date()
+        guard let interval = cal.dateInterval(of: .month, for: anchor) else { return 0 }
         return entries(in: interval).map(\.pointsEarned).reduce(0, +)
     }
 
@@ -871,29 +651,21 @@ struct WeekStatsView: View {
         store.logEntries.filter { $0.date >= interval.start && $0.date < interval.end }
     }
 
-    private func dayEntries(on day: Date) -> [LogEntry] {
+    private func dayScore(on day: Date) -> Int {
         store.logEntries
             .filter { cal.isDate($0.date, inSameDayAs: day) }
-            .sorted { $0.date < $1.date }
-    }
-
-    private func dayScore(on day: Date) -> Int {
-        dayEntries(on: day).map(\.pointsEarned).reduce(0, +)
+            .map(\.pointsEarned)
+            .reduce(0, +)
     }
 }
 
-/// A straight horizontal line — used for the dashed goal marker.
-private struct Line: Shape {
+/// A straight horizontal line — the dashed goal marker, shared by the
+/// month and season charts.
+struct StatsGoalLineShape: Shape {
     nonisolated func path(in rect: CGRect) -> Path {
         var path = Path()
         path.move(to: CGPoint(x: rect.minX, y: rect.midY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
         return path
     }
-}
-
-#Preview {
-    WeekStatsView()
-        .environment(\.sunSky, .make(now: .now, coordinate: nil))
-        .environment(Store())
 }

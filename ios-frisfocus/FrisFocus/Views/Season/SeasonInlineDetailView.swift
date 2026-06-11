@@ -8,10 +8,13 @@
 //  deepened sky gradient with stars and grain — so the categories,
 //  tasks, filters, and season footer read as part of the landscape.
 //
-//  Content order: title strip → category pills → mode filter pills →
-//  per-category sections → Cadence earned → season dashboard →
-//  collapsible season options menu → full-width minimize button.
-//  Sections reveal with a gentle stagger when the zone expands.
+//  Content order: Tasks · Season tab switcher → the active tab's
+//  content → full-width minimize button. The Tasks tab keeps the
+//  title strip, category pills, mode filters, per-category sections,
+//  and Cadence earned; the Season tab holds the dashboard and the
+//  season options grid (open by default) with the next-season action.
+//  Sections reveal with a gentle stagger when the zone expands, and
+//  tab flips crossfade with a small slide. Always opens on Tasks.
 //
 
 import SwiftUI
@@ -25,6 +28,14 @@ struct SeasonInlineDetailView: View {
     /// owns the expansion state and the collapse animation.
     var onMinimize: () -> Void = {}
 
+    /// The two faces of the expanded area — today's work vs. the
+    /// season itself.
+    private enum DetailTab: String, CaseIterable {
+        case tasks = "Tasks"
+        case season = "Season"
+    }
+
+    @State private var activeTab: DetailTab = .tasks
     @State private var selectedCategory: Category? = nil
     @State private var showOpenOnly: Bool = false
     @State private var showHighValueOnly: Bool = false
@@ -38,8 +49,6 @@ struct SeasonInlineDetailView: View {
     @State private var showSeasonSetup: Bool = false
     @State private var showNextSeasonDialog: Bool = false
     @State private var showWeekStats: Bool = false
-    /// The season options grid starts folded each time the detail opens.
-    @State private var optionsExpanded: Bool = false
     /// Drives the staggered entrance of each content band.
     @State private var revealed: Bool = false
 
@@ -49,29 +58,32 @@ struct SeasonInlineDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            staggered(0) { titleStrip }
-            staggered(1) { categoryPills }
-            staggered(1) { modeFilterPills }
+            staggered(0) { tabSwitcher }
 
-            staggered(2) {
-                VStack(spacing: 0) {
-                    ForEach(orderedVisibleCategories, id: \.self) { category in
-                        CategorySectionView(
-                            category: category,
-                            tasks: tasksForCategory(category),
-                            seasonCategory: seasonCategory(for: category)
+            Group {
+                switch activeTab {
+                case .tasks:
+                    tasksTab
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .offset(x: -24)),
+                                removal: .opacity
+                            )
                         )
-                    }
-
-                    // Passive Cadence outcomes — absent unless linked.
-                    CadenceEarnedSection()
+                case .season:
+                    seasonTab
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .offset(x: 24)),
+                                removal: .opacity
+                            )
+                        )
                 }
             }
 
-            staggered(3) { seasonDashboard }
-            staggered(3) { seasonOptionsSection }
             staggered(4) { minimizeButton }
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.88), value: activeTab)
         .frame(maxWidth: .infinity)
         .background(alignment: .top) { backdrop }
         .onAppear { revealed = true }
@@ -170,6 +182,75 @@ struct SeasonInlineDetailView: View {
             )
     }
 
+    // MARK: - Tab switcher
+
+    /// The Tasks · Season pill row at the top of the unfolded detail.
+    private var tabSwitcher: some View {
+        HStack(spacing: 4) {
+            ForEach(DetailTab.allCases, id: \.self) { tab in
+                Button {
+                    guard tab != activeTab else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    activeTab = tab
+                } label: {
+                    Text(tab.rawValue)
+                        .font(.sans(13, weight: activeTab == tab ? .semibold : .regular))
+                        .foregroundStyle(
+                            activeTab == tab ? Theme.textPrimary : Theme.textCream.opacity(0.8)
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(activeTab == tab ? Theme.textCream : Color.clear)
+                        .clipShape(Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tab == .tasks ? "Today's tasks" : "Season details")
+                .accessibilityAddTraits(activeTab == tab ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .background(glassFill)
+        .clipShape(Capsule())
+        .overlay(Capsule().strokeBorder(glassStroke, lineWidth: 0.5))
+        .padding(.horizontal, 22)
+        .padding(.top, 20)
+    }
+
+    // MARK: - Tabs
+
+    /// Today's work — title strip, filters, and the task sections.
+    private var tasksTab: some View {
+        VStack(spacing: 0) {
+            staggered(1) { titleStrip }
+            staggered(1) { categoryPills }
+            staggered(2) { modeFilterPills }
+
+            staggered(2) {
+                VStack(spacing: 0) {
+                    ForEach(orderedVisibleCategories, id: \.self) { category in
+                        CategorySectionView(
+                            category: category,
+                            tasks: tasksForCategory(category),
+                            seasonCategory: seasonCategory(for: category)
+                        )
+                    }
+
+                    // Passive Cadence outcomes — absent unless linked.
+                    CadenceEarnedSection()
+                }
+            }
+        }
+    }
+
+    /// The season itself — dashboard cards and the options grid.
+    private var seasonTab: some View {
+        VStack(spacing: 0) {
+            staggered(1) { seasonDashboard }
+            staggered(2) { seasonOptionsSection }
+        }
+    }
+
     // MARK: - Title strip
 
     private var titleStrip: some View {
@@ -185,7 +266,7 @@ struct SeasonInlineDetailView: View {
                 .foregroundStyle(Theme.textCream.opacity(0.6))
         }
         .padding(.horizontal, 22)
-        .padding(.top, 22)
+        .padding(.top, 18)
     }
 
     private var titleStripStatus: String {
@@ -334,11 +415,6 @@ struct SeasonInlineDetailView: View {
     /// progress bar that moves live as tasks are completed.
     private var seasonDashboard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Rectangle()
-                .fill(Color.white.opacity(0.14))
-                .frame(height: 0.5)
-                .padding(.bottom, 16)
-
             sectionHeader(store.currentSeason.name)
                 .padding(.bottom, 12)
 
@@ -412,7 +488,7 @@ struct SeasonInlineDetailView: View {
             }
         }
         .padding(.horizontal, 22)
-        .padding(.top, 28)
+        .padding(.top, 20)
     }
 
     private var daysLeft: Int {
@@ -521,99 +597,34 @@ struct SeasonInlineDetailView: View {
 
     // MARK: - Season options
 
-    /// One glass row that unfolds into the full two-column grid of
-    /// season controls. Starts collapsed each time the detail opens so
-    /// the page stays short and focused on tasks and the dashboard.
+    /// The full two-column grid of season controls, always open on the
+    /// Season tab, with the next-season action beneath.
     private var seasonOptionsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            optionsToggleRow
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Season options")
 
-            if optionsExpanded {
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: 10),
-                        GridItem(.flexible(), spacing: 10)
-                    ],
-                    spacing: 10
-                ) {
-                    ForEach(Array(seasonOptions.enumerated()), id: \.offset) { index, option in
-                        optionTile(
-                            label: option.label,
-                            hint: option.hint,
-                            iconName: option.iconName,
-                            haptic: option.haptic,
-                            action: option.action
-                        )
-                        .transition(
-                            .opacity
-                                .combined(with: .offset(y: -10))
-                                .animation(
-                                    .spring(response: 0.4, dampingFraction: 0.85)
-                                        .delay(0.03 * Double(index))
-                                )
-                        )
-                    }
-                }
-
-                nextSeasonTile
-                    .transition(
-                        .opacity
-                            .combined(with: .offset(y: -10))
-                            .animation(
-                                .spring(response: 0.4, dampingFraction: 0.85)
-                                    .delay(0.03 * Double(seasonOptions.count))
-                            )
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10)
+                ],
+                spacing: 10
+            ) {
+                ForEach(Array(seasonOptions.enumerated()), id: \.offset) { _, option in
+                    optionTile(
+                        label: option.label,
+                        hint: option.hint,
+                        iconName: option.iconName,
+                        haptic: option.haptic,
+                        action: option.action
                     )
+                }
             }
+
+            nextSeasonTile
         }
         .padding(.horizontal, 22)
         .padding(.top, 26)
-    }
-
-    /// The collapsed face of the options menu — icon, label, rotating
-    /// chevron. Tapping springs the grid open or folds it back.
-    private var optionsToggleRow: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
-                optionsExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.85))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Season options")
-                        .font(.sans(13, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
-                    Text("Tasks, boosters, milestones, scoring & more")
-                        .font(.sans(10, weight: .regular))
-                        .foregroundStyle(Theme.textCream.opacity(0.55))
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textCream.opacity(0.5))
-                    .rotationEffect(.degrees(optionsExpanded ? 180 : 0))
-            }
-            .padding(13)
-            .frame(maxWidth: .infinity)
-            .background(glassFill)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(glassStroke, lineWidth: 0.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(PressableTileStyle())
-        .accessibilityLabel("Season options")
-        .accessibilityHint(optionsExpanded ? "Collapses the season options menu" : "Expands the season options menu")
     }
 
     /// The seven season-level controls, in display order.

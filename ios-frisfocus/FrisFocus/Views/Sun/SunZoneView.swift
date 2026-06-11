@@ -54,6 +54,7 @@ struct SunZoneView: View {
     @State private var showDaySheet: Bool = false
     @State private var daySheetDate: Date = Date()
     @State private var showShareCamera: Bool = false
+    @State private var showWeekStats: Bool = false
 
     private var zoneHeight: CGFloat { 580 + topSafeInset }
 
@@ -76,6 +77,9 @@ struct SunZoneView: View {
         }
         .fullScreenCover(isPresented: $showShareCamera) {
             ShareCameraView(context: store.dayShareContext())
+        }
+        .fullScreenCover(isPresented: $showWeekStats) {
+            WeekStatsView()
         }
     }
 
@@ -315,29 +319,42 @@ struct SunZoneView: View {
                 }
                 .padding(.bottom, 12)
 
-                EyebrowText(
-                    text: "Week",
-                    opacity: 0.75,
-                    color: Theme.textCream
-                )
-                .tracking(2)
-                .padding(.bottom, 6)
+                // The whole week peek — label, score, stripe — is one
+                // button that opens the full stats page on its Week view.
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showWeekStats = true
+                } label: {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        EyebrowText(
+                            text: "Week",
+                            opacity: 0.75,
+                            color: Theme.textCream
+                        )
+                        .tracking(2)
+                        .padding(.bottom, 6)
 
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    Text("\(store.weekScore)")
-                        .font(.serif(15, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
-                        .contentTransition(.numericText(value: Double(store.weekScore)))
-                        .animation(.easeOut(duration: 0.5), value: store.weekScore)
-                    Text(" / \(store.currentSeason.weeklyGoal)")
-                        .font(.serif(15, weight: .medium))
-                        .foregroundStyle(Theme.textCream.opacity(0.55))
+                        HStack(alignment: .firstTextBaseline, spacing: 0) {
+                            Text("\(store.weekScore)")
+                                .font(.serif(15, weight: .medium))
+                                .foregroundStyle(Theme.textCream)
+                                .contentTransition(.numericText(value: Double(store.weekScore)))
+                                .animation(.easeOut(duration: 0.5), value: store.weekScore)
+                            Text(" / \(store.currentSeason.weeklyGoal)")
+                                .font(.serif(15, weight: .medium))
+                                .foregroundStyle(Theme.textCream.opacity(0.55))
+                        }
+                        .padding(.bottom, 6)
+
+                        WeekStripeView(dayOpacities: weekStripeOpacities)
+                            .padding(.top, 2)
+                            .animation(.easeOut(duration: 0.5), value: weekStripeOpacities)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .padding(.bottom, 6)
-
-                WeekStripeView(dayOpacities: weekStripeOpacities)
-                    .padding(.top, 2)
-                    .animation(.easeOut(duration: 0.5), value: weekStripeOpacities)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Week score \(store.weekScore) of \(store.currentSeason.weeklyGoal)")
+                .accessibilityHint("Opens week, month, and season stats")
             }
         }
         .padding(.leading, 24)
