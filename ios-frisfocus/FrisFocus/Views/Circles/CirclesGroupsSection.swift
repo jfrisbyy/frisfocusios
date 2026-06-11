@@ -244,15 +244,19 @@ private enum CirclesSectionHelpers {
 /// A circle's shared header photo as a banner across the top of its
 /// list card — a soft bottom gradient keeps whatever sits below it
 /// reading cleanly. Only rendered when the circle has a header set.
+/// Tall enough (and top-aligned) that the banner shows a faithful
+/// window of the framed header instead of a thin over-zoomed slice.
 private struct CircleCardHeaderBanner: View {
     let url: URL
 
     var body: some View {
         Theme.textPrimary.opacity(0.08)
-            .frame(height: 78)
+            .frame(height: 124)
             .overlay {
                 CachedImage(url: url) { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
+                    image
+                        .resizable()
+                        .aspectRatio(ProfileHeaderCropView.aspect, contentMode: .fill)
                 } placeholder: {
                     Theme.textPrimary.opacity(0.08)
                 }

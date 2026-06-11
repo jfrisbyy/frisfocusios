@@ -140,16 +140,42 @@ struct StatsTabView: View {
                 weekOffset -= 1
             }
 
-            VStack(spacing: 2) {
-                Text(weekTitle)
-                    .font(.serif(17, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-                    .contentTransition(.numericText())
-                Text(weekSubtitle)
-                    .font(.sans(10, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.55))
+            // Tapping the week title opens a picker of every week in
+            // range — jump straight to any week without arrow-stepping.
+            Menu {
+                ForEach(selectableWeekOffsets, id: \.self) { offset in
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                            weekOffset = offset
+                        }
+                    } label: {
+                        if offset == weekOffset {
+                            Label(weekMenuLabel(for: offset), systemImage: "checkmark")
+                        } else {
+                            Text(weekMenuLabel(for: offset))
+                        }
+                    }
+                }
+            } label: {
+                VStack(spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(weekTitle)
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(Theme.textCream)
+                            .contentTransition(.numericText())
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.textCream.opacity(0.5))
+                    }
+                    Text(weekSubtitle)
+                        .font(.sans(10, weight: .regular))
+                        .foregroundStyle(Theme.textCream.opacity(0.55))
+                }
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Select a week to view")
 
             pagerArrow(iconName: "chevron.right", enabled: canGoForward) {
                 weekOffset += 1
@@ -215,9 +241,14 @@ struct StatsTabView: View {
     private var canGoForward: Bool { weekOffset < 0 }
 
     /// How far back the pager may travel — the week containing the
-    /// earliest log entry, as a non-positive offset from this week.
+    /// season's start OR the earliest log entry, whichever is older,
+    /// so the arrows always step through the whole season.
     private var earliestWeekOffset: Int {
-        guard let earliest = store.logEntries.map(\.date).min(),
+        var anchors: [Date] = [store.currentSeason.startDate]
+        if let earliestEntry = store.logEntries.map(\.date).min() {
+            anchors.append(earliestEntry)
+        }
+        guard let earliest = anchors.min(),
               let earliestWeek = cal.dateInterval(of: .weekOfYear, for: earliest),
               let currentWeek = cal.dateInterval(of: .weekOfYear, for: Date())
         else { return 0 }
@@ -227,6 +258,29 @@ struct StatsTabView: View {
             to: currentWeek.start
         ).weekOfYear ?? 0
         return -max(0, weeks)
+    }
+
+    /// Every selectable week, current first, back to the range edge.
+    private var selectableWeekOffsets: [Int] {
+        Array((earliestWeekOffset...0).reversed())
+    }
+
+    /// "This week · Jun 8 – 14" style label for the week picker menu.
+    private func weekMenuLabel(for offset: Int) -> String {
+        let anchor = cal.date(byAdding: .weekOfYear, value: offset, to: Date()) ?? Date()
+        guard let interval = cal.dateInterval(of: .weekOfYear, for: anchor) else { return "Week" }
+        let start = interval.start
+        let end = cal.date(byAdding: .day, value: 6, to: start) ?? start
+        let startFormatter = DateFormatter()
+        startFormatter.dateFormat = "MMM d"
+        let endFormatter = DateFormatter()
+        endFormatter.dateFormat = cal.isDate(start, equalTo: end, toGranularity: .month) ? "d" : "MMM d"
+        let range = "\(startFormatter.string(from: start)) – \(endFormatter.string(from: end))"
+        switch offset {
+        case 0: return "This week · \(range)"
+        case -1: return "Last week · \(range)"
+        default: return range
+        }
     }
 
     private var weekTitle: String {

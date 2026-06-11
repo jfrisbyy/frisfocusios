@@ -1767,6 +1767,13 @@ struct CaptureReviewView: View {
     /// Writes the pending proof onto the picked destination, confirms,
     /// and closes the editor.
     private func attachAndFinish(_ target: ProofAttachTarget) {
+        if case .cameraRoll = target {
+            // The editor's own camera-roll path composes and confirms;
+            // close once the toast has had its beat.
+            saveToCameraRoll()
+            scheduleFinish(after: 1.8)
+            return
+        }
         guard let media = pendingAttach else {
             onPosted()
             return
@@ -1780,6 +1787,15 @@ struct CaptureReviewView: View {
         case .note(let id):
             ok = store.attachProof(media, toNote: id)
             confirmation = ok ? "Added to the note" : "Couldn't save — try again"
+        case .task(let id):
+            ok = store.attachProof(media, toTaskId: id)
+            confirmation = ok ? "Pinned to the task" : "Couldn't save — try again"
+        case .todo(let id):
+            ok = store.attachProof(media, toTodoId: id)
+            confirmation = ok ? "Pinned to the to-do" : "Couldn't save — try again"
+        case .cameraRoll:
+            ok = false
+            confirmation = "Couldn't save — try again"
         }
         UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
         withAnimation(.easeOut(duration: 0.2)) {

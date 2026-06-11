@@ -3,9 +3,10 @@
 //  FrisFocus
 //
 //  The compact destination picker for attaching a composed proof card:
-//  active milestones up top (flag marks + progress), recent notes
-//  below, and a search field for older notes. One tap picks; the
-//  caller writes the attachment and confirms.
+//  camera roll up top, then active milestones (flag marks + progress),
+//  today's plan (tasks + to-dos — pinning a proof to the item it
+//  documents), recent notes, and a search field for older notes. One
+//  tap picks; the caller writes the attachment and confirms.
 //
 
 import SwiftUI
@@ -47,6 +48,11 @@ struct ProofAttachPickerSheet: View {
         }
     }
 
+    /// Today's plan — the same central Store definition every other
+    /// surface reads, so the pin targets always match the home plan.
+    private var planTasks: [FFTask] { store.planTasksToday }
+    private var planTodos: [Todo] { store.dueTodosToday }
+
     var body: some View {
         ZStack {
             Theme.paperCream.ignoresSafeArea()
@@ -55,11 +61,25 @@ struct ProofAttachPickerSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     header
 
+                    cameraRollRow
+
                     if !orderedMilestones.isEmpty {
                         sectionLabel("MILESTONES")
                         VStack(spacing: 6) {
                             ForEach(orderedMilestones) { milestone in
                                 milestoneRow(milestone)
+                            }
+                        }
+                    }
+
+                    if !planTasks.isEmpty || !planTodos.isEmpty {
+                        sectionLabel("TODAY'S PLAN")
+                        VStack(spacing: 6) {
+                            ForEach(planTasks) { task in
+                                planTaskRow(task)
+                            }
+                            ForEach(planTodos) { todo in
+                                planTodoRow(todo)
                             }
                         }
                     }
@@ -98,7 +118,7 @@ struct ProofAttachPickerSheet: View {
             Text("Keep this proof")
                 .font(.serif(22, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Pin the designed card to a journey or a note — it outlives the 24h story.")
+            Text("Pin the designed card to a milestone, a task, or a note — or save it to your camera roll.")
                 .font(.serifItalic(13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.55))
                 .fixedSize(horizontal: false, vertical: true)
@@ -113,6 +133,147 @@ struct ProofAttachPickerSheet: View {
     }
 
     // MARK: - Rows
+
+    /// Save straight to the device photo library — always available.
+    private var cameraRollRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onPick(.cameraRoll)
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.textPrimary.opacity(0.08))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "photo.on.rectangle")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Camera roll")
+                        .font(.sans(14, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Save the card to your photo library")
+                        .font(.sans(11, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color.white.opacity(0.65))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Save to camera roll")
+    }
+
+    private func planTaskRow(_ task: FFTask) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onPick(.task(task.id))
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    SwiftUI.Circle()
+                        .stroke(Theme.alertGreen.opacity(0.8), lineWidth: 1.5)
+                        .frame(width: 22, height: 22)
+                    if store.hasLogEntryToday(forTaskId: task.id) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Theme.alertGreen)
+                    }
+                }
+                .frame(width: 36, height: 36)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title)
+                        .font(.sans(14, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text("Pin this proof to today's task")
+                        .font(.sans(11, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color.white.opacity(0.65))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Pin to \(task.title)")
+    }
+
+    private func planTodoRow(_ todo: Todo) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onPick(.todo(todo.id))
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(Theme.alertGreen.opacity(0.8), lineWidth: 1.5)
+                        .frame(width: 22, height: 22)
+                    if todo.isCompleted {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Theme.alertGreen)
+                    }
+                }
+                .frame(width: 36, height: 36)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(todo.title)
+                        .font(.sans(14, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text("Pin this proof to today's to-do")
+                        .font(.sans(11, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color.white.opacity(0.65))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Pin to \(todo.title)")
+    }
 
     private func milestoneRow(_ milestone: Milestone) -> some View {
         Button {

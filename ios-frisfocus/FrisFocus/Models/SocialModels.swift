@@ -567,6 +567,11 @@ struct SignalFact: Codable, Identifiable {
 /// Season zone the day it was sent, then fades. Stored permanently
 /// so future analytics or history features can replay them.
 struct Cheer: Codable, Identifiable {
+    /// Cheers are quick words of encouragement — hard cap on length so
+    /// they never become letters. Enforced in the composer and again in
+    /// `Store.sendCheer`.
+    static let maxMessageLength = 80
+
     var id: UUID = UUID()
     var fromFriendId: UUID
     var fromName: String

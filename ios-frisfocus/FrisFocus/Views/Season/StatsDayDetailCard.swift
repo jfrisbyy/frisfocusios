@@ -2,18 +2,24 @@
 //  StatsDayDetailCard.swift
 //  FrisFocus
 //
-//  One day's full breakdown — every LogEntry with an icon, a label,
-//  and its points — shown when a bar is tapped in the Week or Month
-//  stats charts. Shared by both scopes so the day always reads the
-//  same wherever it's opened from.
+//  One day's full breakdown — every LogEntry with an icon, the actual
+//  task / to-do name, and its points — shown when a bar is tapped in
+//  the Week or Month stats charts. Entries backed by a pinned proof
+//  show a small photo mark; tapping the row unfolds the proof card
+//  from that specific day right beneath it.
 //
 
+import AVFoundation
 import SwiftUI
+import UIKit
 
 struct StatsDayDetailCard: View {
     @Environment(Store.self) private var store
 
     let day: Date
+
+    /// Rows whose pinned proof is currently unfolded.
+    @State private var expandedEntryIds: Set<UUID> = []
 
     private let glassFill = Color.white.opacity(0.10)
     private let glassStroke = Color.white.opacity(0.18)
@@ -82,29 +88,83 @@ struct StatsDayDetailCard: View {
 
     @ViewBuilder
     private func entryRow(_ entry: LogEntry) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: entryIconName(entry))
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(entryIconColor(entry))
-                .frame(width: 18)
+        let pins = proofPins(for: entry)
+        let isExpanded = expandedEntryIds.contains(entry.id)
 
-            Text(entryLabel(entry))
-                .font(.sans(13, weight: .medium))
-                .foregroundStyle(Theme.textCream.opacity(0.92))
-                .lineLimit(2)
+        VStack(spacing: 0) {
+            Button {
+                guard !pins.isEmpty else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                    if isExpanded {
+                        expandedEntryIds.remove(entry.id)
+                    } else {
+                        expandedEntryIds.insert(entry.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: entryIconName(entry))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(entryIconColor(entry))
+                        .frame(width: 18)
 
-            Spacer(minLength: 8)
+                    Text(entryLabel(entry))
+                        .font(.sans(13, weight: .medium))
+                        .foregroundStyle(Theme.textCream.opacity(0.92))
+                        .lineLimit(2)
 
-            Text(entry.pointsEarned >= 0 ? "+\(entry.pointsEarned)" : "\(entry.pointsEarned)")
-                .font(.serif(15, weight: .medium))
-                .foregroundStyle(
-                    entry.pointsEarned < 0 ? Theme.alertRed : Theme.textCream
-                )
+                    if !pins.isEmpty {
+                        Image(systemName: "photo.fill.on.rectangle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.sunWarm.opacity(0.9))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Theme.textCream.opacity(0.5))
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Text(entry.pointsEarned >= 0 ? "+\(entry.pointsEarned)" : "\(entry.pointsEarned)")
+                        .font(.serif(15, weight: .medium))
+                        .foregroundStyle(
+                            entry.pointsEarned < 0 ? Theme.alertRed : Theme.textCream
+                        )
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(pins.isEmpty)
+            .accessibilityLabel(entryLabel(entry))
+            .accessibilityHint(pins.isEmpty ? "" : "Shows the proof pinned to this item")
+
+            if isExpanded, !pins.isEmpty {
+                VStack(spacing: 10) {
+                    ForEach(pins) { pin in
+                        ProofPinMediaView(pin: pin)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .offset(y: -6)))
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
         .background(Color.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// Proofs pinned to this entry's task / to-do on this day.
+    private func proofPins(for entry: LogEntry) -> [ProofPin] {
+        if let taskId = entry.taskId {
+            return store.proofPins(forTaskId: taskId, on: day)
+        }
+        if let todoId = entry.todoId {
+            return store.proofPins(forTodoId: todoId, on: day)
+        }
+        return []
     }
 
     private func entryIconName(_ entry: LogEntry) -> String {
@@ -155,6 +215,19 @@ struct StatsDayDetailCard: View {
             }
             return "\(milestone.title) · milestone"
         }
+        if let cadenceLinkId = entry.cadenceLinkId,
+           let link = store.cadenceLinks.first(where: { $0.id == cadenceLinkId }) {
+            return link.displayTitle
+        }
+        // Fall back to the title snapshot taken when the entry was
+        // logged — the name survives even after the item is deleted.
+        if let title = entry.title, !title.isEmpty {
+            switch entry.entryType {
+            case .boosterBonus: return "\(title) · booster"
+            case .penalty: return "\(title) · penalty"
+            default: return title
+            }
+        }
         switch entry.entryType {
         case .boosterBonus: return "Booster bonus"
         case .trainBonus: return "Routine complete"
@@ -163,6 +236,50 @@ struct StatsDayDetailCard: View {
         case .penalty: return "Avoidance"
         case .skipped: return "Skipped"
         case .completed: return "Logged"
+        }
+    }
+}
+
+// MARK: - Pinned proof media
+
+/// One pinned proof card rendered inline beneath its entry row — the
+/// composed 9:16 clean card, photo or looping clip.
+struct ProofPinMediaView: View {
+    let pin: ProofPin
+
+    var body: some View {
+        Color.black.opacity(0.25)
+            .frame(width: 168, height: 298)
+            .overlay {
+                media
+                    .allowsHitTesting(false)
+            }
+            .clipShape(.rect(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
+            )
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Pinned proof")
+    }
+
+    @ViewBuilder
+    private var media: some View {
+        if pin.kind == .video, let url = pin.url {
+            VideoLoopView(url: url, gravity: .resizeAspectFill)
+                .id(url)
+        } else if let url = pin.url, let image = UIImage(contentsOfFile: url.path) {
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else {
+            VStack(spacing: 6) {
+                Image(systemName: "photo")
+                    .font(.system(size: 18, weight: .regular))
+                Text("Proof unavailable")
+                    .font(.sans(10, weight: .medium))
+            }
+            .foregroundStyle(Color.white.opacity(0.5))
         }
     }
 }

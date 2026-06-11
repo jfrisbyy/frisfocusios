@@ -638,10 +638,17 @@ extension SocialSyncService {
                 .value
             let circleIds = myMemberships.map { $0.circleId.uuidString }
             guard !circleIds.isEmpty else {
-                if !store.circles.isEmpty {
-                    store.circles = []
-                    store.circleTaskCompletions = []
-                    store.circleContributions = []
+                // Never wipe circles still waiting on their first
+                // confirmed up-sync — keep them locally and retry the
+                // write instead of silently erasing a created circle.
+                let pendingIds = store.pendingCircleCreateIds
+                let pendingLocals = store.circles.filter { pendingIds.contains($0.id) }
+                for circle in pendingLocals { circleCreated(circle) }
+                if store.circles.count != pendingLocals.count {
+                    let keptIds = Set(pendingLocals.map(\.id))
+                    store.circles = pendingLocals
+                    store.circleTaskCompletions = store.circleTaskCompletions.filter { keptIds.contains($0.circleId) }
+                    store.circleContributions = store.circleContributions.filter { keptIds.contains($0.circleId) }
                     store.persistAll()
                 }
                 return
@@ -727,7 +734,23 @@ extension SocialSyncService {
                 return circle
             }
             mapped = Store.withChapterTimelines(mapped)
-            store.circles = mapped
+
+            // Reconcile locally-created circles with the server mirror:
+            // confirmed ones clear their pending flag; ones the server
+            // doesn't know yet are kept locally and their up-sync is
+            // retried — a created circle must never vanish on refresh.
+            let mappedIds = Set(mapped.map(\.id))
+            let pendingIds = store.pendingCircleCreateIds
+            for id in pendingIds where mappedIds.contains(id) {
+                store.clearCircleCreatePending(id)
+            }
+            let unsynced = store.circles.filter {
+                pendingIds.contains($0.id) && !mappedIds.contains($0.id)
+            }
+            for circle in unsynced { circleCreated(circle) }
+            let unsyncedIds = Set(unsynced.map(\.id))
+
+            store.circles = mapped + unsynced
 
             store.circleTaskCompletions = completionRows.map { row in
                 CircleTaskCompletion(
@@ -737,7 +760,7 @@ extension SocialSyncService {
                     memberId: localId(forRemote: row.userId),
                     date: SyncDates.parseDay(row.completedOn)
                 )
-            }
+            } + store.circleTaskCompletions.filter { unsyncedIds.contains($0.circleId) }
             store.circleContributions = contributionRows.map { row in
                 CircleContribution(
                     id: row.id,
@@ -746,7 +769,7 @@ extension SocialSyncService {
                     amount: row.amount,
                     date: SyncDates.parse(row.createdAt)
                 )
-            }
+            } + store.circleContributions.filter { unsyncedIds.contains($0.circleId) }
             store.persistAll()
         } catch {
             print("[SocialSync] circles refresh failed: \(error)")
@@ -776,7 +799,10 @@ extension SocialSyncService {
                 if case .timeBoxed(let date) = circle.timeframe {
                     endDate = SyncDates.iso(date)
                 }
-                try await supabase.from("circles").insert(CircleInsertS(
+                // Upserts (not inserts) so a retry after a partial
+                // failure — row landed but members didn't, app died
+                // mid-write, etc. — completes instead of erroring out.
+                try await supabase.from("circles").upsert(CircleInsertS(
                     id: circle.id.uuidString,
                     ownerId: myUserId,
                     name: circle.name,
@@ -787,7 +813,7 @@ extension SocialSyncService {
                     collectiveTarget: circle.collectiveTarget,
                     visibility: "private",
                     joinRule: "open"
-                )).execute()
+                ), onConflict: "id").execute()
 
                 var members: [CircleMemberInsertS] = [
                     CircleMemberInsertS(circleId: circle.id.uuidString, userId: myUserId, role: "owner")
@@ -798,7 +824,9 @@ extension SocialSyncService {
                         PushService.send(to: remote, kind: .circleInvite, circleId: circle.id.uuidString)
                     }
                 }
-                try await supabase.from("circle_members").insert(members).execute()
+                try await supabase.from("circle_members")
+                    .upsert(members, onConflict: "circle_id,user_id")
+                    .execute()
 
                 let tasks = circle.tasks.enumerated().map { idx, t in
                     CircleTaskUpsertS(
@@ -810,11 +838,14 @@ extension SocialSyncService {
                     )
                 }
                 if !tasks.isEmpty {
-                    try await supabase.from("circle_tasks").insert(tasks).execute()
+                    try await supabase.from("circle_tasks").upsert(tasks, onConflict: "id").execute()
                 }
+                // The write is confirmed — the refresh mirror may now own
+                // this circle's row.
+                self.store?.clearCircleCreatePending(circle.id)
                 self.pokeEngine(trigger: "circle")
             } catch {
-                print("[SocialSync] circle create failed: \(error)")
+                print("[SocialSync] circle create failed (will retry on next refresh): \(error)")
             }
         }
     }

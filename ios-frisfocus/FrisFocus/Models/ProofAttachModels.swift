@@ -43,8 +43,15 @@ enum ComposedProofMedia {
     case video(Data, duration: Double)
 }
 
-/// A picked attach destination from the milestone/note picker.
+/// A picked attach destination from the proof save picker.
 enum ProofAttachTarget: Equatable {
     case milestone(UUID)
     case note(UUID)
+    /// Pin to a repeatable Task for today — surfaces beside that task's
+    /// entry in the stats day breakdown.
+    case task(UUID)
+    /// Pin to a one-time To-do for today.
+    case todo(UUID)
+    /// Save the composed card straight to the device photo library.
+    case cameraRoll
 }

@@ -1221,6 +1221,7 @@ struct SharePreviewView: View {
             isWorking = false
             didPost = true
             pendingAttach = media
+            autoPinStickerSources(media)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             withAnimation(.easeOut(duration: 0.25)) {
                 postedConfirmation = toast
@@ -1283,6 +1284,7 @@ struct SharePreviewView: View {
                 return
             }
             pendingAttach = media
+            autoPinStickerSources(media)
             isWorking = false
             switch attachContext {
             case .milestone(let id):
@@ -1295,9 +1297,26 @@ struct SharePreviewView: View {
         }
     }
 
+    /// A task / to-do sticker on the card auto-pins the composed proof
+    /// to that item — the proof documents it without an extra step.
+    private func autoPinStickerSources(_ media: ComposedProofMedia) {
+        var taskIds = Set<UUID>()
+        var todoIds = Set<UUID>()
+        for sticker in taskStickers {
+            if let id = sticker.sourceTaskId { taskIds.insert(id) }
+            if let id = sticker.sourceTodoId { todoIds.insert(id) }
+        }
+        for id in taskIds { store.attachProof(media, toTaskId: id) }
+        for id in todoIds { store.attachProof(media, toTodoId: id) }
+    }
+
     /// Writes the pending card onto the picked destination, confirms,
     /// and closes the camera.
     private func attachAndFinish(_ target: ProofAttachTarget) {
+        if case .cameraRoll = target {
+            saveToCameraRollAndFinish()
+            return
+        }
         guard let media = pendingAttach else {
             onFinished()
             return
@@ -1311,6 +1330,15 @@ struct SharePreviewView: View {
         case .note(let id):
             ok = store.attachProof(media, toNote: id)
             confirmation = ok ? "Added to the note" : "Couldn't save — try again"
+        case .task(let id):
+            ok = store.attachProof(media, toTaskId: id)
+            confirmation = ok ? "Pinned to the task" : "Couldn't save — try again"
+        case .todo(let id):
+            ok = store.attachProof(media, toTodoId: id)
+            confirmation = ok ? "Pinned to the to-do" : "Couldn't save — try again"
+        case .cameraRoll:
+            ok = false
+            confirmation = "Couldn't save — try again"
         }
         UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
         withAnimation(.easeOut(duration: 0.22)) {
@@ -1326,6 +1354,74 @@ struct SharePreviewView: View {
                 try? await Task.sleep(for: .seconds(1.4))
                 guard !Task.isCancelled else { return }
                 withAnimation(.easeIn(duration: 0.2)) { postedConfirmation = nil }
+            }
+        }
+    }
+
+    /// Camera-roll destination — composes the ATTRIBUTED card (anything
+    /// leaving the app carries the orb + @username line) and writes it
+    /// into the photo library.
+    private func saveToCameraRollAndFinish() {
+        guard !isWorking else { return }
+        isWorking = true
+
+        Task {
+            let outcome: PhotoLibrarySaver.SaveOutcome
+            switch result {
+            case .photo(let image):
+                let composed = ShareCardRenderer.compositePhoto(
+                    image,
+                    composition: composition,
+                    username: username,
+                    attributed: true,
+                    zoom: mediaZoom.scale,
+                    zoomOffset: mediaZoom.offset,
+                    zoomCanvas: cardSize,
+                    editLayer: { size in editLayerImage(at: size) }
+                )
+                if let data = composed?.jpegData(compressionQuality: 0.9) {
+                    outcome = await PhotoLibrarySaver.saveImage(data)
+                } else {
+                    outcome = .failed
+                }
+
+            case .video(let url, _, _):
+                let composedURL = await ShareCardRenderer.compositeVideo(
+                    at: url,
+                    composition: composition,
+                    username: username,
+                    attributed: true,
+                    animated: !reduceMotion,
+                    zoom: mediaZoom.scale,
+                    zoomOffset: mediaZoom.offset,
+                    zoomCanvas: cardSize,
+                    editLayer: { size in editLayerImage(at: size) }
+                )
+                outcome = await PhotoLibrarySaver.saveVideo(at: composedURL ?? url)
+            }
+
+            isWorking = false
+            let ok = outcome == .saved
+            let confirmation: String
+            switch outcome {
+            case .saved: confirmation = "Saved to your camera roll"
+            case .denied: confirmation = "Allow photo access in Settings to save"
+            case .failed: confirmation = "Couldn't save — try again"
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            withAnimation(.easeOut(duration: 0.22)) {
+                attachChipVisible = false
+                postedConfirmation = confirmation
+            }
+            if ok || didPost {
+                scheduleFinish(after: 1.1)
+            } else {
+                finishTask?.cancel()
+                finishTask = Task {
+                    try? await Task.sleep(for: .seconds(1.6))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeIn(duration: 0.2)) { postedConfirmation = nil }
+                }
             }
         }
     }

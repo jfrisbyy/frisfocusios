@@ -26,6 +26,9 @@ final class Store {
     var logEntries: [LogEntry] = [] { didSet { markDirty(.logEntries) } }
     var notes: [Note] = [] { didSet { markDirty(.notes) } }
     var folders: [NoteFolder] = [] { didSet { markDirty(.folders) } }
+    /// Composed proof cards pinned to specific Tasks / To-dos for a
+    /// specific day. The media file lives on disk; see `ProofAttachService`.
+    var proofPins: [ProofPin] = [] { didSet { markDirty(.proofPins) } }
 
     // MARK: - Social
 
@@ -227,6 +230,7 @@ final class Store {
         static let logEntries = "logEntries"
         static let notes = "notes"
         static let folders = "folders"
+        static let proofPins = "proofPins"
         static let lastRollover = "lastRolloverDate"
         static let modelVersion = "modelVersion"
 
@@ -372,6 +376,7 @@ final class Store {
             self.logEntries = Store.loadArray(Keys.logEntries) ?? []
             self.notes = Store.loadArray(Keys.notes) ?? []
             self.folders = Store.loadArray(Keys.folders) ?? []
+            self.proofPins = Store.loadArray(Keys.proofPins) ?? []
             self.friends = Store.loadArray(Keys.friends) ?? []
             self.circles = Store.loadArray(Keys.circles) ?? []
             self.circleTaskCompletions = Store.loadArray(Keys.circleTaskCompletions) ?? []
@@ -532,7 +537,7 @@ final class Store {
     /// One persistable slice of the Store. Each case maps to a single
     /// UserDefaults key.
     enum DataKey: CaseIterable {
-        case season, tasks, todos, logEntries, notes, folders
+        case season, tasks, todos, logEntries, notes, folders, proofPins
         case friends, circles, circleTaskCompletions, circleContributions
         case signalFacts, cheers, storyPosts, directShares, likes, comments, mediaAssets
         case avoidanceItems, avoidanceOccurrences, habitTrains, boosters
@@ -620,6 +625,7 @@ final class Store {
         case .logEntries: setJSON(logEntries, forKey: Keys.logEntries, encoder: encoder)
         case .notes: setJSON(notes, forKey: Keys.notes, encoder: encoder)
         case .folders: setJSON(folders, forKey: Keys.folders, encoder: encoder)
+        case .proofPins: setJSON(proofPins, forKey: Keys.proofPins, encoder: encoder)
         case .friends: setJSON(friends, forKey: Keys.friends, encoder: encoder)
         case .circles: setJSON(circles, forKey: Keys.circles, encoder: encoder)
         case .circleTaskCompletions: setJSON(circleTaskCompletions, forKey: Keys.circleTaskCompletions, encoder: encoder)
@@ -667,7 +673,7 @@ final class Store {
     /// snapshots before any new code touches the data.
     private static let allPersistedKeys: [String] = [
         Keys.currentSeason, Keys.tasks, Keys.todos, Keys.logEntries,
-        Keys.notes, Keys.folders, Keys.friends, Keys.circles,
+        Keys.notes, Keys.folders, Keys.proofPins, Keys.friends, Keys.circles,
         Keys.circleTaskCompletions, Keys.circleContributions,
         Keys.signalFacts, Keys.cheers, Keys.storyPosts, Keys.directShares,
         Keys.likes, Keys.comments, Keys.mediaAssets, Keys.avoidanceItems,
@@ -1323,7 +1329,8 @@ extension Store {
             todoId: nil,
             quantity: quantity,
             pointsEarned: earned,
-            entryType: .completed
+            entryType: .completed,
+            title: task.title
         )
         logEntries.append(entry)
 
@@ -2351,11 +2358,86 @@ extension Store {
                     taskId: nil,
                     todoId: todo.id,
                     pointsEarned: points,
-                    entryType: .completed
+                    entryType: .completed,
+                    title: todo.title
                 )
                 logEntries.append(entry)
             }
         }
+        persistAll()
+    }
+
+    // MARK: - Editing a previous day
+
+    /// Set a Task's completion for an arbitrary day. Today routes
+    /// through the full `completeTask` / `uncompleteTask` pipeline
+    /// (boosters, penalties, trains); past days write or remove a
+    /// plain entry anchored at noon so the historical score moves
+    /// without re-running today-only evaluations.
+    func setTaskCompleted(_ task: FFTask, completed: Bool, on day: Date) {
+        let cal = Calendar.current
+        if cal.isDateInToday(day) {
+            if completed { completeTask(task) } else { uncompleteTask(task) }
+            return
+        }
+        let alreadyDone = logEntries.contains {
+            $0.taskId == task.id
+                && cal.isDate($0.date, inSameDayAs: day)
+                && $0.entryType == .completed
+        }
+        if completed {
+            guard !alreadyDone else { return }
+            let when = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+            let earned = task.scoring.points(forQuantity: nil, flatValue: task.pointValue)
+            logEntries.append(LogEntry(
+                date: when,
+                taskId: task.id,
+                todoId: nil,
+                pointsEarned: earned,
+                entryType: .completed,
+                title: task.title
+            ))
+        } else {
+            logEntries.removeAll {
+                $0.taskId == task.id
+                    && cal.isDate($0.date, inSameDayAs: day)
+                    && $0.entryType == .completed
+            }
+        }
+        persistAll()
+    }
+
+    /// Flip a To-do's completion as part of editing a past day — the
+    /// completion stamp and any score entry land on THAT day, not today.
+    func setTodoCompleted(_ todo: Todo, completed: Bool, on day: Date) {
+        guard let idx = todos.firstIndex(where: { $0.id == todo.id }) else { return }
+        let cal = Calendar.current
+        if completed {
+            guard !todos[idx].isCompleted else { return }
+            let when = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+            todos[idx].isCompleted = true
+            todos[idx].completedAt = when
+            if let points = todo.pointValue {
+                logEntries.append(LogEntry(
+                    date: when,
+                    taskId: nil,
+                    todoId: todo.id,
+                    pointsEarned: points,
+                    entryType: .completed,
+                    title: todo.title
+                ))
+            }
+        } else {
+            todos[idx].isCompleted = false
+            todos[idx].completedAt = nil
+            logEntries.removeAll { $0.todoId == todo.id }
+        }
+        persistAll()
+    }
+
+    /// Remove one specific log entry — the "edit a previous day" eraser.
+    func removeLogEntry(_ entry: LogEntry) {
+        logEntries.removeAll { $0.id == entry.id }
         persistAll()
     }
 
@@ -2526,7 +2608,8 @@ extension Store {
                     taskId: task.id,
                     todoId: nil,
                     pointsEarned: penalty,
-                    entryType: .penalty
+                    entryType: .penalty,
+                    title: task.title
                 )
                 logEntries.append(entry)
             }
@@ -2555,7 +2638,8 @@ extension Store {
                     todoId: nil,
                     cadenceLinkId: link.id,
                     pointsEarned: penalty,
-                    entryType: .penalty
+                    entryType: .penalty,
+                    title: link.displayTitle
                 ))
             }
         }
@@ -2885,7 +2969,10 @@ extension Store {
     /// messages drop silently so the composer's Send button can be
     /// kept enabled-by-default without writing a ghost row.
     func sendCheer(to friend: Friend, message: String) {
-        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = String(
+            message.trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(Cheer.maxMessageLength)
+        )
         guard !trimmed.isEmpty else { return }
         let cheer = Cheer(
             fromFriendId: currentUserId,
@@ -3656,8 +3743,36 @@ extension Store {
         )
         circles.append(circle)
         persistAll()
+        markCircleCreatePending(circle.id)
         social?.circleCreated(circle)
         return circle
+    }
+
+    // MARK: - Pending circle up-sync
+
+    /// Ids of circles created locally whose backend insert hasn't been
+    /// confirmed yet. Persisted under its own key so a relaunch (or a
+    /// failed first sync) retries the write instead of silently
+    /// dropping the circle when the server mirror refreshes.
+    private static let pendingCircleCreatesKey = "pendingCircleCreates"
+
+    var pendingCircleCreateIds: Set<UUID> {
+        Set(
+            (userDefaults.stringArray(forKey: Store.pendingCircleCreatesKey) ?? [])
+                .compactMap { UUID(uuidString: $0) }
+        )
+    }
+
+    func markCircleCreatePending(_ id: UUID) {
+        var ids = pendingCircleCreateIds
+        ids.insert(id)
+        userDefaults.set(ids.map(\.uuidString), forKey: Store.pendingCircleCreatesKey)
+    }
+
+    func clearCircleCreatePending(_ id: UUID) {
+        var ids = pendingCircleCreateIds
+        guard ids.remove(id) != nil else { return }
+        userDefaults.set(ids.map(\.uuidString), forKey: Store.pendingCircleCreatesKey)
     }
 
     // MARK: - Relationship hub (C-Restructure)

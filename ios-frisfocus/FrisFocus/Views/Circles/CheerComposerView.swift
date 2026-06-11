@@ -36,6 +36,11 @@ struct CheerComposerView: View {
         message.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Characters still available under the cheer cap.
+    private var remaining: Int {
+        Cheer.maxMessageLength - message.count
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             header
@@ -74,28 +79,53 @@ struct CheerComposerView: View {
     }
 
     private var field: some View {
-        TextField(
-            "Send \(friend.displayName) a word\u{2026}",
-            text: $message,
-            axis: .vertical
-        )
-        .font(.serifItalic(16, weight: .regular))
-        .foregroundStyle(Theme.textPrimary)
-        .tint(Theme.textPrimary)
-        .focused($fieldFocused)
-        .lineLimit(3, reservesSpace: true)
-        .submitLabel(.send)
-        .onSubmit { send() }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .fill(Color.white.opacity(0.75))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 0.5)
-        )
+        VStack(alignment: .trailing, spacing: 5) {
+            TextField(
+                "Send \(friend.displayName) a word\u{2026}",
+                text: $message,
+                axis: .vertical
+            )
+            .font(.serifItalic(16, weight: .regular))
+            .foregroundStyle(Theme.textPrimary)
+            .tint(Theme.textPrimary)
+            .focused($fieldFocused)
+            .lineLimit(3, reservesSpace: true)
+            .submitLabel(.send)
+            .onSubmit { send() }
+            .onChange(of: message) { _, newValue in
+                // Hard cap — a cheer is a quick word, not a letter.
+                if newValue.count > Cheer.maxMessageLength {
+                    message = String(newValue.prefix(Cheer.maxMessageLength))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(0.75))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(
+                        remaining <= 0
+                            ? Theme.alertRed.opacity(0.45)
+                            : Theme.textPrimary.opacity(0.12),
+                        lineWidth: 0.5
+                    )
+            )
+
+            Text("\(message.count)/\(Cheer.maxMessageLength)")
+                .font(.sans(10, weight: .medium))
+                .foregroundStyle(
+                    remaining <= 10
+                        ? Theme.alertRed.opacity(0.8)
+                        : Theme.textPrimary.opacity(0.4)
+                )
+                .monospacedDigit()
+                .opacity(message.isEmpty ? 0 : 1)
+                .animation(.easeInOut(duration: 0.15), value: message.isEmpty)
+                .accessibilityLabel("\(remaining) characters left")
+        }
     }
 
     private var chipsRow: some View {

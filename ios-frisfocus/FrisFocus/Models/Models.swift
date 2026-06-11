@@ -864,6 +864,11 @@ struct LogEntry: Codable, Identifiable {
     var quantity: Double? = nil
     var pointsEarned: Int
     var entryType: LogEntryType = .completed
+    /// Snapshot of the item's name at the moment it was logged, so the
+    /// day breakdown can always show WHAT happened even after the
+    /// source task / to-do / routine is deleted. `nil` for entries
+    /// persisted before this landed (labels fall back to live lookups).
+    var title: String? = nil
 }
 
 /// A user-created bucket for grouping Notes. Stores a name plus a
