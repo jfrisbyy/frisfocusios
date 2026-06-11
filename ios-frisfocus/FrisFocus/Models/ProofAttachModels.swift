@@ -44,7 +44,7 @@ enum ComposedProofMedia {
 }
 
 /// A picked attach destination from the proof save picker.
-enum ProofAttachTarget: Equatable {
+enum ProofAttachTarget: Equatable, Hashable {
     case milestone(UUID)
     case note(UUID)
     /// Pin to a repeatable Task for today — surfaces beside that task's

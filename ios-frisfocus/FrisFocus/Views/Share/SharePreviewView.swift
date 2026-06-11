@@ -161,10 +161,11 @@ struct SharePreviewView: View {
         }) {
             ProofAttachPickerSheet(
                 suggestedMilestoneId: suggestedMilestoneId,
-                onPick: { target in
+                alreadyAttached: stickerTargets,
+                onSave: { targets in
                     sheetPickHandled = true
                     showAttachPicker = false
-                    attachAndFinish(target)
+                    attachAllAndFinish(targets)
                 }
             )
             .environment(store)
@@ -1297,6 +1298,65 @@ struct SharePreviewView: View {
         }
     }
 
+    /// Every target the proof is already pinned to via a task/to-do
+    /// sticker on the card. The picker shows these pre-ticked + locked.
+    private var stickerTargets: Set<ProofAttachTarget> {
+        var result = Set<ProofAttachTarget>()
+        for sticker in taskStickers {
+            if let id = sticker.sourceTaskId { result.insert(.task(id)) }
+            if let id = sticker.sourceTodoId { result.insert(.todo(id)) }
+        }
+        return result
+    }
+
+    /// Multi-select save — attach the composed proof to every newly
+    /// ticked destination at once (camera roll handled with the
+    /// attributed composite). Sticker-pinned items are skipped since
+    /// they were already written.
+    private func attachAllAndFinish(_ targets: Set<ProofAttachTarget>) {
+        let newTargets = targets.subtracting(stickerTargets)
+        let wantsCameraRoll = newTargets.contains(.cameraRoll)
+        let pinTargets = newTargets.subtracting([.cameraRoll])
+
+        var savedCount = 0
+        if let media = pendingAttach {
+            for target in pinTargets {
+                switch target {
+                case .milestone(let id): if store.attachProof(media, toMilestone: id) { savedCount += 1 }
+                case .note(let id): if store.attachProof(media, toNote: id) { savedCount += 1 }
+                case .task(let id): if store.attachProof(media, toTaskId: id) { savedCount += 1 }
+                case .todo(let id): if store.attachProof(media, toTodoId: id) { savedCount += 1 }
+                case .cameraRoll: break
+                }
+            }
+        }
+
+        if wantsCameraRoll {
+            // The camera-roll path composes the attributed card, saves,
+            // toasts, and finishes — fold the pin count into its toast.
+            saveToCameraRollAndFinish(alsoPinned: savedCount)
+            return
+        }
+
+        UINotificationFeedbackGenerator().notificationOccurred(savedCount > 0 ? .success : .error)
+        withAnimation(.easeOut(duration: 0.22)) {
+            attachChipVisible = false
+            postedConfirmation = savedCount > 0
+                ? (savedCount == 1 ? "Pinned in 1 place" : "Pinned in \(savedCount) places")
+                : "Couldn't save — try again"
+        }
+        if savedCount > 0 || didPost {
+            scheduleFinish(after: 0.9)
+        } else {
+            finishTask?.cancel()
+            finishTask = Task {
+                try? await Task.sleep(for: .seconds(1.4))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeIn(duration: 0.2)) { postedConfirmation = nil }
+            }
+        }
+    }
+
     /// A task / to-do sticker on the card auto-pins the composed proof
     /// to that item — the proof documents it without an extra step.
     private func autoPinStickerSources(_ media: ComposedProofMedia) {
@@ -1361,7 +1421,7 @@ struct SharePreviewView: View {
     /// Camera-roll destination — composes the ATTRIBUTED card (anything
     /// leaving the app carries the orb + @username line) and writes it
     /// into the photo library.
-    private func saveToCameraRollAndFinish() {
+    private func saveToCameraRollAndFinish(alsoPinned: Int = 0) {
         guard !isWorking else { return }
         isWorking = true
 
@@ -1404,7 +1464,10 @@ struct SharePreviewView: View {
             let ok = outcome == .saved
             let confirmation: String
             switch outcome {
-            case .saved: confirmation = "Saved to your camera roll"
+            case .saved:
+                confirmation = alsoPinned > 0
+                    ? "Saved to camera roll + \(alsoPinned) more"
+                    : "Saved to your camera roll"
             case .denied: confirmation = "Allow photo access in Settings to save"
             case .failed: confirmation = "Couldn't save — try again"
             }

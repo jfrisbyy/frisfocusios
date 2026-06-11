@@ -79,9 +79,20 @@ struct NotePhotoThumbView: View {
 
     @State private var image: UIImage? = nil
 
+    /// Proofs read as round badges with the warm signature edge so they
+    /// stand apart from ordinary rectangular photos; everything else
+    /// keeps the rounded-rect tile.
+    private var tileShape: AnyShape {
+        photo.isProof
+            ? AnyShape(Circle())
+            : AnyShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     var body: some View {
         Color.white.opacity(0.55)
             .frame(height: 96)
+            .aspectRatio(photo.isProof ? 1 : nil, contentMode: .fit)
+            .frame(maxWidth: .infinity)
             .overlay {
                 if let image {
                     Image(uiImage: image)
@@ -94,14 +105,16 @@ struct NotePhotoThumbView: View {
                         .foregroundStyle(Theme.textPrimary.opacity(0.25))
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(
-                        photo.isProof ? Theme.sunWarm.opacity(0.85) : Theme.textPrimary.opacity(0.1),
-                        lineWidth: photo.isProof ? 1.2 : 0.5
-                    )
-            )
+            .clipShape(tileShape)
+            .overlay {
+                if photo.isProof {
+                    Circle()
+                        .strokeBorder(Theme.sunWarm.opacity(0.85), lineWidth: 1.4)
+                } else {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 0.5)
+                }
+            }
             .overlay {
                 if photo.kind == .video {
                     Image(systemName: "play.fill")

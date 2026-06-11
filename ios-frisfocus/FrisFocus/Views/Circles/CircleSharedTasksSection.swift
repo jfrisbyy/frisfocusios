@@ -156,6 +156,14 @@ private struct SharedTaskRow: View {
             } label: {
                 Label("Add to story", systemImage: "camera")
             }
+
+            if task.linkedPersonalTaskId == nil {
+                Button {
+                    onLinkTap()
+                } label: {
+                    Label("Link to your season task", systemImage: "link.badge.plus")
+                }
+            }
         }
     }
 

@@ -569,10 +569,11 @@ struct CaptureReviewView: View {
             sheetPickHandled = false
         }) {
             ProofAttachPickerSheet(
-                onPick: { target in
+                alreadyAttached: stickerTargets,
+                onSave: { targets in
                     sheetPickHandled = true
                     showAttachPicker = false
-                    attachAndFinish(target)
+                    attachAllAndFinish(targets)
                 }
             )
             .environment(store)
@@ -1764,6 +1765,67 @@ struct CaptureReviewView: View {
         .accessibilityHint("Keeps the proof beyond the 24 hour story")
     }
 
+    /// Every target the proof is already pinned to via a task/to-do
+    /// sticker on the card. The picker shows these pre-ticked + locked.
+    private var stickerTargets: Set<ProofAttachTarget> {
+        var result = Set<ProofAttachTarget>()
+        for sticker in taskStickers {
+            if let id = sticker.sourceTaskId { result.insert(.task(id)) }
+            if let id = sticker.sourceTodoId { result.insert(.todo(id)) }
+        }
+        return result
+    }
+
+    /// A task / to-do sticker on the card auto-pins the composed proof
+    /// to that item — the proof documents it without an extra step.
+    private func autoPinStickerSources(_ media: ComposedProofMedia) {
+        var taskIds = Set<UUID>()
+        var todoIds = Set<UUID>()
+        for sticker in taskStickers {
+            if let id = sticker.sourceTaskId { taskIds.insert(id) }
+            if let id = sticker.sourceTodoId { todoIds.insert(id) }
+        }
+        for id in taskIds { store.attachProof(media, toTaskId: id) }
+        for id in todoIds { store.attachProof(media, toTodoId: id) }
+    }
+
+    /// Multi-select save — attach the composed proof to every newly
+    /// ticked destination at once. Sticker-pinned items are skipped
+    /// since they were already written.
+    private func attachAllAndFinish(_ targets: Set<ProofAttachTarget>) {
+        let newTargets = targets.subtracting(stickerTargets)
+        let wantsCameraRoll = newTargets.contains(.cameraRoll)
+        let pinTargets = newTargets.subtracting([.cameraRoll])
+
+        var savedCount = 0
+        if let media = pendingAttach {
+            for target in pinTargets {
+                switch target {
+                case .milestone(let id): if store.attachProof(media, toMilestone: id) { savedCount += 1 }
+                case .note(let id): if store.attachProof(media, toNote: id) { savedCount += 1 }
+                case .task(let id): if store.attachProof(media, toTaskId: id) { savedCount += 1 }
+                case .todo(let id): if store.attachProof(media, toTodoId: id) { savedCount += 1 }
+                case .cameraRoll: break
+                }
+            }
+        }
+
+        if wantsCameraRoll {
+            saveToCameraRoll()
+            scheduleFinish(after: 1.8)
+            return
+        }
+
+        UINotificationFeedbackGenerator().notificationOccurred(savedCount > 0 ? .success : .error)
+        withAnimation(.easeOut(duration: 0.2)) {
+            attachChipVisible = false
+            sentToast = savedCount > 0
+                ? (savedCount == 1 ? "Pinned in 1 place" : "Pinned in \(savedCount) places")
+                : "Couldn't save — try again"
+        }
+        scheduleFinish(after: 0.9)
+    }
+
     /// Writes the pending proof onto the picked destination, confirms,
     /// and closes the editor.
     private func attachAndFinish(_ target: ProofAttachTarget) {
@@ -2195,9 +2257,11 @@ struct CaptureReviewView: View {
             // General posts grow the quiet attach invitation — pin the
             // proof to a journey or note before the editor closes.
             if case .generalPost = mode, let mediaData {
-                pendingAttach = mediaType == .video
+                let composed: ComposedProofMedia = mediaType == .video
                     ? .video(mediaData, duration: duration ?? 0)
                     : .photo(mediaData)
+                pendingAttach = composed
+                autoPinStickerSources(composed)
                 isPosting = false
                 withAnimation(.easeOut(duration: 0.2)) {
                     sentToast = toast ?? "Posted to your people"

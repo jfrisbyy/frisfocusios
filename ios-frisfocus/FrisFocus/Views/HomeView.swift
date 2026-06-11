@@ -85,6 +85,17 @@ struct HomeView: View {
                 .environment(auth)
         }
         .profileQuickCard(isPresented: $showProfileSheet)
+        .fullScreenCover(isPresented: Binding(
+            get: { store.viewingDay != nil },
+            set: { if !$0 { store.viewingDay = nil } }
+        )) {
+            if let day = store.viewingDay {
+                PastDayHomeView(day: day) {
+                    store.viewingDay = nil
+                }
+                .environment(store)
+            }
+        }
         .sheet(isPresented: $showFriendsFromBanner) {
             NavigationStack {
                 FriendsView()

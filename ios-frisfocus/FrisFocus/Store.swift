@@ -66,6 +66,13 @@ final class Store {
     /// sync layer refills it on every refresh.
     var storyViewerIds: [UUID: Set<UUID>] = [:]
 
+    /// The day the home screen is currently "travelled" to. `nil` means
+    /// today (the live home). When set to a past day, the home shows
+    /// that day's snapshot and a banner offers a way back. Observed so
+    /// the UI reacts, but intentionally NOT persisted — the home always
+    /// launches on today.
+    var viewingDay: Date?
+
     /// The network sync bridge. Wired at sign-in by `SocialSyncService`;
     /// social mutations below notify it so local changes write through
     /// to Supabase (and realtime keeps this Store mirrored back).
@@ -859,10 +866,15 @@ final class Store {
 extension Store {
     /// Sum of points earned today, by the local calendar day.
     var todayScore: Int {
+        score(on: Date())
+    }
+
+    /// Sum of points earned on any local calendar day. Drives both the
+    /// live sun and the past-day time machine snapshot.
+    func score(on day: Date) -> Int {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
         return logEntries
-            .filter { cal.isDate($0.date, inSameDayAs: today) }
+            .filter { cal.isDate($0.date, inSameDayAs: day) }
             .map { $0.pointsEarned }
             .reduce(0, +)
     }
@@ -3428,6 +3440,21 @@ extension Store {
     /// post (viewed or not).
     func hasAnyActiveStories(forFriendId friendId: UUID) -> Bool {
         activeFriendStories.contains { $0.authorId == friendId }
+    }
+
+    /// True when a circle has at least one story clip today that the
+    /// current user hasn't watched yet and didn't post themselves —
+    /// the signal behind the "new story" glow on circle cards and the
+    /// circle page header.
+    func circleHasUnwatchedStory(circleId: UUID) -> Bool {
+        let cal = Calendar.current
+        let today = Date()
+        return storyPosts.contains { post in
+            post.circleId == circleId
+                && post.authorId != currentUserId
+                && !viewedStoryPostIds.contains(post.id)
+                && cal.isDate(post.createdAt, inSameDayAs: today)
+        }
     }
 
     /// General (non-circle) story posts that haven't expired yet,

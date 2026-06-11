@@ -144,6 +144,12 @@ struct CirclesGroupsSection: View {
                             )
                         }
                     }
+                    .overlay(alignment: .topTrailing) {
+                        if store.circleHasUnwatchedStory(circleId: circle.id) {
+                            NewStoryBadge()
+                                .padding(10)
+                        }
+                    }
                 }
 
                 // Pacts — a circle of two, rendered alongside circles.

@@ -391,6 +391,13 @@ struct CircleDetailView: View {
         }
         .frame(height: 220)
         .clipped()
+        .overlay(alignment: .topTrailing) {
+            if store.circleHasUnwatchedStory(circleId: circle.id) {
+                NewStoryBadge(diameter: 12)
+                    .padding(.top, 60)
+                    .padding(.trailing, Theme.pageHorizontalPadding + 44)
+            }
+        }
     }
 
     /// Live header URL — `circle` is captured at navigation time, so a
