@@ -42,6 +42,7 @@ struct PeopleStoryRow: View {
                     initials: userInitials,
                     photoURL: userPhotoURL,
                     thumbMedia: store.myStoryThumbMedia,
+                    thumbCaption: store.myStoryThumbCaption,
                     action: onYouTap,
                     addAction: onYouAddTap
                 )
@@ -51,7 +52,8 @@ struct PeopleStoryRow: View {
                     FriendStoryBubble(
                         friend: friend,
                         state: ringState(for: friend),
-                        thumbMedia: store.storyThumbMedia(forFriendId: friend.id)
+                        thumbMedia: store.storyThumbMedia(forFriendId: friend.id),
+                        thumbCaption: store.storyThumbCaption(forFriendId: friend.id)
                     ) {
                         onFriendTap(friend, store.hasAnyActiveStories(forFriendId: friend.id))
                     }
@@ -111,6 +113,7 @@ private struct YourStoryBubble: View {
     let initials: String
     var photoURL: URL? = nil
     var thumbMedia: MediaAsset? = nil
+    var thumbCaption: String? = nil
     let action: () -> Void
     let addAction: () -> Void
 
@@ -166,7 +169,7 @@ private struct YourStoryBubble: View {
     @ViewBuilder
     private var disc: some View {
         if let thumbMedia {
-            MomentThumb(media: thumbMedia, accent: Theme.sunOuter)
+            MomentThumb(media: thumbMedia, accent: Theme.sunOuter, caption: thumbCaption)
                 .frame(width: discSize, height: discSize)
                 .clipShape(Circle())
         } else {
@@ -201,6 +204,7 @@ private struct FriendStoryBubble: View {
     let friend: Friend
     let state: StoryRingState
     var thumbMedia: MediaAsset? = nil
+    var thumbCaption: String? = nil
     let action: () -> Void
 
     private let discSize: CGFloat = 56
@@ -273,7 +277,7 @@ private struct FriendStoryBubble: View {
     private var disc: some View {
         switch state {
         case .fresh, .seen:
-            MomentThumb(media: thumbMedia, accent: accent)
+            MomentThumb(media: thumbMedia, accent: accent, caption: thumbCaption)
                 .frame(width: discSize, height: discSize)
                 .clipShape(Circle())
                 .opacity(state == .seen ? 0.92 : 1)
@@ -348,13 +352,18 @@ struct RefinedAvatarDisc: View {
 // MARK: - Moment thumbnail
 
 /// Fills a story bubble with the story's actual frame. Tries the local
-/// thumbnail / file first, then any remote URL through the shared image
-/// cache; falls back to a warm "moment frame" gradient in the person's
-/// season color so the disc never reads empty.
+/// thumbnail / file first (resolved by file name so previews survive
+/// app updates), then any remote URL through the shared image cache;
+/// video posts without a poster get one generated on the spot. Falls
+/// back to a mini caption card when the post has a caption but no
+/// usable image, and to a warm "moment frame" gradient last — so the
+/// disc never reads as a meaningless dot.
 struct MomentThumb: View {
     let media: MediaAsset?
     let accent: Color
+    var caption: String? = nil
 
+    @Environment(Store.self) private var store
     @State private var localImage: UIImage?
 
     var body: some View {
@@ -373,10 +382,10 @@ struct MomentThumb: View {
                         .overlay(image.resizable().scaledToFill())
                         .clipped()
                 } placeholder: {
-                    momentFrame
+                    fallbackFrame
                 }
             } else {
-                momentFrame
+                fallbackFrame
             }
         }
         .task(id: media?.id) {
@@ -384,6 +393,12 @@ struct MomentThumb: View {
             // frame sticks around when the newest post changes.
             localImage = nil
             loadLocal()
+            // Older video posts never got a poster frame — generate
+            // one now, persist it, and re-read.
+            if localImage == nil, let media, media.type == .video {
+                await store.ensureVideoPoster(mediaId: media.id)
+                loadLocal()
+            }
         }
     }
 
@@ -396,14 +411,61 @@ struct MomentThumb: View {
     }
 
     private func loadLocal() {
-        let fileCandidates = [media?.thumbnailURL, media?.localURL]
-            .compactMap { $0 }
-            .filter { $0.isFileURL }
-        for url in fileCandidates {
+        // Re-read from the Store so a freshly generated poster (which
+        // updates the asset's thumbnailURL) is picked up even though
+        // our `media` value is a pre-poster copy.
+        guard let fresh = media.flatMap({ store.media(by: $0.id) }) ?? media else { return }
+        var candidates: [URL] = []
+        if let thumb = fresh.resolvedThumbnailURL, thumb.isFileURL {
+            candidates.append(thumb)
+        }
+        // Only photos are displayable straight from the main file —
+        // a video's bytes need the poster above.
+        if fresh.type == .photo, let local = fresh.resolvedLocalURL, local.isFileURL {
+            candidates.append(local)
+        }
+        for url in candidates {
             if let img = UIImage(contentsOfFile: url.path) {
                 localImage = img
                 return
             }
+        }
+    }
+
+    /// What fills the disc when no image exists: a mini caption card
+    /// (the story player's warm gradient + a snippet of the caption)
+    /// when the post has words, the season-color moment frame last.
+    @ViewBuilder
+    private var fallbackFrame: some View {
+        if let caption = caption?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !caption.isEmpty {
+            captionCard(caption)
+        } else {
+            momentFrame
+        }
+    }
+
+    /// A 56-pt echo of the player's caption-only canvas — same dusk
+    /// gradient, tiny serif snippet — so a caption-only post previews
+    /// as an actual story.
+    private func captionCard(_ caption: String) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(hex: 0x1A1830),
+                    Color(hex: 0x3A2F48),
+                    Color(hex: 0x6B4D52)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            Text(caption)
+                .font(.serif(8, weight: .medium))
+                .foregroundStyle(Theme.textCream)
+                .multilineTextAlignment(.center)
+                .lineLimit(4)
+                .minimumScaleFactor(0.9)
+                .padding(.horizontal, 8)
         }
     }
 

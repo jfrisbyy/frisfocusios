@@ -530,7 +530,7 @@ struct DirectShareViewerView: View {
     @State private var loadedImage: UIImage?
 
     private func loadCurrentImage() {
-        guard let url = currentMedia?.localURL else {
+        guard let url = currentMedia?.resolvedLocalURL else {
             loadedImage = nil
             return
         }
@@ -621,7 +621,7 @@ struct DirectShareViewerView: View {
 
     @ViewBuilder
     private var mediaLayer: some View {
-        if let media = currentMedia, media.type == .video, let url = media.localURL {
+        if let media = currentMedia, media.type == .video, let url = media.resolvedLocalURL {
             // Video proofs play on a loop, with sound, letterboxed to
             // their true shape. Holding to pause stops the clip too.
             VideoLoopView(url: url, gravity: .resizeAspect, isPaused: isPaused)

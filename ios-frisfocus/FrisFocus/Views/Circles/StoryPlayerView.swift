@@ -651,14 +651,14 @@ struct StoryPlayerView: View {
     private var mediaLayer: some View {
         if let post = currentPost {
             ZStack {
-                if let media = currentMedia, let url = media.localURL, media.type == .video {
+                if let media = currentMedia, let url = media.resolvedLocalURL, media.type == .video {
                     // Recorded clips play on a loop, with sound, letter-
                     // boxed to their true shape. Holding to pause stops
                     // the clip alongside the progress bar.
                     VideoLoopView(url: url, gravity: .resizeAspect, isPaused: isPaused)
                         .id(url)
                 } else if let media = currentMedia,
-                          let url = media.localURL,
+                          let url = media.resolvedLocalURL,
                           let img = loadImage(at: url) {
                     shapeAwareImage(img)
                 } else {

@@ -11,8 +11,10 @@
 //  call `persistAll()` so the change survives the next launch.
 //
 
+import AVFoundation
 import Foundation
 import Observation
+import UIKit
 
 @Observable
 final class Store {
@@ -351,7 +353,15 @@ final class Store {
             self.directShares = Store.loadArray(Keys.directShares) ?? []
             self.likes = Store.loadArray(Keys.likes) ?? []
             self.comments = Store.loadArray(Keys.comments) ?? []
-            self.mediaAssets = Store.loadArray(Keys.mediaAssets) ?? []
+            // Repair stale absolute file paths — the sandbox container
+            // moves on every install/update, which silently broke every
+            // saved story preview. Re-anchor by file name so old posts
+            // get their media back without reposting.
+            let repaired = Store.repairedMediaAssets(Store.loadArray(Keys.mediaAssets) ?? [])
+            self.mediaAssets = repaired.assets
+            if repaired.changed {
+                dirtyKeys.insert(.mediaAssets)
+            }
             self.avoidanceItems = Store.loadArray(Keys.avoidanceItems) ?? []
             self.avoidanceOccurrences = Store.loadArray(Keys.avoidanceOccurrences) ?? []
             self.habitTrains = Store.loadArray(Keys.habitTrains) ?? []
@@ -2684,7 +2694,75 @@ extension Store {
         )
         storyPosts.insert(post, at: 0)
         persistAll()
+
+        if type == .video {
+            let mediaId = asset.id
+            Task { [weak self] in await self?.ensureVideoPoster(mediaId: mediaId) }
+        }
         return post
+    }
+
+    /// Re-anchor every persisted media URL whose absolute path went
+    /// stale (the container moves on each install/update) by matching
+    /// its file name inside the current media directory. Returns the
+    /// repaired array plus whether anything actually changed so the
+    /// caller can mark the slice dirty.
+    private static func repairedMediaAssets(_ assets: [MediaAsset]) -> (assets: [MediaAsset], changed: Bool) {
+        guard let dir = MediaAsset.mediaDirectory else { return (assets, false) }
+        let fm = FileManager.default
+        var changed = false
+
+        func repair(_ url: URL?) -> URL? {
+            guard let url, url.isFileURL, !fm.fileExists(atPath: url.path) else { return url }
+            let candidate = dir.appendingPathComponent(url.lastPathComponent)
+            return fm.fileExists(atPath: candidate.path) ? candidate : url
+        }
+
+        let repaired = assets.map { asset -> MediaAsset in
+            var fixed = asset
+            let newLocal = repair(asset.localURL)
+            let newThumb = repair(asset.thumbnailURL)
+            if newLocal != asset.localURL || newThumb != asset.thumbnailURL {
+                fixed.localURL = newLocal
+                fixed.thumbnailURL = newThumb
+                changed = true
+            }
+            return fixed
+        }
+        return (repaired, changed)
+    }
+
+    /// Generate (once) and persist a poster frame for a video asset so
+    /// photo-only surfaces — the story bubbles above all — have a real
+    /// frame to show. Runs lazily: new video posts kick it off right
+    /// after posting, and older posts trigger it the first time their
+    /// bubble appears. No-ops when a poster already exists or the
+    /// video bytes are missing.
+    func ensureVideoPoster(mediaId: UUID) async {
+        guard let asset = mediaAssets.first(where: { $0.id == mediaId }),
+              asset.type == .video,
+              asset.resolvedThumbnailURL == nil,
+              let videoURL = asset.resolvedLocalURL,
+              let dir = MediaAsset.mediaDirectory else { return }
+
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: videoURL))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 480, height: 480)
+        let time = CMTime(seconds: 0.1, preferredTimescale: 600)
+        guard let cgImage = try? await generator.image(at: time).image,
+              let data = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.8) else { return }
+
+        let base = videoURL.deletingPathExtension().lastPathComponent
+        let posterURL = dir.appendingPathComponent("\(base)-poster.jpg")
+        do {
+            try data.write(to: posterURL, options: .atomic)
+        } catch {
+            return
+        }
+
+        guard let idx = mediaAssets.firstIndex(where: { $0.id == mediaId }) else { return }
+        mediaAssets[idx].thumbnailURL = posterURL
+        persistAll()
     }
 
     /// Writes the captured photo bytes into the app's Documents
@@ -2699,7 +2777,7 @@ extension Store {
         durationSeconds: Double?
     ) -> MediaAsset {
         guard let imageData,
-              let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+              let dir = MediaAsset.mediaDirectory else {
             return MediaAsset(
                 type: type,
                 localURL: nil,
@@ -2710,7 +2788,6 @@ extension Store {
             )
         }
 
-        let dir = docs.appendingPathComponent("FrisFocusMedia", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let ext = (type == .photo) ? "jpg" : "mov"
@@ -2793,6 +2870,11 @@ extension Store {
         })
         directShares.insert(contentsOf: created, at: 0)
         persistAll()
+
+        if type == .video {
+            let mediaId = asset.id
+            Task { [weak self] in await self?.ensureVideoPoster(mediaId: mediaId) }
+        }
         return created
     }
 
@@ -2886,12 +2968,27 @@ extension Store {
         return media(by: mediaId)
     }
 
+    /// The caption of the same post `storyThumbMedia` previews — the
+    /// bubble falls back to a mini caption card when that post has no
+    /// usable image (caption-only and seeded posts).
+    func storyThumbCaption(forFriendId friendId: UUID) -> String? {
+        let posts = activeFriendStories.filter { $0.authorId == friendId }
+        let pick = posts.first { !viewedStoryPostIds.contains($0.id) } ?? posts.first
+        return pick?.caption
+    }
+
     /// The media behind the user's own newest active story — fills the
     /// "Your story" bubble once something is posted. Skips caption-only
     /// posts so the bubble always previews the latest visual addition.
     var myStoryThumbMedia: MediaAsset? {
         guard let mediaId = activeMyStories.last(where: { $0.mediaId != nil })?.mediaId else { return nil }
         return media(by: mediaId)
+    }
+
+    /// The caption of the post behind `myStoryThumbMedia`, for the
+    /// same caption-card fallback when its image file is gone.
+    var myStoryThumbCaption: String? {
+        activeMyStories.last(where: { $0.mediaId != nil })?.caption
     }
 
     // MARK: - Exact-points permission
@@ -3036,8 +3133,11 @@ extension Store {
 
         if let mediaId = post.mediaId,
            let mediaIdx = mediaAssets.firstIndex(where: { $0.id == mediaId }) {
-            if let url = mediaAssets[mediaIdx].localURL {
+            if let url = mediaAssets[mediaIdx].resolvedLocalURL {
                 try? FileManager.default.removeItem(at: url)
+            }
+            if let thumb = mediaAssets[mediaIdx].resolvedThumbnailURL {
+                try? FileManager.default.removeItem(at: thumb)
             }
             mediaAssets.remove(at: mediaIdx)
         }
