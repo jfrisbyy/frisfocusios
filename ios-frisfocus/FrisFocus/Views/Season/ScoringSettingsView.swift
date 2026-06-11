@@ -17,6 +17,7 @@ struct ScoringSettingsView: View {
 
     @State private var newSeasonName: String = ""
     @State private var confirmNewSeason: Bool = false
+    @State private var showSeasonSetup: Bool = false
 
     private var thresholdBinding: Binding<Int> {
         Binding(
@@ -28,6 +29,35 @@ struct ScoringSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Button {
+                        showSeasonSetup = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "sun.horizon.fill")
+                                .font(.system(size: 18, weight: .regular))
+                                .foregroundStyle(Theme.sunShadow)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Set your next season")
+                                    .font(.sans(15, weight: .medium))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Text("Talk it through — the board builds itself")
+                                    .font(.sans(12, weight: .regular))
+                                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } header: {
+                    Text("Season setup")
+                } footer: {
+                    Text("A 10–15 minute conversation that builds your whole rubric — targets, tasks, negatives, boosters, and milestones. You review and edit everything before it starts.")
+                }
+
                 Section {
                     Stepper(value: thresholdBinding, in: 1...50) {
                         HStack {
@@ -80,6 +110,9 @@ struct ScoringSettingsView: View {
                     Button("Done") { dismiss() }
                         .foregroundStyle(Theme.textPrimary.opacity(0.7))
                 }
+            }
+            .fullScreenCover(isPresented: $showSeasonSetup) {
+                SeasonSetupFlowView()
             }
             .confirmationDialog(
                 "Start a new season from this one's setup?",
