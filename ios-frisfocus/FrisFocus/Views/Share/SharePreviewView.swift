@@ -21,6 +21,7 @@
 //
 
 import AVFoundation
+import PencilKit
 import SwiftUI
 import UIKit
 
@@ -63,12 +64,38 @@ struct SharePreviewView: View {
     @State private var audience: ShareCardAudience = .initial
     @State private var showAudiencePanel: Bool = false
 
+    // Edit layer — the same toolkit as the proof editor (text, task
+    // stickers, freehand drawing), living on the 9:16 card and baked
+    // into both the clean in-app card and the attributed export.
+    @State private var captions: [CaptionBlock] = []
+    @State private var taskStickers: [TaskStickerBlock] = []
+    @State private var pkCanvas = PKCanvasView()
+    @State private var pkToolPicker = PKToolPicker()
+    @State private var isDrawing: Bool = false
+    @State private var showTaskPicker: Bool = false
+    @State private var activeBlockId: UUID? = nil
+    @State private var isDraggingBlock: Bool = false
+    @State private var draggingOverTrash: Bool = false
+    /// The story card's on-screen size — the canvas space block
+    /// positions are normalized against.
+    @State private var cardSize: CGSize = .zero
+
+    // Caption editor state (shared CaptionEditorOverlay).
+    @State private var editingCaptionId: UUID? = nil
+    @State private var draftText: String = ""
+    @State private var draftStyle: CaptionStyle = .classic
+    @State private var draftColor: Color? = nil
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                topBar
+                if isDrawing {
+                    drawingChrome
+                } else {
+                    topBar
+                }
 
                 // The story-shaped card — exactly the frame that posts.
                 storyCard
@@ -76,7 +103,19 @@ struct SharePreviewView: View {
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                bottomArea
+                if !isDrawing {
+                    bottomArea
+                }
+            }
+
+            if editingCaptionId != nil {
+                CaptionEditorOverlay(
+                    text: $draftText,
+                    style: $draftStyle,
+                    color: $draftColor,
+                    onCancel: cancelEditor,
+                    onDone: commitEditor
+                )
             }
 
             if isWorking {
@@ -92,7 +131,18 @@ struct SharePreviewView: View {
             ActivityShareSheet(items: payload.items)
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showTaskPicker) {
+            TaskStickerPickerView { block in
+                addTaskSticker(block)
+            }
+            .environment(store)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.hidden)
+        }
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: showAudiencePanel)
+        .animation(.easeInOut(duration: 0.2), value: isDrawing)
+        .animation(.easeInOut(duration: 0.18), value: editingCaptionId)
+        .animation(.easeInOut(duration: 0.18), value: isDraggingBlock)
     }
 
     // MARK: - Story card (9:16 — WYSIWYG with the export)
@@ -103,6 +153,12 @@ struct SharePreviewView: View {
     private var storyCard: some View {
         mediaLayer
             .overlay {
+                editCanvas
+            }
+            .overlay {
+                // The day-overlay chrome renders above the edit layer —
+                // matching the export order — but never intercepts
+                // touches, so blocks below stay draggable.
                 ShareOverlayView(
                     context: context,
                     options: options,
@@ -118,6 +174,157 @@ struct SharePreviewView: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.5)
             )
+            .overlay(alignment: .bottom) {
+                if isDraggingBlock {
+                    trashZone
+                        .padding(.bottom, 16)
+                        .transition(.opacity)
+                }
+            }
+    }
+
+    // MARK: - Edit canvas (captions, stickers, drawing)
+
+    /// The interactive edit layer on the story card. Tap an empty spot
+    /// to drop a caption right there; drag / pinch / rotate blocks; drag
+    /// to the bottom to delete — exactly like the proof editor.
+    private var editCanvas: some View {
+        GeometryReader { geo in
+            ZStack {
+                DrawingCanvasView(canvas: $pkCanvas, isActive: isDrawing, toolPicker: pkToolPicker)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .allowsHitTesting(isDrawing)
+                    .zIndex(isDrawing ? 50 : 0)
+
+                ForEach(captions) { block in
+                    captionBlockView(block, in: geo.size)
+                }
+
+                ForEach(taskStickers) { block in
+                    stickerBlockView(block, in: geo.size)
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .contentShape(Rectangle())
+            .gesture(
+                SpatialTapGesture(coordinateSpace: .local)
+                    .onEnded { value in
+                        guard !isDrawing, !isWorking else { return }
+                        if activeBlockId != nil {
+                            activeBlockId = nil
+                        } else {
+                            addCaption(at: value.location, in: geo.size)
+                        }
+                    }
+            )
+            .onAppear { cardSize = geo.size }
+            .onChange(of: geo.size) { _, newSize in
+                cardSize = newSize
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func captionBlockView(_ block: CaptionBlock, in size: CGSize) -> some View {
+        DraggableCaptionView(
+            block: block,
+            canvasSize: size,
+            isActive: activeBlockId == block.id,
+            onActivate: {
+                if activeBlockId != block.id { activeBlockId = block.id }
+            },
+            onTapToEdit: { openEditor(for: block) },
+            onCommitPosition: { newPos in
+                if let idx = captions.firstIndex(where: { $0.id == block.id }) {
+                    captions[idx].position = newPos
+                }
+            },
+            onCommitScale: { newScale in
+                if let idx = captions.firstIndex(where: { $0.id == block.id }) {
+                    captions[idx].scale = newScale
+                }
+            },
+            onCommitRotation: { newRotation in
+                if let idx = captions.firstIndex(where: { $0.id == block.id }) {
+                    captions[idx].rotation = newRotation
+                }
+            },
+            onTrashHoverChanged: { over in
+                if draggingOverTrash != over { draggingOverTrash = over }
+            },
+            onDropDelete: {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                captions.removeAll { $0.id == block.id }
+                activeBlockId = nil
+                draggingOverTrash = false
+            },
+            onDragStateChanged: { dragging in
+                if isDraggingBlock != dragging { isDraggingBlock = dragging }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func stickerBlockView(_ block: TaskStickerBlock, in size: CGSize) -> some View {
+        DraggableStickerView(
+            block: block,
+            canvasSize: size,
+            isActive: activeBlockId == block.id,
+            onActivate: {
+                if activeBlockId != block.id { activeBlockId = block.id }
+            },
+            onCommitPosition: { newPos in
+                if let idx = taskStickers.firstIndex(where: { $0.id == block.id }) {
+                    taskStickers[idx].position = newPos
+                }
+            },
+            onCommitScale: { newScale in
+                if let idx = taskStickers.firstIndex(where: { $0.id == block.id }) {
+                    taskStickers[idx].scale = newScale
+                }
+            },
+            onCommitRotation: { newRotation in
+                if let idx = taskStickers.firstIndex(where: { $0.id == block.id }) {
+                    taskStickers[idx].rotation = newRotation
+                }
+            },
+            onTrashHoverChanged: { over in
+                if draggingOverTrash != over { draggingOverTrash = over }
+            },
+            onDropDelete: {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                taskStickers.removeAll { $0.id == block.id }
+                activeBlockId = nil
+                draggingOverTrash = false
+            },
+            onDragStateChanged: { dragging in
+                if isDraggingBlock != dragging { isDraggingBlock = dragging }
+            }
+        )
+    }
+
+    private var trashZone: some View {
+        VStack(spacing: 4) {
+            Image(systemName: draggingOverTrash ? "trash.fill" : "trash")
+                .font(.system(size: 18, weight: .semibold))
+            Text("drop to delete")
+                .font(.sans(10, weight: .medium))
+        }
+        .foregroundStyle(Color.white)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(
+            Capsule().fill(
+                draggingOverTrash
+                    ? Color.red.opacity(0.78)
+                    : Color.black.opacity(0.55)
+            )
+        )
+        .overlay(
+            Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
+        )
+        .scaleEffect(draggingOverTrash ? 1.12 : 1.0)
+        .allowsHitTesting(false)
     }
 
     // MARK: - Media
@@ -142,7 +349,7 @@ struct SharePreviewView: View {
     // MARK: - Chrome
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 10) {
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismiss()
@@ -156,6 +363,90 @@ struct SharePreviewView: View {
             .accessibilityLabel("Retake")
 
             Spacer()
+
+            toolButton(icon: "textformat", label: "Add text") {
+                addCaption()
+            }
+
+            toolButton(icon: "checklist", label: "Add a task sticker") {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                activeBlockId = nil
+                showTaskPicker = true
+            }
+
+            toolButton(icon: "scribble.variable", label: "Draw on the card") {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                activeBlockId = nil
+                withAnimation(.easeInOut(duration: 0.2)) { isDrawing = true }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+    }
+
+    /// A round glyph-only tool button matching the proof editor's.
+    private func toolButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color.white.opacity(0.12)))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    /// Minimal bar while draw mode is engaged — Undo, Clear, Done. The
+    /// system tool picker floats at the bottom on its own.
+    private var drawingChrome: some View {
+        HStack(spacing: 10) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                pkCanvas.undoManager?.undo()
+            } label: {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(Color.black.opacity(0.40)))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Undo")
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                pkCanvas.drawing = PKDrawing()
+            } label: {
+                Text("Clear")
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 14)
+                    .frame(height: 38)
+                    .background(Capsule().fill(Color.black.opacity(0.40)))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear drawing")
+
+            Spacer()
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.easeInOut(duration: 0.2)) { isDrawing = false }
+            } label: {
+                Text("Done")
+                    .font(.sans(14, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+                    .padding(.horizontal, 20)
+                    .frame(height: 38)
+                    .background(Capsule().fill(Theme.textPrimary))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Finish drawing")
         }
         .padding(.horizontal, 18)
         .padding(.top, 16)
@@ -556,6 +847,133 @@ struct SharePreviewView: View {
         }
     }
 
+    // MARK: - Caption actions
+
+    private func addCaption() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let block = CaptionBlock(
+            text: "",
+            position: CGPoint(x: 0.5, y: 0.42),
+            style: .classic
+        )
+        captions.append(block)
+        openEditor(for: block)
+    }
+
+    /// Adds a caption at the tapped point (normalized + clamped clear of
+    /// the overlay cluster) and immediately opens the editor.
+    private func addCaption(at location: CGPoint, in size: CGSize) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let nx = size.width > 0 ? min(0.9, max(0.1, location.x / size.width)) : 0.5
+        let ny = size.height > 0 ? min(0.82, max(0.08, location.y / size.height)) : 0.5
+        let block = CaptionBlock(
+            text: "",
+            position: CGPoint(x: nx, y: ny),
+            style: .classic
+        )
+        captions.append(block)
+        openEditor(for: block)
+    }
+
+    private func openEditor(for block: CaptionBlock) {
+        editingCaptionId = block.id
+        draftText = block.text
+        draftStyle = block.style
+        draftColor = block.color
+        activeBlockId = block.id
+    }
+
+    private func commitEditor() {
+        guard let id = editingCaptionId else { return }
+        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            captions.removeAll { $0.id == id }
+            activeBlockId = nil
+        } else if let idx = captions.firstIndex(where: { $0.id == id }) {
+            captions[idx].text = trimmed
+            captions[idx].style = draftStyle
+            captions[idx].color = draftColor
+        }
+        editingCaptionId = nil
+    }
+
+    private func cancelEditor() {
+        if let id = editingCaptionId,
+           let idx = captions.firstIndex(where: { $0.id == id }),
+           captions[idx].text.isEmpty {
+            captions.remove(at: idx)
+            activeBlockId = nil
+        }
+        editingCaptionId = nil
+    }
+
+    /// Drops a freshly-picked task sticker onto the card, gently
+    /// staggered so successive picks don't stack perfectly.
+    private func addTaskSticker(_ block: TaskStickerBlock) {
+        var placed = block
+        let step = CGFloat(taskStickers.count % 4)
+        placed.position = CGPoint(x: 0.5, y: min(0.66, 0.36 + step * 0.07))
+        taskStickers.append(placed)
+        activeBlockId = placed.id
+    }
+
+    // MARK: - Edit layer rendering
+
+    private var hasEdits: Bool {
+        !captions.isEmpty || !taskStickers.isEmpty || !pkCanvas.drawing.strokes.isEmpty
+    }
+
+    /// Rasterizes the PencilKit drawing at the card's point size,
+    /// preserving the dark-editor ink colors.
+    private func drawingSnapshot() -> UIImage? {
+        let drawing = pkCanvas.drawing
+        guard !drawing.strokes.isEmpty, cardSize.width > 0, cardSize.height > 0 else { return nil }
+        var image: UIImage?
+        UITraitCollection(userInterfaceStyle: .dark).performAsCurrent {
+            image = drawing.image(from: CGRect(origin: .zero, size: cardSize), scale: UIScreen.main.scale)
+        }
+        return image
+    }
+
+    /// Renders the caption + sticker + drawing layer into one
+    /// transparent image at the export's pixel size, laid out in the
+    /// card's coordinate space so proportions match what the user saw.
+    private func editLayerImage(at pixelSize: CGSize) -> UIImage? {
+        let base = cardSize
+        guard hasEdits, base.width > 0, base.height > 0, pixelSize.width > 1 else { return nil }
+        let drawingImg = drawingSnapshot()
+        let content = ZStack {
+            Color.clear
+                .frame(width: base.width, height: base.height)
+
+            if let drawingImg {
+                Image(uiImage: drawingImg)
+                    .resizable()
+                    .frame(width: base.width, height: base.height)
+            }
+
+            ForEach(captions) { block in
+                CaptionBlockText(block: block)
+                    .scaleEffect(block.scale)
+                    .rotationEffect(block.rotation)
+                    .position(x: block.position.x * base.width, y: block.position.y * base.height)
+            }
+
+            ForEach(taskStickers) { block in
+                TaskStickerView(block: block)
+                    .scaleEffect(block.scale)
+                    .rotationEffect(block.rotation)
+                    .position(x: block.position.x * base.width, y: block.position.y * base.height)
+            }
+        }
+        .frame(width: base.width, height: base.height)
+
+        let renderer = ImageRenderer(content: content)
+        renderer.isOpaque = false
+        renderer.scale = pixelSize.width / max(base.width, 1)
+        return renderer.uiImage
+    }
+
     // MARK: - Veil + toast
 
     private var workingVeil: some View {
@@ -601,6 +1019,8 @@ struct SharePreviewView: View {
         guard !isWorking else { return }
         isWorking = true
         if showAudiencePanel { showAudiencePanel = false }
+        if isDrawing { isDrawing = false }
+        activeBlockId = nil
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
         Task {
@@ -615,7 +1035,8 @@ struct SharePreviewView: View {
                     context: context,
                     options: options,
                     username: username,
-                    attributed: false
+                    attributed: false,
+                    editLayer: { size in editLayerImage(at: size) }
                 )
                 mediaData = composed?.jpegData(compressionQuality: 0.9)
                 mediaType = .photo
@@ -628,7 +1049,8 @@ struct SharePreviewView: View {
                     options: options,
                     username: username,
                     attributed: false,
-                    animated: !reduceMotion
+                    animated: !reduceMotion,
+                    editLayer: { size in editLayerImage(at: size) }
                 )
                 mediaData = try? Data(contentsOf: composedURL ?? url)
                 mediaType = .video
@@ -679,6 +1101,8 @@ struct SharePreviewView: View {
         guard !isWorking else { return }
         isWorking = true
         if showAudiencePanel { showAudiencePanel = false }
+        if isDrawing { isDrawing = false }
+        activeBlockId = nil
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
         Task {
@@ -689,7 +1113,8 @@ struct SharePreviewView: View {
                     context: context,
                     options: options,
                     username: username,
-                    attributed: true
+                    attributed: true,
+                    editLayer: { size in editLayerImage(at: size) }
                 )
                 isWorking = false
                 if let composed {
@@ -703,7 +1128,8 @@ struct SharePreviewView: View {
                     options: options,
                     username: username,
                     attributed: true,
-                    animated: !reduceMotion
+                    animated: !reduceMotion,
+                    editLayer: { size in editLayerImage(at: size) }
                 )
                 isWorking = false
                 if let composedURL {

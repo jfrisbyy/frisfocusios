@@ -66,34 +66,40 @@ enum ShareCardRenderer {
     // MARK: - Photo compositing
 
     /// Flattens the overlay onto a captured photo. Returns the final
-    /// 9:16 story-ratio image at full capture resolution.
+    /// 9:16 story-ratio image at full capture resolution. `editLayer`
+    /// supplies the user's edits (captions, task stickers, drawing)
+    /// rendered at the crop's pixel size — drawn between the photo and
+    /// the day-overlay chrome so attribution is never obscured.
     @MainActor
     static func compositePhoto(
         _ photo: UIImage,
         context: ShareDayContext,
         options: ShareOverlayOptions,
         username: String,
-        attributed: Bool
+        attributed: Bool,
+        editLayer: ((CGSize) -> UIImage?)? = nil
     ) -> UIImage? {
         guard let base = normalizedStoryCrop(photo) else { return nil }
-        guard let overlay = overlayImage(
+        let overlay = overlayImage(
             context: context,
             options: options,
             username: username,
             attributed: attributed,
             layer: .all,
             pixelSize: base.size
-        ) else {
-            return base
-        }
+        )
+        let edits = editLayer?(base.size)
+        guard overlay != nil || edits != nil else { return base }
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
         let renderer = UIGraphicsImageRenderer(size: base.size, format: format)
         return renderer.image { _ in
-            base.draw(in: CGRect(origin: .zero, size: base.size))
-            overlay.draw(in: CGRect(origin: .zero, size: base.size))
+            let rect = CGRect(origin: .zero, size: base.size)
+            base.draw(in: rect)
+            edits?.draw(in: rect)
+            overlay?.draw(in: rect)
         }
     }
 
@@ -135,13 +141,15 @@ enum ShareCardRenderer {
 
     /// Immutable hand-off to the background Core Image frame handler.
     private final class ShareVideoPayload: @unchecked Sendable {
+        nonisolated let edits: CIImage?
         nonisolated let chrome: CIImage?
         nonisolated let sun: CIImage?
         nonisolated let risePixels: CGFloat
         nonisolated let duration: Double
         nonisolated let animated: Bool
 
-        nonisolated init(chrome: CIImage?, sun: CIImage?, risePixels: CGFloat, duration: Double, animated: Bool) {
+        nonisolated init(edits: CIImage?, chrome: CIImage?, sun: CIImage?, risePixels: CGFloat, duration: Double, animated: Bool) {
+            self.edits = edits
             self.chrome = chrome
             self.sun = sun
             self.risePixels = risePixels
@@ -160,7 +168,8 @@ enum ShareCardRenderer {
         options: ShareOverlayOptions,
         username: String,
         attributed: Bool,
-        animated: Bool
+        animated: Bool,
+        editLayer: ((CGSize) -> UIImage?)? = nil
     ) async -> URL? {
         guard
             let renderSize = await uprightSize(forVideoAt: sourceURL),
@@ -188,9 +197,11 @@ enum ShareCardRenderer {
 
         let chromeCI = chromeImage?.cgImage.map { CIImage(cgImage: $0) }
         let sunCI = sunImage?.cgImage.map { CIImage(cgImage: $0) }
-        guard chromeCI != nil || sunCI != nil else { return nil }
+        let editsCI = editLayer?(renderSize)?.cgImage.map { CIImage(cgImage: $0) }
+        guard chromeCI != nil || sunCI != nil || editsCI != nil else { return nil }
 
         let payload = ShareVideoPayload(
+            edits: editsCI,
             chrome: chromeCI,
             sun: sunCI,
             risePixels: renderSize.width * 0.16,
@@ -210,6 +221,16 @@ enum ShareCardRenderer {
             videoComposition = try await AVVideoComposition.videoComposition(with: asset) { request in
                 let extent = request.sourceImage.extent
                 var output = request.sourceImage
+
+                // The user's edit layer (captions / stickers / drawing)
+                // sits directly on the footage, beneath the chrome.
+                if let edits = payload.edits, edits.extent.width > 0, edits.extent.height > 0 {
+                    let scale = CGAffineTransform(
+                        scaleX: extent.width / edits.extent.width,
+                        y: extent.height / edits.extent.height
+                    )
+                    output = edits.transformed(by: scale).composited(over: output)
+                }
 
                 if let chrome = payload.chrome, chrome.extent.width > 0, chrome.extent.height > 0 {
                     let scale = CGAffineTransform(

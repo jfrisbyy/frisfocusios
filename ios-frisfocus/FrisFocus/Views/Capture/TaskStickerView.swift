@@ -252,7 +252,11 @@ struct DraggableStickerView: View {
     }
 
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 4)
+        // Global space: translations match the finger on screen even when
+        // the sticker is scaled or rotated — a local-space translation
+        // would be measured in the transformed space while `.offset`
+        // moves in parent space, making the drag drift and lag.
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .updating($dragTranslation) { value, state, _ in
                 state = value.translation
             }

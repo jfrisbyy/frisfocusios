@@ -410,7 +410,6 @@ struct CaptureReviewView: View {
     @State private var draftStyle: CaptionStyle = .classic
     /// Chosen color for the caption being edited. `nil` is "Auto".
     @State private var draftColor: Color? = nil
-    @FocusState private var captionFocused: Bool
 
     // Selection + trash state. In-flight drag/pinch/rotate values now
     // live inside `DraggableCaptionView` as @GestureState, so a gesture
@@ -426,6 +425,9 @@ struct CaptureReviewView: View {
 
     @State private var isPosting: Bool = false
     @State private var selectedFilter: CaptureFilter = .original
+    /// The filter strip is opt-in — collapsed behind the filters tool
+    /// button so more of the photo is visible by default.
+    @State private var showFilters: Bool = false
     @State private var filteredImageCache: [CaptureFilter: UIImage] = [:]
     @State private var thumbCache: [CaptureFilter: UIImage] = [:]
     @State private var canvasSize: CGSize = .zero
@@ -910,7 +912,10 @@ struct CaptureReviewView: View {
                         captionToolRow
                             .padding(.horizontal, 22)
 
-                        filterStrip
+                        if showFilters {
+                            filterStrip
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
 
                     bottomBar
@@ -1023,66 +1028,35 @@ struct CaptureReviewView: View {
 
     // MARK: - Caption tool row
 
-    /// "Add text" + (if a block is selected) Edit / Style / Delete
-    /// quick actions.
+    /// Icon-only tools — text, task sticker, draw, filters — plus (if a
+    /// block is selected) Edit / Style quick actions. Each keeps a
+    /// spoken accessibility label for VoiceOver.
     private var captionToolRow: some View {
         HStack(spacing: 10) {
-            Button {
+            toolButton(icon: "textformat", label: captions.isEmpty ? "Add text" : "Add another text") {
                 addCaption()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "textformat")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(captions.isEmpty ? "add text" : "add another")
-                        .font(.sans(13, weight: .semibold))
-                }
-                .foregroundStyle(Color.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Capsule().fill(Color.white.opacity(0.12)))
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5))
             }
-            .buttonStyle(.plain)
 
-            Button {
+            toolButton(icon: "checklist", label: "Add a task sticker") {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 activeBlockId = nil
                 showTaskPicker = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "checklist")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("add task")
-                        .font(.sans(13, weight: .semibold))
-                }
-                .foregroundStyle(Color.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Capsule().fill(Color.white.opacity(0.12)))
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Add a task sticker")
 
-            Button {
+            toolButton(icon: "scribble.variable", label: "Draw on the photo") {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 activeBlockId = nil
                 withAnimation(.easeInOut(duration: 0.2)) { isDrawing = true }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "scribble.variable")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("draw")
-                        .font(.sans(13, weight: .semibold))
-                }
-                .foregroundStyle(Color.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Capsule().fill(Color.white.opacity(0.12)))
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Draw on the photo")
+
+            toolButton(
+                icon: "camera.filters",
+                label: showFilters ? "Hide filters" : "Show filters",
+                isOn: showFilters
+            ) {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.easeInOut(duration: 0.22)) { showFilters.toggle() }
+            }
 
             if let activeId = activeBlockId,
                let block = captions.first(where: { $0.id == activeId }) {
@@ -1117,6 +1091,26 @@ struct CaptureReviewView: View {
         }
     }
 
+    /// A round glyph-only tool button. `isOn` renders the engaged state
+    /// (cream fill, dark glyph) for toggles like the filter strip.
+    private func toolButton(
+        icon: String,
+        label: String,
+        isOn: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(isOn ? Theme.textPrimary : Color.white)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(isOn ? Theme.textCream : Color.white.opacity(0.12)))
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
     // MARK: - Filter strip
 
     private var filterStrip: some View {
@@ -1137,6 +1131,10 @@ struct CaptureReviewView: View {
             UISelectionFeedbackGenerator().selectionChanged()
             withAnimation(.easeInOut(duration: 0.18)) {
                 selectedFilter = filter
+            }
+            // Picking a look tucks the strip away again.
+            withAnimation(.easeInOut(duration: 0.22).delay(0.12)) {
+                showFilters = false
             }
         } label: {
             VStack(spacing: 6) {
@@ -1711,221 +1709,18 @@ struct CaptureReviewView: View {
         .allowsHitTesting(false)
     }
 
-    // MARK: - Caption editor overlay (text + style picker)
+    // MARK: - Caption editor overlay (single styled field)
 
+    /// The shared editor overlay — one styled text field the user types
+    /// directly into, plus the style and color pickers.
     private var captionEditorOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.7)
-                .ignoresSafeArea()
-                .onTapGesture { commitEditor() }
-
-            VStack(spacing: 18) {
-                Spacer()
-
-                // Live preview of the draft block.
-                CaptionBlockText(
-                    block: CaptionBlock(
-                        text: draftText,
-                        style: draftStyle,
-                        color: draftColor
-                    ),
-                    isPlaceholder: draftText.isEmpty
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 24)
-
-                Spacer()
-
-                TextField(
-                    "",
-                    text: $draftText,
-                    prompt: Text("type something")
-                        .foregroundStyle(Color.white.opacity(0.45)),
-                    axis: .vertical
-                )
-                .font(.sans(18, weight: .medium))
-                .foregroundStyle(Color.white)
-                .multilineTextAlignment(.center)
-                .lineLimit(1...5)
-                .focused($captionFocused)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.10))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.20), lineWidth: 0.5)
-                )
-                .padding(.horizontal, 22)
-
-                stylePicker
-                    .padding(.bottom, 2)
-
-                colorPickerRow
-                    .padding(.bottom, 6)
-
-                HStack {
-                    Button("Cancel") {
-                        cancelEditor()
-                    }
-                    .foregroundStyle(Color.white.opacity(0.75))
-                    .font(.sans(14, weight: .medium))
-
-                    Spacer()
-
-                    Button("Done") {
-                        commitEditor()
-                    }
-                    .font(.sans(14, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(Theme.textPrimary))
-                }
-                .padding(.horizontal, 22)
-                .padding(.bottom, 18)
-            }
-        }
-        .transition(.opacity)
-    }
-
-    private var stylePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(CaptionStyle.allCases) { style in
-                    styleChip(style)
-                }
-            }
-            .padding(.horizontal, 22)
-        }
-        .frame(height: 64)
-    }
-
-    // MARK: - Color picker
-
-    private var colorPickerRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 11) {
-                autoColorChip
-                ForEach(Array(captionPalette.enumerated()), id: \.offset) { _, swatch in
-                    colorSwatch(swatch)
-                }
-                spectrumChip
-            }
-            .padding(.horizontal, 22)
-        }
-        .frame(height: 46)
-    }
-
-    private var autoColorChip: some View {
-        let selected = (draftColor == nil)
-        return Button {
-            UISelectionFeedbackGenerator().selectionChanged()
-            draftColor = nil
-        } label: {
-            ZStack {
-                Circle().fill(Color.white.opacity(0.12)).frame(width: 30, height: 30)
-                Image(systemName: "a.circle")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.9))
-            }
-            .padding(4)
-            .overlay(
-                Circle().strokeBorder(selected ? Theme.textCream : Color.clear, lineWidth: 2)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Automatic color")
-    }
-
-    private func colorSwatch(_ color: Color) -> some View {
-        let selected = (draftColor == color)
-        return Button {
-            UISelectionFeedbackGenerator().selectionChanged()
-            draftColor = color
-        } label: {
-            Circle()
-                .fill(color)
-                .frame(width: 30, height: 30)
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.45), lineWidth: 0.6))
-                .padding(4)
-                .overlay(
-                    Circle().strokeBorder(selected ? Theme.textCream : Color.clear, lineWidth: 2)
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Caption color")
-    }
-
-    private var spectrumChip: some View {
-        let custom = (draftColor != nil) && !captionPalette.contains(where: { $0 == draftColor })
-        return ZStack {
-            Circle()
-                .strokeBorder(
-                    AngularGradient(
-                        gradient: Gradient(colors: [.red, .orange, .yellow, .green, .cyan, .blue, .purple, .pink, .red]),
-                        center: .center
-                    ),
-                    lineWidth: 3
-                )
-                .frame(width: 30, height: 30)
-            ColorPicker(
-                "",
-                selection: Binding(
-                    get: { draftColor ?? .white },
-                    set: { draftColor = $0 }
-                ),
-                supportsOpacity: false
-            )
-            .labelsHidden()
-            .scaleEffect(0.82)
-            .frame(width: 26, height: 26)
-        }
-        .padding(4)
-        .overlay(
-            Circle().strokeBorder(custom ? Theme.textCream : Color.clear, lineWidth: 2)
+        CaptionEditorOverlay(
+            text: $draftText,
+            style: $draftStyle,
+            color: $draftColor,
+            onCancel: cancelEditor,
+            onDone: commitEditor
         )
-        .accessibilityLabel("More colors")
-    }
-
-    private func styleChip(_ style: CaptionStyle) -> some View {
-        let isSelected = style == draftStyle
-        return Button {
-            UISelectionFeedbackGenerator().selectionChanged()
-            withAnimation(.easeInOut(duration: 0.14)) {
-                draftStyle = style
-            }
-        } label: {
-            VStack(spacing: 4) {
-                CaptionBlockText(
-                    block: CaptionBlock(text: style.glyphSample, style: style)
-                )
-                .scaleEffect(0.55)
-                .frame(width: 50, height: 32)
-                .clipped()
-
-                Text(style.label)
-                    .font(.sans(9, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.65))
-            }
-            .frame(width: 64)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.12) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        isSelected ? Theme.textCream : Color.white.opacity(0.18),
-                        lineWidth: isSelected ? 1.2 : 0.5
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(style.label) style")
     }
 
     // MARK: - Caption actions
@@ -1963,11 +1758,6 @@ struct CaptureReviewView: View {
         draftStyle = block.style
         draftColor = block.color
         activeBlockId = block.id
-        // Pop the keyboard after the overlay renders.
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(80))
-            captionFocused = true
-        }
     }
 
     private func commitEditor() {
@@ -1983,7 +1773,6 @@ struct CaptureReviewView: View {
             captions[idx].color = draftColor
         }
         editingCaptionId = nil
-        captionFocused = false
     }
 
     private func cancelEditor() {
@@ -1995,7 +1784,6 @@ struct CaptureReviewView: View {
             activeBlockId = nil
         }
         editingCaptionId = nil
-        captionFocused = false
     }
 
     private func cycleStyle(for block: CaptionBlock) {
@@ -2338,138 +2126,6 @@ struct CaptureReviewView: View {
         withAnimation(.easeOut(duration: 0.2)) { sentToast = text }
         try? await Task.sleep(for: .milliseconds(1500))
         withAnimation(.easeIn(duration: 0.25)) { sentToast = nil }
-    }
-}
-
-// MARK: - Draggable caption
-
-/// A single caption painted on the canvas, with all of its live
-/// manipulation held in `@GestureState`.
-///
-/// Why this exists as its own view: the previous implementation rewrote
-/// the parent's `captions` array on every drag/pinch/rotate frame, which
-/// re-rendered the entire canvas — including the full-resolution
-/// background image — on each touch move and made dragging choppy. Here,
-/// the in-flight translation / scale / rotation never touch the parent.
-/// `@GestureState` resets automatically when the gesture ends, and we
-/// commit the final value to the model exactly once via the `onCommit*`
-/// closures. Selection and the trash-hover flag only fire on discrete
-/// changes, so the parent re-renders a couple of times per gesture
-/// rather than every frame.
-private struct DraggableCaptionView: View {
-    let block: CaptionBlock
-    let canvasSize: CGSize
-    let isActive: Bool
-    let onActivate: () -> Void
-    let onTapToEdit: () -> Void
-    let onCommitPosition: (CGPoint) -> Void
-    let onCommitScale: (CGFloat) -> Void
-    let onCommitRotation: (Angle) -> Void
-    let onTrashHoverChanged: (Bool) -> Void
-    let onDropDelete: () -> Void
-    /// Fires `true` the instant a drag begins and `false` when it ends, so
-    /// the parent reveals the "drop to delete" zone only while an item is
-    /// actually being dragged (not on a tap-to-select).
-    let onDragStateChanged: (Bool) -> Void
-
-    @GestureState private var dragTranslation: CGSize = .zero
-    @GestureState private var gestureScale: CGFloat = 1.0
-    @GestureState private var gestureRotation: Angle = .zero
-
-    @State private var isDragging: Bool = false
-    @State private var wasOverTrash: Bool = false
-
-    private var pixelPos: CGPoint {
-        CGPoint(
-            x: block.position.x * canvasSize.width,
-            y: block.position.y * canvasSize.height
-        )
-    }
-
-    var body: some View {
-        CaptionBlockText(block: block, isPlaceholder: block.text.isEmpty)
-            .scaleEffect(block.scale * gestureScale)
-            .rotationEffect(block.rotation + gestureRotation)
-            .overlay {
-                if isActive {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(
-                            Color.white.opacity(0.55),
-                            style: StrokeStyle(lineWidth: 1, dash: [4, 3])
-                        )
-                        .padding(-6)
-                }
-            }
-            .contentShape(Rectangle())
-            .gesture(dragGesture)
-            .simultaneousGesture(magnifyGesture)
-            .simultaneousGesture(rotateGesture)
-            .onTapGesture { onTapToEdit() }
-            .offset(dragTranslation)
-            .position(pixelPos)
-    }
-
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 4)
-            .updating($dragTranslation) { value, state, _ in
-                state = value.translation
-            }
-            .onChanged { value in
-                if !isDragging {
-                    isDragging = true
-                    onActivate()
-                    onDragStateChanged(true)
-                    UISelectionFeedbackGenerator().selectionChanged()
-                }
-                let predictedY = pixelPos.y + value.translation.height
-                let over = predictedY > canvasSize.height - 110
-                if over != wasOverTrash {
-                    wasOverTrash = over
-                    onTrashHoverChanged(over)
-                }
-            }
-            .onEnded { value in
-                isDragging = false
-                if wasOverTrash {
-                    onDropDelete()
-                } else {
-                    let dx = value.translation.width / max(canvasSize.width, 1)
-                    let dy = value.translation.height / max(canvasSize.height, 1)
-                    let newPos = CGPoint(
-                        x: min(1, max(0, block.position.x + dx)),
-                        y: min(1, max(0, block.position.y + dy))
-                    )
-                    onCommitPosition(newPos)
-                }
-                if wasOverTrash {
-                    wasOverTrash = false
-                    onTrashHoverChanged(false)
-                }
-                onDragStateChanged(false)
-            }
-    }
-
-    private var magnifyGesture: some Gesture {
-        MagnifyGesture()
-            .updating($gestureScale) { value, state, _ in
-                state = value.magnification
-            }
-            .onChanged { _ in onActivate() }
-            .onEnded { value in
-                let next = min(4.0, max(0.5, block.scale * value.magnification))
-                onCommitScale(next)
-            }
-    }
-
-    private var rotateGesture: some Gesture {
-        RotateGesture()
-            .updating($gestureRotation) { value, state, _ in
-                state = value.rotation
-            }
-            .onChanged { _ in onActivate() }
-            .onEnded { value in
-                onCommitRotation(block.rotation + value.rotation)
-            }
     }
 }
 
