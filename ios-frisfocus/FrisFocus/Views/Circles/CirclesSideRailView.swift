@@ -42,30 +42,42 @@ struct CirclesSideRailView: View {
     /// vertical scrolls near the right edge from widening the rail and
     /// fighting the user's scroll (a side-to-side wobble).
     private let scrubEngageDelay: Double = 0.18
+    /// Small vertical slop above/below the visible labels so the rail
+    /// stays comfortable to grab — but no further. The rail's hit area
+    /// used to span the entire screen height (the scrub backdrop is a
+    /// Shape, which greedily fills all proposed height), swallowing
+    /// taps on the profile avatar in the hero's top-right corner.
+    private let verticalHitSlop: CGFloat = 12
 
     var body: some View {
-        ZStack(alignment: .trailing) {
+        // The interactive surface is sized to the visible labels (plus a
+        // small slop), NOT the full screen height — so nothing above or
+        // below the rail (like the profile avatar) loses its taps.
+        VStack(spacing: 18) {
+            ForEach(CirclesRailSection.allCases) { section in
+                railItem(section)
+            }
+        }
+        .padding(.trailing, 8)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { railHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, h in railHeight = h }
+            }
+        )
+        .animation(.easeInOut(duration: 0.25), value: active)
+        .padding(.vertical, verticalHitSlop)
+        .frame(width: isScrubbing ? scrubExpandedWidth : railWidth, alignment: .trailing)
+        // Scrub backdrop lives in .background so it can never inflate
+        // the rail's layout (and therefore its hit area) beyond the
+        // labels themselves.
+        .background(alignment: .trailing) {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(Theme.textPrimary.opacity(isScrubbing ? 0.06 : 0))
                 .frame(width: scrubExpandedWidth)
                 .allowsHitTesting(false)
-
-            VStack(spacing: 18) {
-                ForEach(CirclesRailSection.allCases) { section in
-                    railItem(section)
-                }
-            }
-            .padding(.trailing, 8)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { railHeight = proxy.size.height }
-                        .onChange(of: proxy.size.height) { _, h in railHeight = h }
-                }
-            )
-            .animation(.easeInOut(duration: 0.25), value: active)
         }
-        .frame(width: isScrubbing ? scrubExpandedWidth : railWidth, alignment: .trailing)
         .contentShape(Rectangle())
         .animation(.easeOut(duration: 0.18), value: isScrubbing)
         .gesture(scrubGesture)
@@ -105,7 +117,9 @@ struct CirclesSideRailView: View {
     private func sectionForY(_ y: CGFloat) -> CirclesRailSection {
         let sections = CirclesRailSection.allCases
         let h = max(railHeight, 1)
-        let clamped = max(0, min(h, y))
+        // The gesture's local space includes the vertical slop padding;
+        // shift back into the labels' own coordinate space.
+        let clamped = max(0, min(h, y - verticalHitSlop))
         let segment = Int((clamped / h) * CGFloat(sections.count))
         let idx = min(sections.count - 1, max(0, segment))
         return sections[idx]

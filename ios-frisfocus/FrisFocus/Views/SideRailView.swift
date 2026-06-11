@@ -63,6 +63,13 @@ struct SideRailView: View {
     /// screen never trips the rail (which used to widen leftward mid-
     /// scroll, producing a side-to-side wobble).
     private let scrubEngageDelay: Double = 0.18
+    /// Small vertical slop above/below the visible labels so the rail
+    /// stays comfortable to grab — but no further. The rail's hit area
+    /// used to span the entire screen height (the scrub backdrop is a
+    /// Shape, which greedily fills all proposed height), silently
+    /// swallowing taps on anything near the right edge — most notably
+    /// the profile avatar in the top-right corner.
+    private let verticalHitSlop: CGFloat = 12
 
     @State private var isScrubbing: Bool = false
     @State private var railHeight: CGFloat = 0
@@ -71,37 +78,41 @@ struct SideRailView: View {
     @State private var boundaryHaptic = UIImpactFeedbackGenerator(style: .light)
 
     var body: some View {
-        ZStack(alignment: .trailing) {
-            // Soft backdrop that fades in while scrubbing — purely a
-            // visual cue that the rail has "opened up" into a scrub
-            // surface. Non-interactive.
+        // The interactive surface is sized to the visible labels (plus a
+        // small slop), NOT the full screen height — so nothing above or
+        // below the rail (like the profile avatar) loses its taps.
+        VStack(alignment: .trailing, spacing: 24) {
+            ForEach(HomeZone.allCases) { zone in
+                if zone == activeZone {
+                    activeItem(zone)
+                } else {
+                    inactiveItem(zone)
+                }
+            }
+        }
+        .frame(width: railWidth, alignment: .trailing)
+        .padding(.trailing, 10)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { railHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, h in railHeight = h }
+            }
+        )
+        .animation(.easeInOut(duration: 0.30), value: tint)
+        .animation(.easeInOut(duration: 0.25), value: activeZone)
+        .padding(.vertical, verticalHitSlop)
+        .frame(width: isScrubbing ? scrubExpandedWidth : railWidth, alignment: .trailing)
+        // Soft backdrop that fades in while scrubbing — purely a visual
+        // cue that the rail has "opened up" into a scrub surface. Lives
+        // in .background so it can never inflate the rail's layout (and
+        // therefore its hit area) beyond the labels.
+        .background(alignment: .trailing) {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(tint.opacity(isScrubbing ? 0.07 : 0))
                 .frame(width: scrubExpandedWidth)
                 .allowsHitTesting(false)
-
-            VStack(alignment: .trailing, spacing: 24) {
-                ForEach(HomeZone.allCases) { zone in
-                    if zone == activeZone {
-                        activeItem(zone)
-                    } else {
-                        inactiveItem(zone)
-                    }
-                }
-            }
-            .frame(width: railWidth, alignment: .trailing)
-            .padding(.trailing, 10)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { railHeight = proxy.size.height }
-                        .onChange(of: proxy.size.height) { _, h in railHeight = h }
-                }
-            )
-            .animation(.easeInOut(duration: 0.30), value: tint)
-            .animation(.easeInOut(duration: 0.25), value: activeZone)
         }
-        .frame(width: isScrubbing ? scrubExpandedWidth : railWidth, alignment: .trailing)
         .contentShape(Rectangle())
         .animation(.easeOut(duration: 0.18), value: isScrubbing)
         .gesture(scrubGesture)
@@ -150,7 +161,9 @@ struct SideRailView: View {
     private func zoneForY(_ y: CGFloat) -> HomeZone {
         let zones = HomeZone.allCases
         let h = max(railHeight, 1)
-        let clamped = max(0, min(h, y))
+        // The gesture's local space includes the vertical slop padding;
+        // shift back into the labels' own coordinate space.
+        let clamped = max(0, min(h, y - verticalHitSlop))
         let segment = Int((clamped / h) * CGFloat(zones.count))
         let idx = min(zones.count - 1, max(0, segment))
         return zones[idx]

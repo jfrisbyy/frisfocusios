@@ -534,7 +534,9 @@ struct CirclesView: View {
             .padding(.leading, Theme.pageHorizontalPadding)
             .padding(.bottom, 22)
 
-            // Avatar — top-right, clear of the status bar.
+            // Avatar — top-right, fully clear of the status bar /
+            // Dynamic Island (the hero ignores the top safe area, so
+            // the inset has to be applied manually from the window).
             VStack {
                 HStack {
                     Spacer()
@@ -545,13 +547,26 @@ struct CirclesView: View {
                         showProfileSheet = true
                     }
                 }
-                .padding(.top, 56)
+                .padding(.top, heroAvatarTopPadding)
                 .padding(.trailing, Theme.pageHorizontalPadding)
                 Spacer()
             }
         }
         .frame(height: 200)
         .clipped()
+    }
+
+    /// Top padding for the hero's avatar: the key window's actual top
+    /// safe-area inset plus a small breathing gap, with a floor for
+    /// older notch-less simulators. Keeps the avatar's full 44 pt hit
+    /// target out of the status-bar gesture zone on every device.
+    private var heroAvatarTopPadding: CGFloat {
+        let inset = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })?
+            .safeAreaInsets.top ?? 0
+        return max(inset, 47) + 8
     }
 
     /// A handful of star dots scattered across the hero. Positions
