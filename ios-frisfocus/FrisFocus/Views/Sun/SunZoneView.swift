@@ -41,6 +41,7 @@ struct SunZoneView: View {
 
     @State private var showDaySheet: Bool = false
     @State private var daySheetDate: Date = Date()
+    @State private var showShareCamera: Bool = false
 
     private var zoneHeight: CGFloat { 580 + topSafeInset }
 
@@ -200,6 +201,9 @@ struct SunZoneView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
+        .fullScreenCover(isPresented: $showShareCamera) {
+            ShareCameraView(context: store.dayShareContext())
+        }
     }
 
     // MARK: - Pieces
@@ -243,14 +247,18 @@ struct SunZoneView: View {
 
             Spacer()
 
-            // Right column starts with the profile avatar at the top
-            // corner, then drops into the week peek one line below.
+            // Right column starts with the share button + profile avatar
+            // at the top corner, then drops into the week peek below.
             VStack(alignment: .trailing, spacing: 0) {
-                ProfileAvatarButton(
-                    initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
-                    photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL,
-                    action: onProfileTap
-                )
+                HStack(spacing: 10) {
+                    shareButton
+
+                    ProfileAvatarButton(
+                        initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
+                        photoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL,
+                        action: onProfileTap
+                    )
+                }
                 .padding(.bottom, 12)
 
                 EyebrowText(
@@ -281,6 +289,41 @@ struct SunZoneView: View {
         .padding(.leading, 24)
         .padding(.trailing, 24)
         .padding(.top, max(topSafeInset, 14))
+    }
+
+    /// The discreet share entry — always the same place, never a popup.
+    /// When the day is FULL (goal reached) it gains a soft amber glow
+    /// ring: an invitation, not an interruption.
+    private var shareButton: some View {
+        let dayIsFull = store.currentSeason.dailyGoal > 0
+            && store.todayScore >= store.currentSeason.dailyGoal
+
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showShareCamera = true
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.textCream)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color.white.opacity(0.12)))
+                .overlay(
+                    Circle().strokeBorder(
+                        dayIsFull
+                            ? Theme.sunWarm.opacity(0.9)
+                            : Theme.textCream.opacity(0.35),
+                        lineWidth: dayIsFull ? 1.5 : 1
+                    )
+                )
+                .shadow(
+                    color: dayIsFull ? Theme.sunOuter.opacity(0.65) : .clear,
+                    radius: dayIsFull ? 9 : 0
+                )
+                .animation(.easeInOut(duration: 0.6), value: dayIsFull)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Share your day")
+        .accessibilityHint("Opens the share camera with your day's sun on the viewfinder")
     }
 
     // MARK: - Helpers

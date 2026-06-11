@@ -88,6 +88,8 @@ private struct PastDayView: View {
     @Environment(Store.self) private var store
     let date: Date
 
+    @State private var showShareCamera: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             scoreCard
@@ -107,6 +109,10 @@ private struct PastDayView: View {
                     }
                 }
             }
+        }
+        .fullScreenCover(isPresented: $showShareCamera) {
+            // Sharing retroactively renders THIS day's sun state.
+            ShareCameraView(context: store.dayShareContext(for: date))
         }
     }
 
@@ -130,6 +136,25 @@ private struct PastDayView: View {
                     .foregroundStyle(Theme.textPrimary)
             }
             Spacer()
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showShareCamera = true
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    .frame(width: 38, height: 38)
+                    .background(
+                        Circle().strokeBorder(Theme.textPrimary.opacity(0.18), lineWidth: 1)
+                    )
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Share this day")
+            .accessibilityHint("Opens the share camera with this day's sun")
+            .padding(.trailing, 12)
+
             VStack(alignment: .trailing, spacing: 4) {
                 EyebrowText(text: "Goal", opacity: 0.55).tracking(2)
                 Text("\(store.currentSeason.dailyGoal)")

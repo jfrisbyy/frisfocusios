@@ -32,6 +32,7 @@ struct SeasonExpandedView: View {
     @State private var showBoosters: Bool = false
     @State private var showMilestones: Bool = false
     @State private var showSettings: Bool = false
+    @State private var showWeekShare: Bool = false
     @State private var topSafeInset: CGFloat = 0
 
     var body: some View {
@@ -534,6 +535,21 @@ struct SeasonExpandedView: View {
                     value: "\(store.weekScore)",
                     denominator: " / \(store.currentSeason.weeklyGoal)"
                 )
+                .overlay(alignment: .topTrailing) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showWeekShare = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Share your week")
+                    .accessibilityHint("Opens the share camera with seven small suns for the week")
+                }
 
                 statCard(
                     label: "Days left",
