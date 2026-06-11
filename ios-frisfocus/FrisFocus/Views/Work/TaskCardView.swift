@@ -44,6 +44,12 @@ struct TaskCardView: View {
 
     private var isCompleted: Bool { todayEntry != nil }
 
+    /// Proofs pinned to this task for today — surfaced as round mini
+    /// previews beneath the title so the card stays compact when empty.
+    private var todayProofPins: [ProofPin] {
+        store.proofPins(forTaskId: task.id, on: Date())
+    }
+
     /// Primary ink — charcoal on paper, cream on the sky.
     private var ink: Color { onSky ? Theme.textCream : Theme.textPrimary }
 
@@ -114,6 +120,8 @@ struct TaskCardView: View {
                         )
                     }
                 }
+
+                TaskProofPreviewRow(pins: todayProofPins, ink: ink)
 
                 if !referencingBoosters.isEmpty || penaltyStatus != nil {
                     HStack(spacing: 6) {

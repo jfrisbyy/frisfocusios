@@ -39,6 +39,12 @@ struct TodoCardView: View {
 
     private var ink: Color { onSky ? Theme.textCream : Theme.textPrimary }
 
+    /// Proofs pinned to this to-do for today — round mini previews under
+    /// the title, matching the task card.
+    private var todayProofPins: [ProofPin] {
+        store.proofPins(forTodoId: todo.id, on: Date())
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             checkbox
@@ -59,6 +65,8 @@ struct TodoCardView: View {
                         .font(.sans(11, weight: .regular))
                         .foregroundStyle(metadataColor)
                 }
+
+                TaskProofPreviewRow(pins: todayProofPins, ink: ink)
             }
 
             Spacer(minLength: 8)

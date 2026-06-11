@@ -19,6 +19,12 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+/// A captured body + label pair for the note editor's undo stack.
+private struct NoteTextSnapshot {
+    let body: String
+    let label: String
+}
+
 struct NoteDetailEditView: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -40,6 +46,21 @@ struct NoteDetailEditView: View {
     @State private var showCaptureSheet: Bool = false
     @State private var showLabelField: Bool = false
     @State private var photoItems: [PhotosPickerItem] = []
+
+    /// Proof pending removal confirmation — set when the user taps × on a
+    /// proof attachment. Ordinary photos remove immediately.
+    @State private var pendingProofRemoval: NotePhoto?
+
+    /// Snapshots of body + label for the Undo control. Each entry is the
+    /// state *before* a coalesced run of edits, so popping restores the
+    /// previous wording.
+    @State private var undoStack: [NoteTextSnapshot] = []
+    /// Last time we pushed a snapshot — used to coalesce rapid typing
+    /// into ~1.2s chunks instead of one entry per keystroke.
+    @State private var lastSnapshotAt: Date = .distantPast
+    /// Guards the change handlers while we apply an undo so restoring
+    /// text doesn't itself get recorded as a new edit.
+    @State private var isUndoing: Bool = false
 
     @FocusState private var labelFocused: Bool
 
@@ -128,6 +149,9 @@ struct NoteDetailEditView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 pinToolbarButton
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                undoToolbarButton
+            }
         }
         .navigationTitle("Note")
         .navigationBarTitleDisplayMode(.inline)
@@ -160,9 +184,24 @@ struct NoteDetailEditView: View {
         } message: {
             Text("This can't be undone.")
         }
+        .confirmationDialog(
+            "Remove this proof?",
+            isPresented: proofRemovalBinding,
+            titleVisibility: .visible
+        ) {
+            Button("Remove proof", role: .destructive) {
+                if let proof = pendingProofRemoval {
+                    performRemovePhoto(proof)
+                }
+                pendingProofRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { pendingProofRemoval = nil }
+        } message: {
+            Text("This proof will be detached from the note.")
+        }
         .onAppear(perform: initializeOnce)
-        .onChange(of: noteText) { _, _ in scheduleAutosave() }
-        .onChange(of: label) { _, _ in scheduleAutosave() }
+        .onChange(of: noteText) { old, _ in recordUndoSnapshot(previousBody: old, previousLabel: label); scheduleAutosave() }
+        .onChange(of: label) { old, _ in recordUndoSnapshot(previousBody: noteText, previousLabel: old); scheduleAutosave() }
         .onChange(of: selectedFolderId) { _, _ in persistNow() }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
@@ -187,6 +226,19 @@ struct NoteDetailEditView: View {
             .foregroundStyle(Theme.alertGreen.opacity(savedFlash ? 0.9 : 0))
             .animation(.easeInOut(duration: 0.25), value: savedFlash)
             .accessibilityHidden(!savedFlash)
+    }
+
+    /// Quiet undo control — steps back the most recent run of text edits.
+    /// Dims to non-interactive when there's nothing left to undo.
+    @ViewBuilder
+    private var undoToolbarButton: some View {
+        Button(action: performUndo) {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(undoStack.isEmpty ? 0.22 : 0.6))
+        }
+        .disabled(undoStack.isEmpty)
+        .accessibilityLabel("Undo last edit")
     }
 
     @ViewBuilder
@@ -522,12 +574,66 @@ struct NoteDetailEditView: View {
         persistNow()
     }
 
+    /// Photos arrive from the grid's × button. Proofs require a confirm
+    /// step (they're precious, often the only copy of a moment); ordinary
+    /// photos remove instantly as before.
     private func removePhoto(_ photo: NotePhoto) {
+        if photo.isProof {
+            pendingProofRemoval = photo
+            return
+        }
+        performRemovePhoto(photo)
+    }
+
+    private func performRemovePhoto(_ photo: NotePhoto) {
         NotePhotoStore.delete(photo)
         withAnimation(.easeInOut(duration: 0.18)) {
             photos.removeAll { $0.id == photo.id }
         }
         persistNow()
+    }
+
+    private var proofRemovalBinding: Binding<Bool> {
+        Binding(
+            get: { pendingProofRemoval != nil },
+            set: { if !$0 { pendingProofRemoval = nil } }
+        )
+    }
+
+    // MARK: - Undo
+
+    /// Push the pre-edit text state onto the undo stack, coalescing rapid
+    /// keystrokes so one entry covers a short burst of typing rather than
+    /// every character. No-ops while an undo is being applied.
+    private func recordUndoSnapshot(previousBody: String, previousLabel: String) {
+        guard initialized, !isUndoing else { return }
+        let now = Date()
+        if now.timeIntervalSince(lastSnapshotAt) < 1.2,
+           let last = undoStack.last,
+           last.body == previousBody, last.label == previousLabel {
+            return
+        }
+        if now.timeIntervalSince(lastSnapshotAt) >= 1.2 || undoStack.isEmpty {
+            undoStack.append(NoteTextSnapshot(body: previousBody, label: previousLabel))
+            if undoStack.count > 50 { undoStack.removeFirst(undoStack.count - 50) }
+            lastSnapshotAt = now
+        }
+    }
+
+    private func performUndo() {
+        guard let snapshot = undoStack.popLast() else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        isUndoing = true
+        withAnimation(.easeInOut(duration: 0.15)) {
+            noteText = snapshot.body
+            label = snapshot.label
+        }
+        lastSnapshotAt = .distantPast
+        // Let the change handlers fire and bail out before re-arming.
+        DispatchQueue.main.async {
+            isUndoing = false
+            persistNow()
+        }
     }
 
     // MARK: - Autosave

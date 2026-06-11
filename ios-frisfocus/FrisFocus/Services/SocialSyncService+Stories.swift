@@ -197,13 +197,17 @@ extension SocialSyncService {
                 return post
             }
 
-            // Keep very fresh local posts the server hasn't echoed yet
-            // (optimistic posts whose upload is still in flight).
+            // Keep local posts the server hasn't echoed yet. General
+            // posts are kept only briefly (optimistic uploads still in
+            // flight); circle clips never expire, so we preserve any
+            // locally-authored clip the server hasn't returned regardless
+            // of age — a failed/pending upload must not erase the story
+            // (or its "new story" badge) on the next refresh.
             let optimisticWindow = Date().addingTimeInterval(-15 * 60)
             let optimistic = store.storyPosts.filter { post in
                 post.authorId == store.currentUserId
                     && !serverIds.contains(post.id)
-                    && post.createdAt > optimisticWindow
+                    && (post.circleId != nil || post.createdAt > optimisticWindow)
             }
             mapped.append(contentsOf: optimistic)
             mapped.sort { $0.createdAt > $1.createdAt }
