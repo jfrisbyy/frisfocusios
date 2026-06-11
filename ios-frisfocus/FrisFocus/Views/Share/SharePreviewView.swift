@@ -197,10 +197,9 @@ struct SharePreviewView: View {
                 HStack(spacing: 7) {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 11, weight: .bold))
-                    Text("Share outside · adds @\(username.uppercased()) · FRISFOCUS")
+                    Text("Share outside")
                         .font(.sans(12, weight: .medium))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
                 }
                 .foregroundStyle(Color.white.opacity(0.72))
                 .padding(.horizontal, 16)

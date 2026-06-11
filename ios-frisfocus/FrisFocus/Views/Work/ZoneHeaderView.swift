@@ -11,7 +11,9 @@ import SwiftUI
 
 struct ZoneHeaderView: View {
     let title: String
-    let eyebrowRight: String
+    /// Optional uppercase eyebrow on the right — omitted entirely when
+    /// empty so headers with trailing controls don't collide with it.
+    var eyebrowRight: String = ""
     let subline: String
     var textColor: Color = Theme.textPrimary
     var dim: Double = 0.55
@@ -25,10 +27,12 @@ struct ZoneHeaderView: View {
 
                 Spacer()
 
-                Text(eyebrowRight.uppercased())
-                    .font(.sans(10, weight: .medium))
-                    .tracking(2)
-                    .foregroundStyle(textColor.opacity(dim))
+                if !eyebrowRight.isEmpty {
+                    Text(eyebrowRight.uppercased())
+                        .font(.sans(10, weight: .medium))
+                        .tracking(2)
+                        .foregroundStyle(textColor.opacity(dim))
+                }
             }
 
             Text(subline)

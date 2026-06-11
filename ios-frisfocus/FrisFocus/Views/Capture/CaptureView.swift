@@ -718,7 +718,7 @@ struct ActualCameraView: UIViewRepresentable {
         view.backgroundColor = .black
         view.previewLayer.session = camera.session
         view.previewLayer.videoGravity = .resizeAspectFill
-        Self.applyUnmirroredPolicy(to: view.previewLayer)
+        Self.applyMirrorPolicy(to: view.previewLayer, isFront: camera.position == .front)
         return view
     }
 
@@ -730,20 +730,20 @@ struct ActualCameraView: UIViewRepresentable {
         // flips, so the policy re-applies on each fresh connection.
         _ = camera.position
         _ = camera.hasCamera
-        Self.applyUnmirroredPolicy(to: uiView.previewLayer)
+        Self.applyMirrorPolicy(to: uiView.previewLayer, isFront: camera.position == .front)
     }
 
-    /// True-to-life viewfinder: the front camera preview is normally
-    /// mirrored while the saved photo/video is not — users compose one
-    /// image and keep another. Un-mirroring the preview makes what you
-    /// see exactly what saves.
-    private static func applyUnmirroredPolicy(to layer: AVCaptureVideoPreviewLayer) {
+    /// Mirror-consistent viewfinder: the front camera previews mirrored
+    /// (like looking in a mirror) and the saved photo/video is flipped
+    /// to match it exactly — what you compose is what you keep. The
+    /// back camera is never mirrored.
+    private static func applyMirrorPolicy(to layer: AVCaptureVideoPreviewLayer, isFront: Bool) {
         guard let connection = layer.connection, connection.isVideoMirroringSupported else { return }
         if connection.automaticallyAdjustsVideoMirroring {
             connection.automaticallyAdjustsVideoMirroring = false
         }
-        if connection.isVideoMirrored {
-            connection.isVideoMirrored = false
+        if connection.isVideoMirrored != isFront {
+            connection.isVideoMirrored = isFront
         }
     }
 
@@ -964,12 +964,13 @@ final class CameraService: NSObject {
                     continuation.resume(returning: nil)
                     return
                 }
-                // Keep stills un-mirrored on every camera so the photo
-                // matches the un-mirrored viewfinder exactly.
+                // Mirror front-camera stills so the saved photo matches
+                // the mirrored viewfinder exactly; back camera stays true.
+                let isFront = self.currentInput?.device.position == .front
                 if let connection = self.photoOutput.connection(with: .video),
                    connection.isVideoMirroringSupported {
                     connection.automaticallyAdjustsVideoMirroring = false
-                    connection.isVideoMirrored = false
+                    connection.isVideoMirrored = isFront
                 }
                 let settings = AVCapturePhotoSettings()
                 if let device = self.currentInput?.device,
@@ -1002,12 +1003,12 @@ final class CameraService: NSObject {
                     if connection.isVideoOrientationSupported {
                         connection.videoOrientation = .portrait
                     }
-                    // True-to-life: never mirror the recorded clip — it
-                    // must match the un-mirrored viewfinder and the saved
-                    // front-camera photos.
+                    // Mirror front-camera clips so the recording matches
+                    // the mirrored viewfinder and the saved front-camera
+                    // photos; back camera stays true.
                     if connection.isVideoMirroringSupported {
                         connection.automaticallyAdjustsVideoMirroring = false
-                        connection.isVideoMirrored = false
+                        connection.isVideoMirrored = self.currentInput?.device.position == .front
                     }
                 }
                 self.movieOutput.startRecording(to: url, recordingDelegate: self)

@@ -17,10 +17,14 @@ import UIKit
 
 struct CircleSettingsSheet: View {
     @Environment(Store.self) private var store
+    @Environment(AuthManager.self) private var auth
+    @Environment(GoldenHourService.self) private var goldenHour
     @Environment(\.dismiss) private var dismiss
 
     let circleId: UUID
 
+    @State private var showGoldenSettings: Bool = false
+    @State private var showGoldenHour: Bool = false
     @State private var showAddTaskForm: Bool = false
     @State private var editingTaskId: UUID?
     @State private var draftTitle: String = ""
@@ -71,6 +75,8 @@ struct CircleSettingsSheet: View {
 
                 ourStoryRow(for: circle)
 
+                goldenHourRow(for: circle)
+
                 if store.canManageTasks(in: circle) {
                     sharedGoalsSection(for: circle)
                 }
@@ -97,6 +103,153 @@ struct CircleSettingsSheet: View {
         .sheet(isPresented: $showOurStory) {
             CircleStoryView(circleId: circleId)
                 .environment(store)
+        }
+        .sheet(isPresented: $showGoldenSettings) {
+            GoldenHourSettingsSheet(
+                circleId: circleId,
+                circleName: circle.name,
+                myUserId: auth.user?.id ?? "",
+                canManage: store.canManageTasks(in: circle)
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: $showGoldenHour) {
+            GoldenHourHostView(circleId: circleId)
+        }
+    }
+
+    // MARK: - Golden Hour
+
+    /// True when this circle lives on the server — the Golden Hour
+    /// service knows its settings row. Sample circles never do, so they
+    /// get the explainer instead of a silently failing setup sheet.
+    private var isGoldenBacked: Bool {
+        goldenHour.settingsByCircle[circleId] != nil
+    }
+
+    /// The gold Golden Hour row — the same card that lives on the shared
+    /// circle page. Opens the golden surface while a moment is live or
+    /// viewing; otherwise the settings sheet. Sample circles get a quiet
+    /// explainer pointing at shared circles.
+    @ViewBuilder
+    private func goldenHourRow(for circle: FFCircle) -> some View {
+        if isGoldenBacked {
+            let now = Date()
+            let settings = goldenHour.settingsByCircle[circleId]
+            let moment = goldenHour.currentMoment(for: circleId, now: now)
+            let phase = moment?.phase(at: now)
+            let isActive = phase == .live || phase == .viewing
+            let myUserId = auth.user?.id ?? ""
+            let streak = goldenHour.streak(circleId: circleId, userId: myUserId, now: now)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                if isActive {
+                    showGoldenHour = true
+                } else {
+                    showGoldenSettings = true
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    goldenIcon
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("Golden Hour")
+                                .font(.sans(15, weight: .semibold))
+                                .foregroundStyle(GoldenTheme.cream)
+                            if phase == .live {
+                                Text("LIVE")
+                                    .font(.sans(9, weight: .bold))
+                                    .tracking(1)
+                                    .foregroundStyle(GoldenTheme.ink)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(GoldenTheme.gold))
+                            }
+                        }
+                        Text(goldenStatusLine(settings: settings, phase: phase, canManage: store.canManageTasks(in: circle)))
+                            .font(.sans(12, weight: .regular))
+                            .foregroundStyle(GoldenTheme.cream.opacity(0.62))
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if streak > 0 {
+                        HStack(spacing: 3) {
+                            Image(systemName: "flame.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text("\(streak)")
+                                .font(.sans(12, weight: .bold))
+                        }
+                        .foregroundStyle(GoldenTheme.gold)
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(GoldenTheme.gold.opacity(0.7))
+                }
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                        .fill(GoldenTheme.ink)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                        .strokeBorder(GoldenTheme.gold.opacity(isActive ? 0.6 : 0.25), lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isActive ? "Golden Hour is live. Open it." : "Golden Hour settings")
+        } else {
+            HStack(spacing: 12) {
+                goldenIcon
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Golden Hour")
+                        .font(.sans(15, weight: .semibold))
+                        .foregroundStyle(GoldenTheme.cream)
+                    Text("The daily synchronized moment runs in shared circles — start one with friends to set it up.")
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(GoldenTheme.cream.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(GoldenTheme.ink)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(GoldenTheme.gold.opacity(0.25), lineWidth: 1)
+            )
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var goldenIcon: some View {
+        Image(systemName: "sun.max.fill")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(GoldenTheme.ink)
+            .frame(width: 38, height: 38)
+            .background(Circle().fill(GoldenTheme.goldGradient))
+    }
+
+    private func goldenStatusLine(settings: GoldenHourSettings?, phase: GoldenHourPhase?, canManage: Bool) -> String {
+        guard let settings, settings.enabled else {
+            return canManage ? "Off — set up the daily moment" : "Off for this circle"
+        }
+        switch phase {
+        case .live: return "Capture window is open right now"
+        case .viewing: return "The wall is open — it disappears soon"
+        case .over: return "Done for today · \(settings.mode.title)"
+        default: return "On · \(settings.mode.title)"
         }
     }
 

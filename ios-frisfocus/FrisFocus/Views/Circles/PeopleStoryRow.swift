@@ -379,7 +379,12 @@ struct MomentThumb: View {
                 momentFrame
             }
         }
-        .task(id: media?.id) { loadLocal() }
+        .task(id: media?.id) {
+            // Reset before reloading — otherwise a previously loaded
+            // frame sticks around when the newest post changes.
+            localImage = nil
+            loadLocal()
+        }
     }
 
     /// A remote (http) URL worth fetching through the cache.
@@ -391,7 +396,6 @@ struct MomentThumb: View {
     }
 
     private func loadLocal() {
-        guard localImage == nil else { return }
         let fileCandidates = [media?.thumbnailURL, media?.localURL]
             .compactMap { $0 }
             .filter { $0.isFileURL }

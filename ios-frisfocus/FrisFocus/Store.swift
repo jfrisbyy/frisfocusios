@@ -2887,9 +2887,10 @@ extension Store {
     }
 
     /// The media behind the user's own newest active story — fills the
-    /// "Your story" bubble once something is posted.
+    /// "Your story" bubble once something is posted. Skips caption-only
+    /// posts so the bubble always previews the latest visual addition.
     var myStoryThumbMedia: MediaAsset? {
-        guard let mediaId = activeMyStories.last?.mediaId else { return nil }
+        guard let mediaId = activeMyStories.last(where: { $0.mediaId != nil })?.mediaId else { return nil }
         return media(by: mediaId)
     }
 

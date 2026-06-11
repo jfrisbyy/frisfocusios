@@ -33,7 +33,6 @@ struct WorkZoneView: View {
             ZStack(alignment: .topTrailing) {
                 ZoneHeaderView(
                     title: "Today's plan",
-                    eyebrowRight: "Tue · Zone 2 of 4",
                     subline: store.workSubline
                 )
                 focusEntryButton
