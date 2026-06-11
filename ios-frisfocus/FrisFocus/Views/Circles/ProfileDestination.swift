@@ -9,8 +9,8 @@
 //   • `.profileDestination($target, store:)` — a view modifier that
 //     presents the right surface: a friend opens the relationship hub
 //     full-screen over the current view; `.me` opens the user's own
-//     profile/settings sheet. Closing returns the user exactly where
-//     they were.
+//     profile page (the friend-profile mirror with edit shortcuts).
+//     Closing returns the user exactly where they were.
 //   • `MemberListSheet` — a calm, tappable member list so overlapping
 //     avatar clusters (and their "+N" overflow) can still reach every
 //     person behind the stack.
@@ -25,7 +25,7 @@ import UIKit
 
 /// A person whose profile can be opened from anywhere they appear.
 /// `.friend` opens the relationship hub; `.me` opens the user's own
-/// profile/settings.
+/// profile page.
 enum ProfileTarget {
     case friend(Friend)
     case me
@@ -48,9 +48,10 @@ private struct MeProfileMarker: Identifiable { let id: String = "me.profile" }
 
 extension View {
     /// Presents the profile surface for `target`. A friend opens the
-    /// hub full-screen over the current view; `.me` opens the profile
-    /// sheet. Pass the owning view's `store` so the presented surface
-    /// keeps the shared state even across nested sheets/covers.
+    /// hub full-screen over the current view; `.me` opens the user's
+    /// own profile page the same way. Pass the owning view's `store`
+    /// so the presented surface keeps the shared state even across
+    /// nested sheets/covers.
     func profileDestination(_ target: Binding<ProfileTarget?>, store: Store) -> some View {
         let friendBinding = Binding<Friend?>(
             get: {
@@ -79,8 +80,8 @@ extension View {
                 FriendDetailView(friend: friend)
                     .environment(store)
             }
-            .sheet(item: meBinding) { _ in
-                ProfileSheetView()
+            .fullScreenCover(item: meBinding) { _ in
+                MyProfileView()
                     .environment(store)
             }
     }

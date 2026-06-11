@@ -6,8 +6,8 @@
 //  the home or social screen springs open a small floating card that
 //  scales and fades out of the bubble's corner, over a dimmed + softly
 //  blurred backdrop. The card carries the user's identity (a tap there
-//  edits the profile) plus quick shortcuts into Edit profile, Friends,
-//  Circles, and Proofs (with an unread dot), and a route into the full
+//  opens My profile — the page friends see, with edit shortcuts), a
+//  slim two-tile row (My profile · Friends), and a route into the full
 //  account screen where sign-out / delete / blocked live.
 //
 //  Wired once per host via `.profileQuickCard(isPresented:)`. When signed
@@ -21,10 +21,11 @@ import UIKit
 
 // MARK: - Destinations
 
-/// A surface the quick card can route to. `account` opens the full hub;
-/// the rest open their own focused screen.
+/// A surface the quick card can route to. `myProfile` opens the user's
+/// own profile page full-screen; `account` opens the full hub; the rest
+/// open their own focused screen.
 enum ProfileQuickDestination: Int, Identifiable {
-    case editProfile, friends, circles, proofs, account
+    case myProfile, editProfile, friends, account
     var id: Int { rawValue }
 }
 
@@ -77,9 +78,33 @@ private struct ProfileQuickCardModifier: ViewModifier {
             .sheet(isPresented: showSignIn) {
                 ProfileSheetView()
             }
-            .sheet(item: $destination) { dest in
+            .sheet(item: sheetDestination) { dest in
                 ProfileQuickDestinationSheet(destination: dest)
             }
+            .fullScreenCover(item: coverDestination) { _ in
+                MyProfileView()
+            }
+    }
+
+    /// Every destination except My profile presents as a sheet.
+    private var sheetDestination: Binding<ProfileQuickDestination?> {
+        Binding(
+            get: { destination == .myProfile ? nil : destination },
+            set: { newValue in
+                if newValue == nil, destination != .myProfile { destination = nil }
+            }
+        )
+    }
+
+    /// My profile is a full page — it presents full-screen, exactly
+    /// like a friend's profile does.
+    private var coverDestination: Binding<ProfileQuickDestination?> {
+        Binding(
+            get: { destination == .myProfile ? .myProfile : nil },
+            set: { newValue in
+                if newValue == nil, destination == .myProfile { destination = nil }
+            }
+        )
     }
 }
 
@@ -97,7 +122,6 @@ private struct ProfileQuickCardOverlay: View {
     @State private var shown = false
     @State private var drag: CGSize = .zero
     @State private var topInset: CGFloat = 47
-    @State private var messages = MessageGraphService()
 
     private var displayName: String {
         profileStore.myProfile?.displayName ?? auth.user?.name ?? "You"
@@ -116,11 +140,6 @@ private struct ProfileQuickCardOverlay: View {
     private var initials: String {
         let value = profileStore.myProfile?.initials ?? auth.user?.initials ?? ""
         return value.isEmpty ? "?" : value
-    }
-
-    private var unreadCount: Int {
-        guard let id = auth.user?.id else { return 0 }
-        return messages.conversations(myUserId: id).reduce(0) { $0 + $1.unreadCount }
     }
 
     var body: some View {
@@ -145,7 +164,6 @@ private struct ProfileQuickCardOverlay: View {
         .task {
             topInset = Self.keyWindowTopInset()
             withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) { shown = true }
-            if let id = auth.user?.id { await messages.load(myUserId: id) }
         }
     }
 
@@ -199,7 +217,7 @@ private struct ProfileQuickCardOverlay: View {
 
     private var header: some View {
         Button {
-            close(routingTo: .editProfile)
+            close(routingTo: .myProfile)
         } label: {
             HStack(spacing: 13) {
                 avatar
@@ -214,8 +232,8 @@ private struct ProfileQuickCardOverlay: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 15, weight: .semibold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.textTertiary)
             }
             .padding(.horizontal, 16)
@@ -224,7 +242,7 @@ private struct ProfileQuickCardOverlay: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(QuickRowButtonStyle())
-        .accessibilityHint("Opens edit profile")
+        .accessibilityHint("Opens your profile")
     }
 
     private var avatar: some View {
@@ -267,14 +285,13 @@ private struct ProfileQuickCardOverlay: View {
         .padding(.bottom, 12)
     }
 
-    /// Four compact icon tiles in a row — replaces the tall shortcut
-    /// list so the card reads at a glance.
+    /// Two compact icon tiles — My profile and Friends. Proofs and
+    /// Circles stay reachable from their own surfaces; the card stays
+    /// a glance.
     private var shortcuts: some View {
         HStack(spacing: 6) {
-            shortcutTile(.editProfile, icon: "person.crop.circle", title: "Profile")
-            shortcutTile(.friends, icon: "person.2.fill", title: "Add", showDot: friendGraph.hasUnseenRequests)
-            shortcutTile(.circles, icon: "circle.hexagongrid.fill", title: "Friends")
-            shortcutTile(.proofs, icon: "paperplane.fill", title: "Proofs", showDot: unreadCount > 0)
+            shortcutTile(.myProfile, icon: "person.crop.circle", title: "My profile")
+            shortcutTile(.friends, icon: "person.2.fill", title: "Friends", showDot: friendGraph.hasUnseenRequests)
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 12)
@@ -445,12 +462,16 @@ private struct QuickTileButtonStyle: ButtonStyle {
 
 /// Routes a quick-card selection to its full surface. Each focused screen
 /// is wrapped in its own `NavigationStack` with a close control; the
-/// account hub and Proofs inbox bring their own.
+/// account hub brings its own. `myProfile` never lands here — it
+/// presents full-screen from the modifier — but the case stays
+/// exhaustive for safety.
 private struct ProfileQuickDestinationSheet: View {
     let destination: ProfileQuickDestination
 
     var body: some View {
         switch destination {
+        case .myProfile:
+            MyProfileView()
         case .editProfile:
             QuickNavSheet(closePlacement: .topBarLeading, closeTitle: "Cancel") {
                 EditProfileView()
@@ -459,12 +480,6 @@ private struct ProfileQuickDestinationSheet: View {
             QuickNavSheet(closePlacement: .topBarTrailing, closeTitle: "Done") {
                 FriendsView()
             }
-        case .circles:
-            QuickNavSheet(closePlacement: .topBarTrailing, closeTitle: "Done") {
-                SharedCirclesListView()
-            }
-        case .proofs:
-            ProofsInboxView()
         case .account:
             ProfileSheetView()
         }
