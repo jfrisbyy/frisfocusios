@@ -3,9 +3,11 @@
 //  FrisFocus
 //
 //  The share camera — the user takes a photo or records a clip THROUGH
-//  the day-overlay. The overlay (sun-state mark, season name, task
-//  chips, attribution) is live on the viewfinder and reflows as the
-//  user curates; what you see is exactly what exports.
+//  the card overlay. Two subjects share the one camera: the day card
+//  (sun-state mark, season name, task chips) and the milestone card
+//  (flag mark, serif title, progress, journey strip). The overlay is
+//  live on the viewfinder and reflows as the user curates; what you
+//  see is exactly what exports.
 //
 //   • One shutter, camera ergonomics: tap → photo, press-and-hold →
 //     video (30 s cap with a progress ring), double-tap the
@@ -29,14 +31,25 @@ struct ShareCameraView: View {
     @Environment(ProfileStore.self) private var profileStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The day (or week) being shared — today from the home button,
-    /// retroactive from a past day's detail, the week from the recap.
-    let context: ShareDayContext
+    /// What's being shared — a day (or week), or a milestone.
+    let subject: ShareCardSubject
 
     @State private var camera = CameraService()
     @State private var options = ShareOverlayOptions()
+    /// Milestone disclosure choices — loaded from (and saved back to)
+    /// the user's last share so curation sticks.
+    @State private var milestoneOptions: MilestoneShareOptions = MilestoneShareOptions.load()
     @State private var result: CaptureResult?
     @State private var showLayers: Bool = false
+
+    init(subject: ShareCardSubject) {
+        self.subject = subject
+    }
+
+    /// Convenience for the existing day/week entry points.
+    init(context: ShareDayContext) {
+        self.subject = .day(context)
+    }
 
     // Recording state
     @State private var isRecording: Bool = false
@@ -61,6 +74,20 @@ struct ShareCameraView: View {
             ?? "me"
     }
 
+    /// The subject frozen together with the current overlay options —
+    /// what the preview and the renderer will draw.
+    private var composition: ShareCardComposition {
+        switch subject {
+        case .day(let context): return .day(context, options)
+        case .milestone(let context): return .milestone(context, milestoneOptions)
+        }
+    }
+
+    private var isDaySubject: Bool {
+        if case .day = subject { return true }
+        return false
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -69,15 +96,14 @@ struct ShareCameraView: View {
                 .ignoresSafeArea()
                 .simultaneousGesture(doubleTapFlipGesture)
 
-            // The live overlay — WYSIWYG with the export. Chips are the
-            // only interactive part; everything else passes touches to
-            // the camera layer.
-            ShareOverlayView(
-                context: context,
-                options: options,
+            // The live overlay — WYSIWYG with the export. Day-card
+            // chips are the only interactive part; everything else
+            // passes touches to the camera layer.
+            ShareCompositionOverlayView(
+                composition: composition,
                 mode: .composing,
                 username: username,
-                showChipHint: !chipHintSeen,
+                showChipHint: isDaySubject && !chipHintSeen,
                 onToggleChip: { chipId in
                     toggleChip(chipId)
                 },
@@ -108,10 +134,10 @@ struct ShareCameraView: View {
             tickRecording()
         }
         .sheet(isPresented: $showLayers) {
-            ShareLayersSheet(options: $options)
-                .presentationDetents([.height(330)])
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(28)
+            layersSheet
+        }
+        .onChange(of: milestoneOptions) { _, newOptions in
+            newOptions.save()
         }
         .fullScreenCover(item: $result, onDismiss: {
             // Retake — bring the session back.
@@ -119,8 +145,7 @@ struct ShareCameraView: View {
         }) { captured in
             SharePreviewView(
                 result: captured,
-                context: context,
-                options: options,
+                composition: composition,
                 username: username,
                 onFinished: {
                     result = nil
@@ -128,6 +153,24 @@ struct ShareCameraView: View {
                 }
             )
             .environment(store)
+        }
+    }
+
+    // MARK: - Layers sheet
+
+    @ViewBuilder
+    private var layersSheet: some View {
+        switch subject {
+        case .day:
+            ShareLayersSheet(options: $options)
+                .presentationDetents([.height(330)])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
+        case .milestone:
+            MilestoneShareLayersSheet(options: $milestoneOptions)
+                .presentationDetents([.height(440)])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
         }
     }
 

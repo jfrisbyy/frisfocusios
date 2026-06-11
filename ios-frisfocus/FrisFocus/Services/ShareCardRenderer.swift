@@ -3,9 +3,11 @@
 //  FrisFocus
 //
 //  Flattens the share overlay into captured media — one renderer, a
-//  destination parameter. Identical overlay composition for in-app and
-//  external shares; the attribution line is added only when the result
-//  leaves the app (external share or camera-roll save).
+//  destination parameter, two card subjects (the day card and the
+//  milestone card via `ShareCardComposition`). Identical overlay
+//  composition for in-app and external shares; the attribution line is
+//  added only when the result leaves the app (external share or
+//  camera-roll save).
 //
 //  Photos: normalized upright → center-cropped to the 9:16 story ratio
 //  (preserving capture resolution) → the overlay is rendered at the
@@ -13,10 +15,11 @@
 //
 //  Videos: the overlay is rendered as TWO transparent frames with
 //  identical layout — the chrome (text, chips, attribution, scrim) and
-//  the sun mark alone. Core Image composites both onto every frame via
-//  AVVideoComposition; the sun layer glides up into its computed
-//  position over the clip's first ~1.2 s (eased, fading in), giving
-//  recorded clips the signature rise. Reduced-motion renders it static.
+//  the mark alone (the sun, or the milestone flag). Core Image
+//  composites both onto every frame via AVVideoComposition; the mark
+//  layer glides up into its computed position over the clip's first
+//  ~1.2 s (eased, fading in), giving recorded clips the signature
+//  rise. Reduced-motion renders it static.
 //
 //  Everything composites locally — zero API calls anywhere.
 //
@@ -27,7 +30,7 @@ import SwiftUI
 import UIKit
 
 enum ShareCardRenderer {
-    /// How long the sun's rise lasts at the start of a clip.
+    /// How long the mark's rise lasts at the start of a clip.
     private static let riseDuration: Double = 1.2
 
     // MARK: - Overlay rendering
@@ -36,8 +39,7 @@ enum ShareCardRenderer {
     /// logical width so typography matches what the viewfinder showed.
     @MainActor
     static func overlayImage(
-        context: ShareDayContext,
-        options: ShareOverlayOptions,
+        composition: ShareCardComposition,
         username: String,
         attributed: Bool,
         layer: ShareOverlayLayer,
@@ -47,9 +49,8 @@ enum ShareCardRenderer {
         let logicalWidth: CGFloat = 390
         let logicalHeight = logicalWidth * pixelSize.height / pixelSize.width
 
-        let content = ShareOverlayView(
-            context: context,
-            options: options,
+        let content = ShareCompositionOverlayView(
+            composition: composition,
             mode: .render(attributed: attributed),
             username: username,
             layer: layer,
@@ -75,8 +76,7 @@ enum ShareCardRenderer {
     @MainActor
     static func compositePhoto(
         _ photo: UIImage,
-        context: ShareDayContext,
-        options: ShareOverlayOptions,
+        composition: ShareCardComposition,
         username: String,
         attributed: Bool,
         zoom: CGFloat = 1.0,
@@ -86,8 +86,7 @@ enum ShareCardRenderer {
     ) -> UIImage? {
         guard let base = normalizedStoryCrop(photo) else { return nil }
         let overlay = overlayImage(
-            context: context,
-            options: options,
+            composition: composition,
             username: username,
             attributed: attributed,
             layer: .all,
@@ -192,14 +191,14 @@ enum ShareCardRenderer {
         }
     }
 
-    /// Burns the overlay into a recorded clip, animating the sun's rise
-    /// over the first ~1.2 s of playback (static when `animated` is
-    /// false — reduced motion). Returns a fresh temporary `.mov`.
+    /// Burns the overlay into a recorded clip, animating the mark's
+    /// rise (sun or milestone flag) over the first ~1.2 s of playback
+    /// (static when `animated` is false — reduced motion). Returns a
+    /// fresh temporary `.mov`.
     @MainActor
     static func compositeVideo(
         at sourceURL: URL,
-        context: ShareDayContext,
-        options: ShareOverlayOptions,
+        composition: ShareCardComposition,
         username: String,
         attributed: Bool,
         animated: Bool,
@@ -216,16 +215,14 @@ enum ShareCardRenderer {
         }
 
         let chromeImage = overlayImage(
-            context: context,
-            options: options,
+            composition: composition,
             username: username,
             attributed: attributed,
             layer: .chrome,
             pixelSize: renderSize
         )
         let sunImage = overlayImage(
-            context: context,
-            options: options,
+            composition: composition,
             username: username,
             attributed: attributed,
             layer: .sunOnly,

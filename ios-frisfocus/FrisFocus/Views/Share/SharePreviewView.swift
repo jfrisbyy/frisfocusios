@@ -50,8 +50,9 @@ struct SharePreviewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let result: CaptureResult
-    let context: ShareDayContext
-    let options: ShareOverlayOptions
+    /// The card subject (day or milestone) frozen together with the
+    /// user's overlay choices at capture time.
+    let composition: ShareCardComposition
     let username: String
     /// Called after a successful post/share so the camera dismisses too.
     let onFinished: () -> Void
@@ -161,12 +162,11 @@ struct SharePreviewView: View {
                 editCanvas
             }
             .overlay {
-                // The day-overlay chrome renders above the edit layer —
+                // The card-overlay chrome renders above the edit layer —
                 // matching the export order — but never intercepts
                 // touches, so blocks below stay draggable.
-                ShareOverlayView(
-                    context: context,
-                    options: options,
+                ShareCompositionOverlayView(
+                    composition: composition,
                     mode: .render(attributed: false),
                     username: username,
                     bottomPadding: 26
@@ -1049,8 +1049,7 @@ struct SharePreviewView: View {
             case .photo(let image):
                 let composed = ShareCardRenderer.compositePhoto(
                     image,
-                    context: context,
-                    options: options,
+                    composition: composition,
                     username: username,
                     attributed: false,
                     zoom: mediaZoom.scale,
@@ -1065,8 +1064,7 @@ struct SharePreviewView: View {
             case .video(let url, _, let dur):
                 let composedURL = await ShareCardRenderer.compositeVideo(
                     at: url,
-                    context: context,
-                    options: options,
+                    composition: composition,
                     username: username,
                     attributed: false,
                     animated: !reduceMotion,
@@ -1133,8 +1131,7 @@ struct SharePreviewView: View {
             case .photo(let image):
                 let composed = ShareCardRenderer.compositePhoto(
                     image,
-                    context: context,
-                    options: options,
+                    composition: composition,
                     username: username,
                     attributed: true,
                     zoom: mediaZoom.scale,
@@ -1150,8 +1147,7 @@ struct SharePreviewView: View {
             case .video(let url, _, _):
                 let composedURL = await ShareCardRenderer.compositeVideo(
                     at: url,
-                    context: context,
-                    options: options,
+                    composition: composition,
                     username: username,
                     attributed: true,
                     animated: !reduceMotion,

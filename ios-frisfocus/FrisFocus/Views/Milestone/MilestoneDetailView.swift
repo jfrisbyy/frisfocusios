@@ -7,7 +7,10 @@
 //  goals, reorderable), Journey (the chronological photo / voice-memo
 //  timeline documenting the process), and Notes (journal entries linked
 //  to this goal). Completing the milestone credits its reward to today
-//  with a quiet celebration moment.
+//  with a quiet celebration moment that grows a warm "Share this
+//  milestone" prompt; a quiet share control (header + menu) opens the
+//  milestone share camera anytime — mid-journey shares simply show
+//  current progress instead of LANDED.
 //
 //  Reads the milestone live from the Store by id so every mutation
 //  reflects immediately; if the milestone is deleted elsewhere the page
@@ -36,6 +39,9 @@ struct MilestoneDetailView: View {
     @State private var showNewNote: Bool = false
     /// Drives the small completion celebration on the header flag.
     @State private var celebrate: Bool = false
+    /// The warm post-completion invitation to share the moment.
+    @State private var showSharePrompt: Bool = false
+    @State private var showShareCamera: Bool = false
 
     @FocusState private var newStepFocused: Bool
 
@@ -48,12 +54,22 @@ struct MilestoneDetailView: View {
             } else {
                 missingState
             }
+
+            if showSharePrompt {
+                sharePromptOverlay
+            }
         }
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: showSharePrompt)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if store.milestone(by: milestoneId) != nil {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Button {
+                            openShareCamera()
+                        } label: {
+                            Label("Share milestone", systemImage: "square.and.arrow.up")
+                        }
                         Button {
                             showComposer = true
                         } label: {
@@ -102,6 +118,11 @@ struct MilestoneDetailView: View {
         }
         .fullScreenCover(item: $viewingAttachment) { attachment in
             MilestonePhotoViewer(attachment: attachment)
+        }
+        .fullScreenCover(isPresented: $showShareCamera) {
+            if let milestone = store.milestone(by: milestoneId) {
+                ShareCameraView(subject: .milestone(store.milestoneShareContext(for: milestone)))
+            }
         }
         .confirmationDialog(
             "Delete this milestone?",
@@ -169,6 +190,20 @@ struct MilestoneDetailView: View {
                     opacity: 0.55
                 )
                 Spacer()
+
+                Button {
+                    openShareCamera()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Share this milestone")
+                .accessibilityHint("Opens the share camera with the milestone card")
+
                 Image(systemName: milestone.isCompleted ? "flag.checkered" : "flag")
                     .font(.system(size: 15, weight: .regular))
                     .foregroundStyle(milestone.isCompleted ? Theme.alertGreen : Theme.sunShadow)
@@ -605,7 +640,114 @@ struct MilestoneDetailView: View {
         Task {
             try? await Task.sleep(for: .milliseconds(650))
             withAnimation(.easeOut(duration: 0.3)) { celebrate = false }
+            try? await Task.sleep(for: .milliseconds(200))
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showSharePrompt = true
         }
+    }
+
+    private func openShareCamera() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showSharePrompt = false
+        showShareCamera = true
+    }
+
+    // MARK: - Share prompt (post-completion)
+
+    /// The warm invitation that grows out of the completion moment —
+    /// a glow, a spring, never a loud popup. One tap opens the share
+    /// camera with the LANDED overlay ready; easy to wave off.
+    private var sharePromptOverlay: some View {
+        VStack {
+            Spacer()
+
+            VStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Theme.sunWarm.opacity(0.45), .clear],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 36
+                            )
+                        )
+                        .frame(width: 72, height: 72)
+                    Image(systemName: "flag.checkered")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(Theme.alertGreen)
+                }
+
+                VStack(spacing: 4) {
+                    Text("Milestone landed")
+                        .font(.serif(21, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Capture the moment — this one's worth telling.")
+                        .font(.serifItalic(13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                        .multilineTextAlignment(.center)
+                }
+
+                Button {
+                    openShareCamera()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Share this milestone")
+                            .font(.sans(15, weight: .semibold))
+                    }
+                    .foregroundStyle(Color(hex: 0x2C2C2A))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(
+                        Capsule().fill(
+                            LinearGradient(
+                                colors: [Color(hex: 0xFFD98A), Color(hex: 0xF0B860)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                    )
+                    .shadow(color: Color(hex: 0xF0A340).opacity(0.35), radius: 10, y: 3)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showSharePrompt = false
+                } label: {
+                    Text("Not now")
+                        .font(.sans(13, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        .frame(height: 38)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 22)
+            .padding(.bottom, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(Theme.paperCream)
+                    .shadow(color: Color.black.opacity(0.22), radius: 24, y: 10)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .strokeBorder(Theme.sunWarm.opacity(0.4), lineWidth: 0.5)
+            )
+            .padding(.horizontal, 24)
+            .padding(.bottom, 30)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            Color.black.opacity(0.25)
+                .ignoresSafeArea()
+                .onTapGesture { showSharePrompt = false }
+        )
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     // MARK: - Section header
