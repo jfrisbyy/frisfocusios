@@ -57,6 +57,11 @@ enum MilestoneStatus: String, Codable {
 
 enum LogEntryType: String, Codable {
     case completed, skipped, penalty, boosterBonus, trainBonus, milestone
+    /// A per-step credit on a "points per step" milestone — a smaller
+    /// slice of the milestone's value landing the day the step is
+    /// checked off. The remainder lands as a `.milestone` entry on
+    /// completion day.
+    case milestoneStep
 }
 
 // MARK: - Scoring styles
@@ -491,6 +496,44 @@ struct SeasonCategory: Codable, Identifiable {
     var customColorHex: String? = nil
 }
 
+/// One smaller goal inside a Milestone. Plain checkmark by default;
+/// when the owning milestone uses "points per step", `pointValue` is
+/// credited to the day the step is checked off.
+struct MilestoneStep: Codable, Identifiable, Equatable, Hashable {
+    var id: UUID = UUID()
+    var title: String
+    /// Canonical sort key — reordering rewrites indices.
+    var orderIndex: Int = 0
+    /// Per-step credit, used only when the milestone's `pointsPerStep`
+    /// is on. Zero means "progress only" even in that mode.
+    var pointValue: Int = 0
+    var completedDate: Date? = nil
+
+    var isCompleted: Bool { completedDate != nil }
+}
+
+/// What kind of media a `MilestoneAttachment` carries.
+enum MilestoneAttachmentKind: String, Codable, Equatable {
+    case photo, voiceMemo
+}
+
+/// A photo or voice memo documenting a milestone's journey. The file
+/// lives in the Documents directory under `filename` (same convention
+/// as note media), so the absolute path survives container moves.
+struct MilestoneAttachment: Codable, Identifiable, Equatable, Hashable {
+    var id: UUID = UUID()
+    var kind: MilestoneAttachmentKind
+    var filename: String
+    /// Voice memo length; nil for photos.
+    var duration: TimeInterval? = nil
+    var createdAt: Date = Date()
+
+    var url: URL? {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        return docs?.appendingPathComponent(filename)
+    }
+}
+
 struct Milestone: Codable, Identifiable {
     var id: UUID = UUID()
     var seasonId: UUID
@@ -503,8 +546,77 @@ struct Milestone: Codable, Identifiable {
     /// The day this milestone was achieved. `nil` means not yet done;
     /// scoring credits `pointValue` to this day's total.
     var completedDate: Date? = nil
+    /// Smaller goals the milestone is broken into, in `orderIndex` order.
+    var steps: [MilestoneStep] = []
+    /// Photos and voice memos documenting the process, in attach order.
+    var attachments: [MilestoneAttachment] = []
+    /// Journal notes linked to this milestone.
+    var linkedNoteIds: [UUID] = []
+    /// When true, each step's `pointValue` is credited the day it's
+    /// checked off and the remainder lands at completion. When false
+    /// (default), steps are progress-only and the full `pointValue`
+    /// lands at completion.
+    var pointsPerStep: Bool = false
 
     var isCompleted: Bool { completedDate != nil }
+
+    /// Steps in display order.
+    var sortedSteps: [MilestoneStep] {
+        steps.sorted { $0.orderIndex < $1.orderIndex }
+    }
+
+    /// 0...1 — fraction of steps done. A completed milestone always
+    /// reads full; a milestone with no steps reads 0 until completed.
+    var stepProgress: Double {
+        if isCompleted { return 1 }
+        guard !steps.isEmpty else { return 0 }
+        return Double(steps.filter(\.isCompleted).count) / Double(steps.count)
+    }
+
+    /// Photo attachments only, oldest first — the card thumbnails.
+    var photoAttachments: [MilestoneAttachment] {
+        attachments.filter { $0.kind == .photo }.sorted { $0.createdAt < $1.createdAt }
+    }
+}
+
+// Backward-compatible Codable: milestones persisted before steps /
+// attachments / note links / points-per-step existed still decode
+// cleanly — missing keys fall through to the property defaults.
+extension Milestone {
+    private enum CodingKeys: String, CodingKey {
+        case id, seasonId, weekNumber, title, status, pointValue,
+             completedDate, steps, attachments, linkedNoteIds, pointsPerStep
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.seasonId = try c.decode(UUID.self, forKey: .seasonId)
+        self.weekNumber = try c.decode(Int.self, forKey: .weekNumber)
+        self.title = try c.decode(String.self, forKey: .title)
+        self.status = try c.decode(MilestoneStatus.self, forKey: .status)
+        self.pointValue = try c.decodeIfPresent(Int.self, forKey: .pointValue) ?? 0
+        self.completedDate = try c.decodeIfPresent(Date.self, forKey: .completedDate)
+        self.steps = try c.decodeIfPresent([MilestoneStep].self, forKey: .steps) ?? []
+        self.attachments = try c.decodeIfPresent([MilestoneAttachment].self, forKey: .attachments) ?? []
+        self.linkedNoteIds = try c.decodeIfPresent([UUID].self, forKey: .linkedNoteIds) ?? []
+        self.pointsPerStep = try c.decodeIfPresent(Bool.self, forKey: .pointsPerStep) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(seasonId, forKey: .seasonId)
+        try c.encode(weekNumber, forKey: .weekNumber)
+        try c.encode(title, forKey: .title)
+        try c.encode(status, forKey: .status)
+        try c.encode(pointValue, forKey: .pointValue)
+        try c.encodeIfPresent(completedDate, forKey: .completedDate)
+        try c.encode(steps, forKey: .steps)
+        try c.encode(attachments, forKey: .attachments)
+        try c.encode(linkedNoteIds, forKey: .linkedNoteIds)
+        try c.encode(pointsPerStep, forKey: .pointsPerStep)
+    }
 }
 
 struct Season: Codable, Identifiable {
@@ -637,6 +749,10 @@ struct LogEntry: Codable, Identifiable {
     /// Set when this entry credits a completed `Milestone` (a large,
     /// one-time reward landing on the day it was achieved).
     var milestoneId: UUID? = nil
+    /// Set when this entry credits one checked-off step of a
+    /// "points per step" milestone, so unchecking can reverse exactly
+    /// this credit. `nil` for everything else.
+    var milestoneStepId: UUID? = nil
     /// Set when this entry is a first-class `WeeklyBooster` payout. Lets
     /// award-once-per-period dedup and the day breakdown identify which
     /// booster fired without leaning on `taskId`. `nil` for non-booster

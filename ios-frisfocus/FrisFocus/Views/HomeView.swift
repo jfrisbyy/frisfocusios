@@ -136,6 +136,10 @@ struct HomeView: View {
                             .id(HomeZone.note.anchorID)
                             .background(zoneTracker(.note))
 
+                        MilestoneZoneView()
+                            .id(HomeZone.milestone.anchorID)
+                            .background(zoneTracker(.milestone))
+
                         // Tail so the last content can scroll above the sundial
                         Theme.paperCream
                             .frame(height: 150)

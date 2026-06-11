@@ -19,19 +19,19 @@ enum HomeZone: String, CaseIterable, Identifiable {
     case sun = "Sun"
     case work = "Work"
     case note = "Note"
-    case circle = "Circle"
+    case milestone = "Milestones"
 
     var id: String { rawValue }
 
     /// Identifier used by ScrollViewReader to scroll to this zone.
     var anchorID: String { rawValue.lowercased() }
 
-    /// Dark-background zones (Sun, Signal) want a cream rail; the
-    /// light Work / Note zones want a charcoal rail.
+    /// Dark-background zones (Sun) want a cream rail; the light
+    /// Work / Note / Milestones zones want a charcoal rail.
     var prefersDarkRail: Bool {
         switch self {
-        case .sun, .circle: return false
-        case .work, .note:  return true
+        case .sun: return false
+        case .work, .note, .milestone: return true
         }
     }
 }
@@ -51,9 +51,10 @@ struct SideRailView: View {
     var onScrub: ((HomeZone) -> Void)? = nil
 
     /// Fixed-width track so the rail's footprint never changes when the
-    /// active label swaps between SUN / WORK / NOTE / CIRCLE — different
-    /// label widths would otherwise nudge the layout during scroll.
-    private let railWidth: CGFloat = 64
+    /// active label swaps between SUN / WORK / NOTE / MILESTONES —
+    /// different label widths would otherwise nudge the layout during
+    /// scroll. Sized to fit the longest label (MILESTONES).
+    private let railWidth: CGFloat = 80
     /// Wider hit area surfaced while a scrub is in flight so the
     /// finger keeps tracking even if it drifts left of the slim rail.
     private let scrubExpandedWidth: CGFloat = 110

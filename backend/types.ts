@@ -1190,6 +1190,27 @@ export type Database = {
           },
         ]
       }
+      season_sync: {
+        Row: {
+          payload: string
+          slice_key: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          payload: string
+          slice_key: string
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          payload?: string
+          slice_key?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       story_comments: {
         Row: {
           body: string

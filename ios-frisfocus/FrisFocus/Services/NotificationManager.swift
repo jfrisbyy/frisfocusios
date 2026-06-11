@@ -43,6 +43,8 @@ enum DeepLinkRoute: Identifiable, Equatable {
     /// the 5-minute window is live, the ephemeral wall during the hour,
     /// and only the attendance residue after.
     case golden(circleId: String)
+    /// Open one milestone's page (a target-week nudge was tapped).
+    case milestone(milestoneId: String)
 
     var id: String {
         switch self {
@@ -51,6 +53,7 @@ enum DeepLinkRoute: Identifiable, Equatable {
         case .circles: return "circles"
         case .circle(let circleId): return "circle:\(circleId)"
         case .golden(let circleId): return "golden:\(circleId)"
+        case .milestone(let milestoneId): return "milestone:\(milestoneId)"
         }
     }
 
@@ -72,6 +75,9 @@ enum DeepLinkRoute: Identifiable, Equatable {
         case "golden":
             guard let circleId = userInfo["circleId"] as? String, !circleId.isEmpty else { return nil }
             self = .golden(circleId: circleId)
+        case "milestone":
+            guard let milestoneId = userInfo["milestoneId"] as? String, !milestoneId.isEmpty else { return nil }
+            self = .milestone(milestoneId: milestoneId)
         default:
             return nil
         }

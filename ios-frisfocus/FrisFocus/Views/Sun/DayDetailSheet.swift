@@ -214,6 +214,7 @@ private struct PastEntryRow: View {
         case .boosterBonus: return "sparkles"
         case .trainBonus: return "rectangle.stack.fill"
         case .milestone: return "flag.checkered"
+        case .milestoneStep: return "flag"
         case .skipped: return "minus.circle"
         case .penalty: return "exclamationmark.circle.fill"
         }
@@ -222,7 +223,7 @@ private struct PastEntryRow: View {
     private var iconColor: Color {
         switch entry.entryType {
         case .completed: return Theme.alertGreen
-        case .boosterBonus, .trainBonus, .milestone: return Theme.alertGreen.opacity(0.85)
+        case .boosterBonus, .trainBonus, .milestone, .milestoneStep: return Theme.alertGreen.opacity(0.85)
         case .skipped: return Theme.textPrimary.opacity(0.45)
         case .penalty: return Theme.alertRed
         }
@@ -247,12 +248,19 @@ private struct PastEntryRow: View {
         }
         if let milestoneId = entry.milestoneId,
            let milestone = store.currentSeason.milestones.first(where: { $0.id == milestoneId }) {
+            if entry.entryType == .milestoneStep {
+                let stepTitle = entry.milestoneStepId.flatMap { stepId in
+                    milestone.steps.first { $0.id == stepId }?.title
+                }
+                return "\(stepTitle ?? milestone.title) · milestone step"
+            }
             return "\(milestone.title) · milestone"
         }
         switch entry.entryType {
         case .boosterBonus: return "Booster bonus"
         case .trainBonus: return "Routine complete"
         case .milestone: return "Milestone"
+        case .milestoneStep: return "Milestone step"
         case .penalty: return "Avoidance"
         case .skipped: return "Skipped"
         case .completed: return "Logged"

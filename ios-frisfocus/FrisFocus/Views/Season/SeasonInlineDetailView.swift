@@ -112,7 +112,7 @@ struct SeasonInlineDetailView: View {
                 .presentationDetents([.large])
         }
         .sheet(isPresented: $showMilestones) {
-            MilestonesView()
+            MilestonesBoardView()
                 .presentationDetents([.large])
         }
         .sheet(isPresented: $showSettings) {

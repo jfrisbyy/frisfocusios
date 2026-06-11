@@ -73,6 +73,14 @@ final class Store {
     /// journal data writes through to the user's own cloud space.
     @ObservationIgnored weak var notesSync: NotesSyncService?
 
+    /// The private season sync bridge. Wired at sign-in by
+    /// `SeasonSyncService`. Unlike the notes bridge it has a single
+    /// touch point: every flushed write of a season-scoped slice
+    /// (season, tasks, score history, boosters, trains, avoidance)
+    /// notifies it from `flushPendingSaves`, so no individual mutation
+    /// needs to remember to call it.
+    @ObservationIgnored weak var seasonSync: SeasonSyncService?
+
     /// Whether the user opted into tags on notes. Off by default —
     /// nothing about tags surfaces anywhere until this is flipped in
     /// the manage-folders sheet.
@@ -579,8 +587,16 @@ final class Store {
         }
     }
 
+    /// The slices mirrored to the user's account by `SeasonSyncService`.
+    static let seasonSyncedKeys: Set<DataKey> = [
+        .season, .tasks, .todos, .logEntries,
+        .boosters, .habitTrains, .avoidanceItems, .avoidanceOccurrences
+    ]
+
     /// Write every dirty collection now. Called by the debounce, and as
-    /// a safety net when the app heads to the background.
+    /// a safety net when the app heads to the background. Season-scoped
+    /// slices also notify the season sync bridge so local changes write
+    /// through to the account.
     func flushPendingSaves() {
         pendingFlush?.cancel()
         pendingFlush = nil
@@ -590,6 +606,9 @@ final class Store {
         let encoder = JSONEncoder()
         for key in keys {
             write(key, with: encoder)
+            if Store.seasonSyncedKeys.contains(key) {
+                seasonSync?.sliceChanged(key)
+            }
         }
     }
 

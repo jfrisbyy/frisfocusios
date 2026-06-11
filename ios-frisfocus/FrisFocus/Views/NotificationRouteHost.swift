@@ -73,6 +73,19 @@ struct NotificationRouteHost: View {
             } else {
                 RouteFallback(message: "This Golden Hour link is no longer valid.") { dismiss() }
             }
+
+        case .milestone(let milestoneId):
+            // A target-week nudge lands directly on that milestone's page.
+            if let uuid = UUID(uuidString: milestoneId),
+               store.milestone(by: uuid) != nil {
+                NavigationStack {
+                    MilestoneDetailView(milestoneId: uuid)
+                        .toolbar { doneButton }
+                }
+                .environment(store)
+            } else {
+                RouteFallback(message: "This milestone was completed or removed.") { dismiss() }
+            }
         }
     }
 

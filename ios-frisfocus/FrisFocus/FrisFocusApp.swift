@@ -34,6 +34,10 @@ struct FrisFocusApp: App {
     /// photos mirror to the user's own cloud space — offline-first,
     /// latest-wins.
     @State private var notesSync = NotesSyncService()
+    /// Private season sync: the season, tasks, score history, and
+    /// milestones (with their steps + journey media) mirror to the
+    /// user's own cloud space — offline-first, latest-wins per slice.
+    @State private var seasonSync = SeasonSyncService()
 
     var body: some Scene {
         WindowGroup {
@@ -48,6 +52,7 @@ struct FrisFocusApp: App {
                 .environment(socialSync)
                 .environment(friendGraph)
                 .environment(notesSync)
+                .environment(seasonSync)
                 .environment(appDelegate.notifications)
                 .preferredColorScheme(.light)
                 .statusBarHidden(false)

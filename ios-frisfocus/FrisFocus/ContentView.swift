@@ -27,6 +27,7 @@ struct ContentView: View {
     @Environment(SocialSyncService.self) private var socialSync
     @Environment(FriendGraphService.self) private var friendGraph
     @Environment(NotesSyncService.self) private var notesSync
+    @Environment(SeasonSyncService.self) private var seasonSync
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
@@ -73,6 +74,9 @@ struct ContentView: View {
                     // Private journal sync: notes, folders, tags, and
                     // their media follow the account — offline-first.
                     await notesSync.start(myUserId: myId, store: store)
+                    // Private season sync: season, tasks, score history,
+                    // and milestones follow the account too.
+                    await seasonSync.start(myUserId: myId, store: store)
                     await notifications.requestAuthorizationIfNeeded()
                     // Esengo link: refresh entitlements + silently credit
                     // any outcomes Cadence recorded while we were away.
@@ -87,12 +91,16 @@ struct ContentView: View {
                     moderation.clear()
                     socialSync.stop()
                     notesSync.stop()
+                    seasonSync.stop()
                     await cadence.refresh(myUserId: nil)
                 }
             }
             .onAppear {
                 print("[FrisFocus] Tasks: \(store.tasks.count), To-dos: \(store.todos.count), Notes: \(store.notes.count), LogEntries: \(store.logEntries.count)")
                 store.performDayRolloverIfNeeded()
+                // Keep milestone target-week nudges aligned with the
+                // season's current milestones on every launch.
+                store.refreshMilestoneNudges()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
@@ -120,6 +128,11 @@ struct ContentView: View {
                         Task {
                             await notesSync.pullRemote()
                             await notesSync.flushNow()
+                        }
+                        // Catch up the season the same way.
+                        Task {
+                            await seasonSync.pullRemote()
+                            await seasonSync.flushNow()
                         }
                     }
                 } else if newPhase == .background || newPhase == .inactive {

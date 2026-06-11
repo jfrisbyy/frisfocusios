@@ -376,7 +376,7 @@ struct SeasonStatsView: View {
                 gainLossTile(
                     label: "Milestones",
                     iconName: "flag.checkered",
-                    points: points(for: .milestone)
+                    points: points(for: .milestone) + points(for: .milestoneStep)
                 )
                 gainLossTile(
                     label: "Penalties",
