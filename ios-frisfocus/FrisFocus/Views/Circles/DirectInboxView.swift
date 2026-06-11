@@ -21,6 +21,7 @@
 //  from the recorded `DirectShare`s on the fly.
 //
 
+import AVFoundation
 import SwiftUI
 import UIKit
 import Combine
@@ -620,13 +621,31 @@ struct DirectShareViewerView: View {
 
     @ViewBuilder
     private var mediaLayer: some View {
-        if let image = loadedImage {
+        if let media = currentMedia, media.type == .video, let url = media.localURL {
+            // Video proofs play on a loop, with sound, letterboxed to
+            // their true shape. Holding to pause stops the clip too.
+            VideoLoopView(url: url, gravity: .resizeAspect, isPaused: isPaused)
+                .id(url)
+        } else if let image = loadedImage {
+            // Shape-aware: show the whole card centered with a blurred
+            // copy filling the edges — no over-zoom cropping.
             GeometryReader { geo in
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
+                ZStack {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .blur(radius: 42, opaque: true)
+                        .overlay(Color.black.opacity(0.28))
+
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
             }
         } else {
             captionOnlyBackground

@@ -23,6 +23,7 @@
 //  caption text (joined with newlines as a fallback).
 //
 
+import AVFoundation
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import PencilKit
@@ -619,11 +620,23 @@ struct CaptureReviewView: View {
     private var mediaCanvas: some View {
         GeometryReader { geo in
             ZStack {
-                Image(uiImage: filteredImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
+                // Photos render the filtered still; a just-recorded video
+                // plays live on a loop (with sound) so the user reviews
+                // the actual clip — the filter look stays a tint overlay,
+                // matching what exports.
+                if case .video(let url, _, _) = result {
+                    VideoLoopView(url: url, gravity: .resizeAspectFill)
+                        .id(url)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                        .allowsHitTesting(false)
+                } else {
+                    Image(uiImage: filteredImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                }
 
                 if isVideo {
                     selectedFilter.tintOverlay

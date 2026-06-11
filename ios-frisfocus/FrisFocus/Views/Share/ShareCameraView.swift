@@ -7,10 +7,11 @@
 //  chips, attribution) is live on the viewfinder and reflows as the
 //  user curates; what you see is exactly what exports.
 //
-//   • PHOTO / VIDEO segmented modes, large shutter, flip, close.
+//   • One shutter, camera ergonomics: tap → photo, press-and-hold →
+//     video (30 s cap with a progress ring), double-tap the
+//     viewfinder to flip cameras.
 //   • Tap any task chip on the viewfinder to hide/show it.
 //   • "Layers" opens the disclosure sheet (season / tasks / numbers).
-//   • Video caps at 30 s with a progress ring.
 //
 //  Reuses the proven `CameraService` + `CameraProxyView` from the
 //  capture module — on the cloud simulator the proxy shows its calm
@@ -21,11 +22,6 @@ import AVFoundation
 import Combine
 import SwiftUI
 import UIKit
-
-enum ShareCaptureMode: String, CaseIterable {
-    case photo = "PHOTO"
-    case video = "VIDEO"
-}
 
 struct ShareCameraView: View {
     @Environment(\.dismiss) private var dismiss
@@ -39,7 +35,6 @@ struct ShareCameraView: View {
 
     @State private var camera = CameraService()
     @State private var options = ShareOverlayOptions()
-    @State private var captureMode: ShareCaptureMode = .photo
     @State private var result: CaptureResult?
     @State private var showLayers: Bool = false
 
@@ -47,11 +42,15 @@ struct ShareCameraView: View {
     @State private var isRecording: Bool = false
     @State private var recordStart: Date?
     @State private var recordElapsed: Double = 0
+    /// Arms the hold-to-record after a short press; a quick release
+    /// before it fires is a photo instead.
+    @State private var pressTimerTask: Task<Void, Never>?
 
     // Visual effects
     @State private var flashOpacity: Double = 0
 
     @AppStorage("share.chipHint.seen") private var chipHintSeen: Bool = false
+    @AppStorage("share.shutterHint.seen") private var shutterHintSeen: Bool = false
 
     private let maxRecordSeconds: Double = 30
     private let recordTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
@@ -68,6 +67,7 @@ struct ShareCameraView: View {
 
             CameraProxyView(camera: camera)
                 .ignoresSafeArea()
+                .simultaneousGesture(doubleTapFlipGesture)
 
             // The live overlay — WYSIWYG with the export. Chips are the
             // only interactive part; everything else passes touches to
@@ -101,6 +101,7 @@ struct ShareCameraView: View {
             Task { await camera.requestAccessAndStart() }
         }
         .onDisappear {
+            pressTimerTask?.cancel()
             camera.stop()
         }
         .onReceive(recordTimer) { _ in
@@ -185,28 +186,19 @@ struct ShareCameraView: View {
         VStack(spacing: 14) {
             shutterRow
 
-            // Mode toggle — PHOTO / VIDEO.
-            HStack(spacing: 26) {
-                ForEach(ShareCaptureMode.allCases, id: \.self) { mode in
-                    Button {
-                        guard !isRecording else { return }
-                        UISelectionFeedbackGenerator().selectionChanged()
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            captureMode = mode
-                        }
-                    } label: {
-                        Text(mode.rawValue)
-                            .font(.sans(13, weight: captureMode == mode ? .bold : .medium))
-                            .tracking(1.6)
-                            .foregroundStyle(
-                                captureMode == mode
-                                    ? Color.white
-                                    : Color.white.opacity(0.55)
-                            )
-                    }
-                    .accessibilityLabel("\(mode == .photo ? "Photo" : "Video") mode")
-                    .accessibilityAddTraits(captureMode == mode ? .isSelected : [])
-                }
+            // First-use gesture hint — replaces the old mode toggle.
+            if !shutterHintSeen && !isRecording && camera.hasCamera {
+                Text("tap for photo · hold for video")
+                    .font(.sans(12, weight: .regular))
+                    .tracking(0.6)
+                    .foregroundStyle(Color.white.opacity(0.78))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(Color.black.opacity(0.35)))
+                    .transition(.opacity)
+            } else {
+                // Keep the shutter's vertical position stable.
+                Color.clear.frame(height: 28)
             }
         }
         .padding(.bottom, 30)
@@ -227,66 +219,79 @@ struct ShareCameraView: View {
                     .transition(.opacity)
             }
 
-            Button {
-                handleShutterTap()
-            } label: {
-                ZStack {
+            ZStack {
+                Circle()
+                    .strokeBorder(Color.white, lineWidth: 4)
+                    .frame(width: 78, height: 78)
+
+                Circle()
+                    .fill(isRecording ? Color.red : Color.white)
+                    .frame(width: isRecording ? 32 : 62, height: isRecording ? 32 : 62)
+                    .clipShape(
+                        isRecording
+                            ? AnyShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            : AnyShape(Circle())
+                    )
+                    .animation(.easeInOut(duration: 0.18), value: isRecording)
+
+                // Recording progress ring toward the 30 s cap.
+                if isRecording {
                     Circle()
-                        .strokeBorder(Color.white, lineWidth: 4)
+                        .trim(from: 0, to: CGFloat(min(1, recordElapsed / maxRecordSeconds)))
+                        .stroke(
+                            Color.red,
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                        )
                         .frame(width: 78, height: 78)
-
-                    if captureMode == .video {
-                        if isRecording {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.red)
-                                .frame(width: 30, height: 30)
-                        } else {
-                            Circle()
-                                .fill(Color.red)
-                                .frame(width: 24, height: 24)
-                        }
-                    } else {
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: 62, height: 62)
-                    }
-
-                    // Recording progress ring toward the 30 s cap.
-                    if isRecording {
-                        Circle()
-                            .trim(from: 0, to: CGFloat(min(1, recordElapsed / maxRecordSeconds)))
-                            .stroke(
-                                Color.red,
-                                style: StrokeStyle(lineWidth: 4, lineCap: .round)
-                            )
-                            .frame(width: 78, height: 78)
-                            .rotationEffect(.degrees(-90))
-                    }
+                        .rotationEffect(.degrees(-90))
                 }
-                .scaleEffect(isRecording && !reduceMotion ? 1.06 : 1.0)
-                .animation(.easeOut(duration: 0.2), value: isRecording)
             }
-            .buttonStyle(.plain)
+            .scaleEffect(isRecording && !reduceMotion ? 1.06 : 1.0)
+            .animation(.easeOut(duration: 0.2), value: isRecording)
+            .contentShape(Circle())
+            .gesture(shutterGesture)
             .disabled(!camera.hasCamera)
             .opacity(camera.hasCamera ? 1 : 0.4)
-            .accessibilityLabel(shutterAccessibilityLabel)
+            .accessibilityLabel(isRecording ? "Recording. Release to stop." : "Tap to photograph, hold to record")
         }
     }
 
-    private var shutterAccessibilityLabel: String {
-        if captureMode == .photo { return "Take photo" }
-        return isRecording ? "Stop recording" : "Start recording"
+    // MARK: - Capture gestures
+
+    /// Camera ergonomics on one shutter: a quick tap fires a photo; a
+    /// press held past 220 ms arms a recording that stops on release.
+    private var shutterGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard pressTimerTask == nil, !isRecording, camera.hasCamera else { return }
+                pressTimerTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(220))
+                    if !Task.isCancelled {
+                        startRecording()
+                    }
+                }
+            }
+            .onEnded { _ in
+                if isRecording {
+                    stopRecording()
+                } else {
+                    pressTimerTask?.cancel()
+                    pressTimerTask = nil
+                    takePhoto()
+                }
+                pressTimerTask = nil
+            }
     }
 
-    // MARK: - Capture
-
-    private func handleShutterTap() {
-        switch captureMode {
-        case .photo:
-            takePhoto()
-        case .video:
-            isRecording ? stopRecording() : startRecording()
-        }
+    /// Double-tap anywhere on the viewfinder flips the camera — the
+    /// top-bar flip button stays as the discoverable affordance.
+    private var doubleTapFlipGesture: some Gesture {
+        TapGesture(count: 2)
+            .onEnded {
+                guard camera.hasCamera else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                camera.flipCamera()
+            }
     }
 
     private func takePhoto() {
@@ -302,11 +307,13 @@ struct ShareCameraView: View {
     }
 
     private func startRecording() {
+        guard camera.hasCamera, !isRecording else { return }
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
         recordStart = Date()
         recordElapsed = 0
         withAnimation(.easeOut(duration: 0.2)) { isRecording = true }
         camera.startRecording()
+        if !shutterHintSeen { shutterHintSeen = true }
     }
 
     private func stopRecording() {

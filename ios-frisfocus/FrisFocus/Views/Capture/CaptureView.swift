@@ -718,12 +718,32 @@ struct ActualCameraView: UIViewRepresentable {
         view.backgroundColor = .black
         view.previewLayer.session = camera.session
         view.previewLayer.videoGravity = .resizeAspectFill
+        Self.applyUnmirroredPolicy(to: view.previewLayer)
         return view
     }
 
     func updateUIView(_ uiView: PreviewContainerView, context: Context) {
         if uiView.previewLayer.session !== camera.session {
             uiView.previewLayer.session = camera.session
+        }
+        // Reading these ties this update to session bring-up and camera
+        // flips, so the policy re-applies on each fresh connection.
+        _ = camera.position
+        _ = camera.hasCamera
+        Self.applyUnmirroredPolicy(to: uiView.previewLayer)
+    }
+
+    /// True-to-life viewfinder: the front camera preview is normally
+    /// mirrored while the saved photo/video is not — users compose one
+    /// image and keep another. Un-mirroring the preview makes what you
+    /// see exactly what saves.
+    private static func applyUnmirroredPolicy(to layer: AVCaptureVideoPreviewLayer) {
+        guard let connection = layer.connection, connection.isVideoMirroringSupported else { return }
+        if connection.automaticallyAdjustsVideoMirroring {
+            connection.automaticallyAdjustsVideoMirroring = false
+        }
+        if connection.isVideoMirrored {
+            connection.isVideoMirrored = false
         }
     }
 
@@ -944,6 +964,13 @@ final class CameraService: NSObject {
                     continuation.resume(returning: nil)
                     return
                 }
+                // Keep stills un-mirrored on every camera so the photo
+                // matches the un-mirrored viewfinder exactly.
+                if let connection = self.photoOutput.connection(with: .video),
+                   connection.isVideoMirroringSupported {
+                    connection.automaticallyAdjustsVideoMirroring = false
+                    connection.isVideoMirrored = false
+                }
                 let settings = AVCapturePhotoSettings()
                 if let device = self.currentInput?.device,
                    device.hasFlash,
@@ -960,7 +987,6 @@ final class CameraService: NSObject {
         let dir = FileManager.default.temporaryDirectory
         let url = dir.appendingPathComponent("frisfocus-clip-\(UUID().uuidString).mov")
         pendingRecordingURL = url
-        let mirrored = (position == .front)
         Task { @MainActor in
             // Just-in-time microphone: ask only when a recording actually
             // begins, and attach the input for the recording's duration.
@@ -976,9 +1002,12 @@ final class CameraService: NSObject {
                     if connection.isVideoOrientationSupported {
                         connection.videoOrientation = .portrait
                     }
-                    if mirrored, connection.isVideoMirroringSupported {
+                    // True-to-life: never mirror the recorded clip — it
+                    // must match the un-mirrored viewfinder and the saved
+                    // front-camera photos.
+                    if connection.isVideoMirroringSupported {
                         connection.automaticallyAdjustsVideoMirroring = false
-                        connection.isVideoMirrored = true
+                        connection.isVideoMirrored = false
                     }
                 }
                 self.movieOutput.startRecording(to: url, recordingDelegate: self)

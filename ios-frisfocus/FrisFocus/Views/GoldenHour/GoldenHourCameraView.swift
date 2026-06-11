@@ -394,8 +394,9 @@ struct GoldenHourCameraView: View {
 
 // MARK: - Looping preview player
 
-/// A muted-less looping player for the capture preview and full-screen
-/// wall viewing — plays a local or signed URL on repeat.
+/// An unmuted looping player for the capture preview and full-screen
+/// wall viewing — plays a local or signed URL on repeat, holding the
+/// playback audio-session claim so sound carries even on silent.
 struct GoldenLoopingPlayer: View {
     let url: URL
 
@@ -411,8 +412,10 @@ struct GoldenLoopingPlayer: View {
             }
         }
         .onAppear {
+            VideoPlaybackAudio.activate()
             let item = AVPlayerItem(url: url)
             let queue = AVQueuePlayer(playerItem: item)
+            queue.isMuted = false
             looper = AVPlayerLooper(player: queue, templateItem: item)
             queue.play()
             player = queue
@@ -421,6 +424,7 @@ struct GoldenLoopingPlayer: View {
             player?.pause()
             player = nil
             looper = nil
+            VideoPlaybackAudio.release()
         }
     }
 }

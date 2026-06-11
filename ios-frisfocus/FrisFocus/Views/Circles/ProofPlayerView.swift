@@ -50,6 +50,9 @@ struct ProofPlayerView: View {
     @State private var reportTarget: ReportTarget?
     /// Keeps the player up briefly after a reaction so the burst lands.
     @State private var didReact: Bool = false
+    /// True while this player holds the playback audio-session claim
+    /// (video proofs only) so sound carries even on silent.
+    @State private var claimedAudio: Bool = false
 
     private let tick: TimeInterval = 0.04
     private let timer = Timer.publish(every: 0.04, on: .main, in: .common).autoconnect()
@@ -84,6 +87,10 @@ struct ProofPlayerView: View {
         .onDisappear {
             player?.pause()
             player = nil
+            if claimedAudio {
+                claimedAudio = false
+                VideoPlaybackAudio.release()
+            }
             presence?.setWatching(false)
         }
         .sheet(item: $reportTarget) { target in
@@ -324,7 +331,14 @@ struct ProofPlayerView: View {
     }
 
     private func startVideo(url: URL) {
+        // Claim the playback session so the proof's sound is audible
+        // even with the silent switch on; released on disappear.
+        if !claimedAudio {
+            claimedAudio = true
+            VideoPlaybackAudio.activate()
+        }
         let avPlayer = AVPlayer(url: url)
+        avPlayer.isMuted = false
         avPlayer.actionAtItemEnd = .pause
         player = avPlayer
         isLoading = false

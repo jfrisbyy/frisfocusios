@@ -20,6 +20,7 @@
 //  through unchanged from the friend-detail gesture bar.
 //
 
+import AVFoundation
 import SwiftUI
 import UIKit
 import Combine
@@ -650,20 +651,45 @@ struct StoryPlayerView: View {
     private var mediaLayer: some View {
         if let post = currentPost {
             ZStack {
-                if let media = currentMedia,
-                   let url = media.localURL,
-                   let img = loadImage(at: url) {
-                    GeometryReader { geo in
-                        Image(uiImage: img)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: geo.size.width, height: geo.size.height)
-                            .clipped()
-                    }
+                if let media = currentMedia, let url = media.localURL, media.type == .video {
+                    // Recorded clips play on a loop, with sound, letter-
+                    // boxed to their true shape. Holding to pause stops
+                    // the clip alongside the progress bar.
+                    VideoLoopView(url: url, gravity: .resizeAspect, isPaused: isPaused)
+                        .id(url)
+                } else if let media = currentMedia,
+                          let url = media.localURL,
+                          let img = loadImage(at: url) {
+                    shapeAwareImage(img)
                 } else {
                     captionOnlyBackground(for: post)
                 }
             }
+        }
+    }
+
+    /// Shape-aware rendering: cards composed in the 9:16 story shape
+    /// are NOT stretched to fill the even-taller screen (that was the
+    /// over-zoom). The whole image shows centered, with a soft blurred
+    /// copy of itself filling the edges.
+    private func shapeAwareImage(_ img: UIImage) -> some View {
+        GeometryReader { geo in
+            ZStack {
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .blur(radius: 42, opaque: true)
+                    .overlay(Color.black.opacity(0.28))
+
+                Image(uiImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: geo.size.width, height: geo.size.height)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
     }
 
