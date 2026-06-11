@@ -30,6 +30,11 @@ final class Store {
     /// specific day. The media file lives on disk; see `ProofAttachService`.
     var proofPins: [ProofPin] = [] { didSet { markDirty(.proofPins) } }
 
+    /// Permanent on-device archive of every proof the user posted
+    /// (story / circle clip) or saved — survives story expiry and post
+    /// deletion. Private sends are never recorded here.
+    var proofLibrary: [ProofLibraryItem] = [] { didSet { markDirty(.proofLibrary) } }
+
     // MARK: - Social
 
     /// Stable per-install identity for "me". Generated once on first
@@ -238,6 +243,7 @@ final class Store {
         static let notes = "notes"
         static let folders = "folders"
         static let proofPins = "proofPins"
+        static let proofLibrary = "proofLibrary"
         static let lastRollover = "lastRolloverDate"
         static let modelVersion = "modelVersion"
 
@@ -384,6 +390,7 @@ final class Store {
             self.notes = Store.loadArray(Keys.notes) ?? []
             self.folders = Store.loadArray(Keys.folders) ?? []
             self.proofPins = Store.loadArray(Keys.proofPins) ?? []
+            self.proofLibrary = Store.loadArray(Keys.proofLibrary) ?? []
             self.friends = Store.loadArray(Keys.friends) ?? []
             self.circles = Store.loadArray(Keys.circles) ?? []
             self.circleTaskCompletions = Store.loadArray(Keys.circleTaskCompletions) ?? []
@@ -544,7 +551,7 @@ final class Store {
     /// One persistable slice of the Store. Each case maps to a single
     /// UserDefaults key.
     enum DataKey: CaseIterable {
-        case season, tasks, todos, logEntries, notes, folders, proofPins
+        case season, tasks, todos, logEntries, notes, folders, proofPins, proofLibrary
         case friends, circles, circleTaskCompletions, circleContributions
         case signalFacts, cheers, storyPosts, directShares, likes, comments, mediaAssets
         case avoidanceItems, avoidanceOccurrences, habitTrains, boosters
@@ -633,6 +640,7 @@ final class Store {
         case .notes: setJSON(notes, forKey: Keys.notes, encoder: encoder)
         case .folders: setJSON(folders, forKey: Keys.folders, encoder: encoder)
         case .proofPins: setJSON(proofPins, forKey: Keys.proofPins, encoder: encoder)
+        case .proofLibrary: setJSON(proofLibrary, forKey: Keys.proofLibrary, encoder: encoder)
         case .friends: setJSON(friends, forKey: Keys.friends, encoder: encoder)
         case .circles: setJSON(circles, forKey: Keys.circles, encoder: encoder)
         case .circleTaskCompletions: setJSON(circleTaskCompletions, forKey: Keys.circleTaskCompletions, encoder: encoder)
@@ -680,7 +688,7 @@ final class Store {
     /// snapshots before any new code touches the data.
     private static let allPersistedKeys: [String] = [
         Keys.currentSeason, Keys.tasks, Keys.todos, Keys.logEntries,
-        Keys.notes, Keys.folders, Keys.proofPins, Keys.friends, Keys.circles,
+        Keys.notes, Keys.folders, Keys.proofPins, Keys.proofLibrary, Keys.friends, Keys.circles,
         Keys.circleTaskCompletions, Keys.circleContributions,
         Keys.signalFacts, Keys.cheers, Keys.storyPosts, Keys.directShares,
         Keys.likes, Keys.comments, Keys.mediaAssets, Keys.avoidanceItems,
@@ -864,9 +872,23 @@ final class Store {
 // will re-render automatically when the underlying logs / season change.
 
 extension Store {
-    /// Sum of points earned today, by the local calendar day.
+    /// The day the home screen is currently showing — today, or the
+    /// past day the user travelled to via the calendar picker. Every
+    /// home-zone accessor below reads this so the REAL homescreen
+    /// transforms in place instead of swapping to a separate snapshot.
+    var displayedDay: Date {
+        viewingDay ?? Date()
+    }
+
+    /// True while the home is travelled to a past day.
+    var isViewingPast: Bool {
+        viewingDay != nil
+    }
+
+    /// Sum of points earned on the displayed day (today on the live
+    /// home; the travelled day in the time machine).
     var todayScore: Int {
-        score(on: Date())
+        score(on: displayedDay)
     }
 
     /// Sum of points earned on any local calendar day. Drives both the
@@ -940,14 +962,15 @@ extension Store {
 
     // MARK: - Home composition
 
-    /// True if a completed LogEntry exists for the given task on today's
-    /// local calendar day. Drives the checkbox state in `TaskCardView`.
+    /// True if a completed LogEntry exists for the given task on the
+    /// displayed local calendar day. Drives the checkbox state in
+    /// `TaskCardView` — on a travelled day it reflects that day's logs.
     func hasLogEntryToday(forTaskId taskId: UUID) -> Bool {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
+        let day = cal.startOfDay(for: displayedDay)
         return logEntries.contains { entry in
             entry.taskId == taskId
-                && cal.isDate(entry.date, inSameDayAs: today)
+                && cal.isDate(entry.date, inSameDayAs: day)
                 && entry.entryType == .completed
         }
     }
@@ -955,15 +978,36 @@ extension Store {
     /// THE single definition of "a Task on today's plan" — every
     /// surface that lists today's tasks (the home plan, the season
     /// detail, the proof picker) reads this so they can never drift
-    /// apart. A task qualifies when its pin schedule matches today.
+    /// apart. A task qualifies when its pin schedule matches the
+    /// displayed day; on a past day, tasks actually logged that day
+    /// are included even if they weren't pinned.
     var planTasksToday: [FFTask] {
-        tasks.filter { $0.isPinnedToday }
+        guard isViewingPast else {
+            return tasks.filter { $0.isPinnedToday }
+        }
+        let cal = Calendar.current
+        let day = displayedDay
+        let loggedIds = Set(logEntries.compactMap { entry -> UUID? in
+            guard entry.entryType == .completed,
+                  cal.isDate(entry.date, inSameDayAs: day) else { return nil }
+            return entry.taskId
+        })
+        return tasks.filter { $0.isPinnedFor(day) || loggedIds.contains($0.id) }
     }
 
-    /// The To-do half of today's plan: pointed To-dos due today or
-    /// overdue. Shared by the same surfaces as `planTasksToday`.
+    /// The To-do half of the displayed day's plan. Live home: pointed
+    /// To-dos due today or overdue. Past day: To-dos due or completed
+    /// on that day.
     var dueTodosToday: [Todo] {
         let cal = Calendar.current
+        if isViewingPast {
+            let day = displayedDay
+            return todos.filter { todo in
+                if let due = todo.dueDate, cal.isDate(due, inSameDayAs: day) { return true }
+                if let done = todo.completedAt, cal.isDate(done, inSameDayAs: day) { return true }
+                return false
+            }
+        }
         let today = cal.startOfDay(for: Date())
         return todos.filter { todo in
             guard let due = todo.dueDate, todo.pointValue != nil else { return false }
@@ -986,8 +1030,11 @@ extension Store {
         // Linked Cadence routines you launch-and-run, scheduled for
         // today. They sit in the plan like a task but open Cadence to
         // run; passive outcomes never appear here (they live in Season).
-        for link in todaysCadenceLinks {
-            items.append(.cadenceLink(link))
+        // Only meaningful on the live home — a past day shows history.
+        if !isViewingPast {
+            for link in todaysCadenceLinks {
+                items.append(.cadenceLink(link))
+            }
         }
 
         for todo in dueTodosToday {
@@ -1051,6 +1098,8 @@ extension Store {
     /// where the most recent log is 7+ days old. Limited to one drift
     /// alert per category to avoid flooding the section.
     var alerts: [AlertItem] {
+        // A past day is history — nothing "needs you" there.
+        guard !isViewingPast else { return [] }
         var result: [AlertItem] = []
         let cal = Calendar.current
         let now = Date()
@@ -1159,12 +1208,13 @@ extension Store {
 
     // MARK: - Notes
 
-    /// All notes created today, oldest first. The Note zone iterates this.
+    /// All notes created on the displayed day, oldest first. The Note
+    /// zone iterates this — it transforms with the time machine.
     var todaysNotes: [Note] {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
+        let day = cal.startOfDay(for: displayedDay)
         return notes
-            .filter { cal.isDate($0.createdAt, inSameDayAs: today) }
+            .filter { cal.isDate($0.createdAt, inSameDayAs: day) }
             .sorted { $0.createdAt < $1.createdAt }
     }
 

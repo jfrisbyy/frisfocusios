@@ -44,7 +44,6 @@ struct NoteDetailEditView: View {
     @State private var showRecorder: Bool = false
     @State private var showDeleteConfirm: Bool = false
     @State private var showCaptureSheet: Bool = false
-    @State private var showLabelField: Bool = false
     @State private var photoItems: [PhotosPickerItem] = []
 
     /// Proof pending removal confirmation — set when the user taps × on a
@@ -62,7 +61,8 @@ struct NoteDetailEditView: View {
     /// text doesn't itself get recorded as a new edit.
     @State private var isUndoing: Bool = false
 
-    @FocusState private var labelFocused: Bool
+    @FocusState private var titleFocused: Bool
+    @FocusState private var bodyFocused: Bool
 
     /// Debounce token for textual autosave. Bumped on every keystroke;
     /// the trailing task only fires the persist when it's still current.
@@ -87,6 +87,8 @@ struct NoteDetailEditView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
 
+                    titleField
+
                     bodyField
 
                     if !photos.isEmpty {
@@ -102,10 +104,6 @@ struct NoteDetailEditView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Edit tags")
-                    }
-
-                    if showLabelField || !label.isEmpty {
-                        labelField
                     }
 
                     toolStrip
@@ -294,6 +292,7 @@ struct NoteDetailEditView: View {
                     }
                 }
 
+
                 if liveNote?.isPinned ?? false {
                     HStack(spacing: 4) {
                         Image(systemName: "star.fill")
@@ -327,7 +326,25 @@ struct NoteDetailEditView: View {
         return f.string(from: note.createdAt)
     }
 
-    // MARK: - Body field
+    // MARK: - Title + body fields
+
+    /// The note's title — larger serif on the same paper so the page
+    /// stays one cohesive document. Untitled notes show a quiet
+    /// placeholder; return glides into the body.
+    @ViewBuilder
+    private var titleField: some View {
+        TextField("Add a title", text: $label)
+            .focused($titleFocused)
+            .font(.serif(23, weight: .medium))
+            .foregroundStyle(Theme.textPrimary)
+            .submitLabel(.next)
+            .onSubmit {
+                bodyFocused = true
+            }
+            .padding(.top, -4)
+            .padding(.bottom, -8)
+            .accessibilityLabel("Note title")
+    }
 
     @ViewBuilder
     private var bodyField: some View {
@@ -336,6 +353,7 @@ struct NoteDetailEditView: View {
             text: $noteText,
             axis: .vertical
         )
+        .focused($bodyFocused)
         .font(.serifItalic(17, weight: .regular))
         .lineSpacing(6)
         .foregroundStyle(Theme.textPrimary)
@@ -360,30 +378,6 @@ struct NoteDetailEditView: View {
                 }
             }
         }
-    }
-
-    // MARK: - Label field
-
-    @ViewBuilder
-    private var labelField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bookmark")
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.45))
-            TextField("label (e.g. morning pages)", text: $label)
-                .focused($labelFocused)
-                .font(.serifItalic(14, weight: .regular))
-                .foregroundStyle(Theme.textPrimary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.white.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-        )
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
     // MARK: - Tool strip
@@ -426,12 +420,6 @@ struct NoteDetailEditView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Tags")
                 }
-
-                Button(action: toggleLabelField) {
-                    toolIcon("bookmark", active: showLabelField || !label.isEmpty)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Label")
 
                 Spacer(minLength: 0)
             }
@@ -527,18 +515,6 @@ struct NoteDetailEditView: View {
     private func openTagPicker() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         showTagPicker = true
-    }
-
-    private func toggleLabelField() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.easeInOut(duration: 0.2)) {
-            showLabelField.toggle()
-        }
-        if showLabelField {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                labelFocused = true
-            }
-        }
     }
 
     private func appendVoiceMemo(_ completed: AudioRecorderService.Completed) {

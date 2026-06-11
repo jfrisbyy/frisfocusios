@@ -30,6 +30,8 @@ struct TodoCardView: View {
     @State private var showShareCapture: Bool = false
     @State private var showEdit: Bool = false
     @State private var showDeleteConfirm: Bool = false
+    /// Confirmation gate while the home is travelled to a past day.
+    @State private var showPastEditConfirm: Bool = false
 
     private var isOverdue: Bool {
         guard !todo.isCompleted, let due = todo.dueDate else { return false }
@@ -42,7 +44,7 @@ struct TodoCardView: View {
     /// Proofs pinned to this to-do for today — round mini previews under
     /// the title, matching the task card.
     private var todayProofPins: [ProofPin] {
-        store.proofPins(forTodoId: todo.id, on: Date())
+        store.proofPins(forTodoId: todo.id, on: store.displayedDay)
     }
 
     var body: some View {
@@ -126,6 +128,15 @@ struct TodoCardView: View {
                 Label("Delete to-do", systemImage: "trash")
             }
         }
+        .alert("Editing a previous day", isPresented: $showPastEditConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Edit this day") {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                store.setTodoCompleted(todo, completed: !todo.isCompleted, on: store.displayedDay)
+            }
+        } message: {
+            Text("You're changing a past day, not today. The day's score and history will update.")
+        }
         .confirmationDialog(
             "Delete \u{201C}\(todo.title)\u{201D}?",
             isPresented: $showDeleteConfirm,
@@ -187,6 +198,12 @@ struct TodoCardView: View {
 
     private func toggle() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        // A travelled past day confirms first — history never changes
+        // by accident.
+        if store.isViewingPast {
+            showPastEditConfirm = true
+            return
+        }
         store.toggleTodo(todo)
     }
 }

@@ -36,6 +36,16 @@ struct NoteEntryView: View {
         VStack(alignment: .leading, spacing: 8) {
             metaRow
 
+            // The note's title leads the entry — same paper, larger serif
+            // — so lists read title-first while the document stays whole.
+            if let title = note.label, !title.isEmpty {
+                Text(title)
+                    .font(.serif(17, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let body = note.body, !body.isEmpty {
                 Text(body)
                     .font(.serifItalic(16, weight: .regular))
@@ -79,13 +89,6 @@ struct NoteEntryView: View {
                 .font(.sans(10, weight: .medium))
                 .tracking(1.5)
                 .foregroundStyle(Theme.textPrimary.opacity(0.55))
-
-            if let label = note.label, !label.isEmpty {
-                dotSeparator
-                Text(label)
-                    .font(.sans(10, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
-            }
 
             if let folder = store.folder(for: note) {
                 dotSeparator

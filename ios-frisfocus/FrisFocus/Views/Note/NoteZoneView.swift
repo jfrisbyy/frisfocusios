@@ -67,7 +67,9 @@ struct NoteZoneView: View {
                     ZoneHeaderView(
                         title: "The note",
                         eyebrowRight: "Zone 3 of 4",
-                        subline: "today's page · tap for everything"
+                        subline: store.isViewingPast
+                            ? "that day's page · tap for everything"
+                            : "today's page · tap for everything"
                     )
                     .contentShape(Rectangle())
                 }
@@ -117,7 +119,7 @@ struct NoteZoneView: View {
     @ViewBuilder
     private var entriesBlock: some View {
         if store.todaysNotes.isEmpty {
-            EmptyNoteHintView()
+            EmptyNoteHintView(isPast: store.isViewingPast)
         } else {
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(store.todaysNotes) { note in
@@ -175,10 +177,12 @@ struct NoteZoneView: View {
 /// Quiet placeholder shown when no notes have been written today —
 /// keeps the zone breathing rather than collapsing it into the header.
 private struct EmptyNoteHintView: View {
+    var isPast: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            EyebrowText(text: "Today", opacity: 0.5)
-            Text("the page is blank")
+            EyebrowText(text: isPast ? "That day" : "Today", opacity: 0.5)
+            Text(isPast ? "no notes were written this day" : "the page is blank")
                 .font(.serifItalic(15, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.55))
         }

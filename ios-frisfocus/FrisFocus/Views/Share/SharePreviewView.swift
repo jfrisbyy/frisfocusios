@@ -75,6 +75,9 @@ struct SharePreviewView: View {
     @State private var didPost: Bool = false
     @State private var sheetPickHandled: Bool = false
     @State private var finishTask: Task<Void, Never>?
+    /// The proof-library archive entry created for this card (posted or
+    /// saved) — pin destinations append their names onto it.
+    @State private var libraryItemId: UUID? = nil
 
     // Destination state — the same any-combination model as a proof.
     @State private var audience: ShareCardAudience = .initial
@@ -1205,18 +1208,40 @@ struct SharePreviewView: View {
                     durationSeconds: duration
                 )
             }
-            if audience.hasPrivateRecipients {
-                store.sendDirect(
+            // A circle destination is the circle's STORY — each selected
+            // circle gets a real circle clip (so every member sees the
+            // glowing new-story badge), never a buried private send.
+            for circleId in audience.circleIds {
+                store.postMedia(
+                    imageData: mediaData,
+                    type: mediaType,
+                    caption: nil,
+                    circleId: circleId,
+                    attachedCircleTaskId: nil,
+                    durationSeconds: duration
+                )
+            }
+            if !audience.friendIds.isEmpty {
+                store.sendDirectToFriends(
                     imageData: mediaData,
                     type: mediaType,
                     caption: nil,
                     friendIds: Array(audience.friendIds),
-                    circleIds: Array(audience.circleIds),
                     durationSeconds: duration
                 )
+            }
+            if audience.hasPrivateRecipients {
                 toast = audience.everyone
                     ? "Posted + sent to \(summaryLabel(tokens: privateTokens, empty: "your picks"))"
                     : "Sent to \(summaryLabel(tokens: privateTokens, empty: "your picks"))"
+            }
+            if audience.everyone || !audience.circleIds.isEmpty {
+                libraryItemId = store.recordProofToLibrary(
+                    imageData: mediaData,
+                    type: mediaType,
+                    duration: duration,
+                    source: .posted
+                )
             }
 
             isWorking = false
@@ -1285,6 +1310,11 @@ struct SharePreviewView: View {
                 return
             }
             pendingAttach = media
+            // "Just save" archives the clean card in the proof library
+            // even when nothing posts — it's the user's permanent copy.
+            if libraryItemId == nil {
+                libraryItemId = store.recordProofToLibrary(media, source: .saved)
+            }
             autoPinStickerSources(media)
             isWorking = false
             switch attachContext {
@@ -1319,17 +1349,24 @@ struct SharePreviewView: View {
         let pinTargets = newTargets.subtracting([.cameraRoll])
 
         var savedCount = 0
+        var pinLabels: [String] = []
         if let media = pendingAttach {
             for target in pinTargets {
+                let ok: Bool
                 switch target {
-                case .milestone(let id): if store.attachProof(media, toMilestone: id) { savedCount += 1 }
-                case .note(let id): if store.attachProof(media, toNote: id) { savedCount += 1 }
-                case .task(let id): if store.attachProof(media, toTaskId: id) { savedCount += 1 }
-                case .todo(let id): if store.attachProof(media, toTodoId: id) { savedCount += 1 }
-                case .cameraRoll: break
+                case .milestone(let id): ok = store.attachProof(media, toMilestone: id)
+                case .note(let id): ok = store.attachProof(media, toNote: id)
+                case .task(let id): ok = store.attachProof(media, toTaskId: id)
+                case .todo(let id): ok = store.attachProof(media, toTodoId: id)
+                case .cameraRoll: ok = false
+                }
+                if ok {
+                    savedCount += 1
+                    if let label = store.proofTargetLabel(target) { pinLabels.append(label) }
                 }
             }
         }
+        store.appendProofLibraryLabels(libraryItemId, labels: pinLabels)
 
         if wantsCameraRoll {
             // The camera-roll path composes the attributed card, saves,
@@ -1366,8 +1403,14 @@ struct SharePreviewView: View {
             if let id = sticker.sourceTaskId { taskIds.insert(id) }
             if let id = sticker.sourceTodoId { todoIds.insert(id) }
         }
-        for id in taskIds { store.attachProof(media, toTaskId: id) }
-        for id in todoIds { store.attachProof(media, toTodoId: id) }
+        var labels: [String] = []
+        for id in taskIds where store.attachProof(media, toTaskId: id) {
+            if let label = store.proofTargetLabel(.task(id)) { labels.append(label) }
+        }
+        for id in todoIds where store.attachProof(media, toTodoId: id) {
+            if let label = store.proofTargetLabel(.todo(id)) { labels.append(label) }
+        }
+        store.appendProofLibraryLabels(libraryItemId, labels: labels)
     }
 
     /// Writes the pending card onto the picked destination, confirms,
@@ -1399,6 +1442,9 @@ struct SharePreviewView: View {
         case .cameraRoll:
             ok = false
             confirmation = "Couldn't save — try again"
+        }
+        if ok, let label = store.proofTargetLabel(target) {
+            store.appendProofLibraryLabels(libraryItemId, labels: [label])
         }
         UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
         withAnimation(.easeOut(duration: 0.22)) {

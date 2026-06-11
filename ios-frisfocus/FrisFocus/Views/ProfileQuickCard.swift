@@ -25,7 +25,7 @@ import UIKit
 /// own profile page full-screen; `account` opens the full hub; the rest
 /// open their own focused screen.
 enum ProfileQuickDestination: Int, Identifiable {
-    case myProfile, editProfile, friends, account
+    case myProfile, editProfile, friends, account, proofLibrary
     var id: Int { rawValue }
 }
 
@@ -285,13 +285,14 @@ private struct ProfileQuickCardOverlay: View {
         .padding(.bottom, 12)
     }
 
-    /// Two compact icon tiles — My profile and Friends. Proofs and
-    /// Circles stay reachable from their own surfaces; the card stays
-    /// a glance.
+    /// Three compact icon tiles — My profile, Friends, and the Proof
+    /// library archive. Circles stay reachable from their own surfaces;
+    /// the card stays a glance.
     private var shortcuts: some View {
         HStack(spacing: 6) {
             shortcutTile(.myProfile, icon: "person.crop.circle", title: "My profile")
             shortcutTile(.friends, icon: "person.2.fill", title: "Friends", showDot: friendGraph.hasUnseenRequests)
+            shortcutTile(.proofLibrary, icon: "photo.stack", title: "Proofs")
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 12)
@@ -479,6 +480,10 @@ private struct ProfileQuickDestinationSheet: View {
         case .friends:
             QuickNavSheet(closePlacement: .topBarTrailing, closeTitle: "Done") {
                 FriendsView()
+            }
+        case .proofLibrary:
+            QuickNavSheet(closePlacement: .topBarTrailing, closeTitle: "Done") {
+                ProofLibraryView()
             }
         case .account:
             ProfileSheetView()

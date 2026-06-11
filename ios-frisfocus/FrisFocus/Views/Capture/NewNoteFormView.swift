@@ -26,22 +26,32 @@ struct NewNoteFormView: View {
     // The note body lives here as `noteText` so it doesn't shadow
     // `View.body`.
     @State private var noteText: String = ""
-    @State private var label: String = ""
+    /// The note's title — stored as the note's label so existing notes
+    /// and previews pick it up everywhere.
+    @State private var title: String = ""
     @State private var selectedFolderId: UUID?
     @State private var tags: [String] = []
     @State private var photos: [NotePhoto] = []
     @State private var voiceMemos: [NoteVoiceMemo] = []
+    /// Whether the note saves as pinned — same star as edit mode.
+    @State private var isPinned: Bool = false
+    @State private var starPulse: Bool = false
 
     @State private var showFolderPicker: Bool = false
     @State private var showTagPicker: Bool = false
-    @State private var showLabelField: Bool = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showProofCamera: Bool = false
 
     @State private var recorder = AudioRecorderService()
 
+    /// Snapshots of title + body for the Undo control, coalescing rapid
+    /// typing into ~1.2s chunks — mirrors the edit screen exactly.
+    @State private var undoStack: [NewNoteTextSnapshot] = []
+    @State private var lastSnapshotAt: Date = .distantPast
+    @State private var isUndoing: Bool = false
+
     @FocusState private var bodyFocused: Bool
-    @FocusState private var labelFocused: Bool
+    @FocusState private var titleFocused: Bool
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -64,6 +74,8 @@ struct NewNoteFormView: View {
                         header
                             .padding(.top, 16)
 
+                        titleField
+
                         bodyField
 
                         if !photos.isEmpty {
@@ -76,10 +88,6 @@ struct NewNoteFormView: View {
 
                         if !tags.isEmpty {
                             NoteTagChipsView(tags: tags)
-                        }
-
-                        if showLabelField {
-                            labelField
                         }
 
                         Spacer(minLength: 60)
@@ -115,10 +123,13 @@ struct NewNoteFormView: View {
             guard !items.isEmpty else { return }
             Task { await importPhotos(items) }
         }
+        .onChange(of: noteText) { old, _ in recordUndoSnapshot(previousBody: old, previousTitle: title) }
+        .onChange(of: title) { old, _ in recordUndoSnapshot(previousBody: noteText, previousTitle: old) }
         .onAppear {
-            // Land the cursor in the page once the sheet settles.
+            // Land the cursor in the title once the sheet settles —
+            // return glides straight into the body.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                bodyFocused = true
+                titleFocused = true
             }
         }
         .interactiveDismissDisabled(hasContent)
@@ -141,6 +152,10 @@ struct NewNoteFormView: View {
             EyebrowText(text: "New note", opacity: 0.5)
 
             Spacer()
+
+            undoButton
+
+            pinButton
 
             Button(action: save) {
                 Text("Save")
@@ -183,6 +198,58 @@ struct NewNoteFormView: View {
         }
     }
 
+    /// Quiet undo control — steps back the most recent run of typing.
+    @ViewBuilder
+    private var undoButton: some View {
+        Button(action: performUndo) {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(undoStack.isEmpty ? 0.22 : 0.6))
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(undoStack.isEmpty)
+        .accessibilityLabel("Undo last edit")
+    }
+
+    /// The same warm star as the editor — the note saves as pinned.
+    @ViewBuilder
+    private var pinButton: some View {
+        Button(action: togglePinned) {
+            Image(systemName: isPinned ? "star.fill" : "star")
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(isPinned ? Theme.sunWarm : Theme.textPrimary.opacity(0.55))
+                .scaleEffect(starPulse ? 1.22 : 1.0)
+                .shadow(
+                    color: isPinned ? Theme.sunWarm.opacity(0.55) : .clear,
+                    radius: isPinned ? 6 : 0
+                )
+                .animation(.spring(response: 0.28, dampingFraction: 0.55), value: starPulse)
+                .animation(.easeInOut(duration: 0.18), value: isPinned)
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isPinned ? "Unpin note" : "Pin note")
+    }
+
+    /// The note's title — larger serif on the same paper, so the page
+    /// reads as one cohesive document. Return glides into the body.
+    @ViewBuilder
+    private var titleField: some View {
+        TextField("Add a title", text: $title)
+            .focused($titleFocused)
+            .font(.serif(23, weight: .medium))
+            .foregroundStyle(Theme.textPrimary)
+            .submitLabel(.next)
+            .onSubmit {
+                bodyFocused = true
+            }
+            .padding(.bottom, -6)
+            .accessibilityLabel("Note title")
+    }
+
     @ViewBuilder
     private var bodyField: some View {
         TextField(
@@ -211,28 +278,6 @@ struct NewNoteFormView: View {
                 }
             }
         }
-    }
-
-    @ViewBuilder
-    private var labelField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bookmark")
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.45))
-            TextField("label (e.g. morning pages)", text: $label)
-                .focused($labelFocused)
-                .font(.serifItalic(14, weight: .regular))
-                .foregroundStyle(Theme.textPrimary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.white.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-        )
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
     // MARK: - Tool strip
@@ -279,12 +324,6 @@ struct NewNoteFormView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Tags")
             }
-
-            Button(action: toggleLabelField) {
-                toolIcon("bookmark", active: showLabelField || !label.isEmpty)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Label")
 
             Spacer(minLength: 0)
 
@@ -375,7 +414,8 @@ struct NewNoteFormView: View {
 
     private var hasContent: Bool {
         let hasText = !noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasText || !voiceMemos.isEmpty || !photos.isEmpty
+        let hasTitle = !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasText || hasTitle || !voiceMemos.isEmpty || !photos.isEmpty
     }
 
     // MARK: - Actions
@@ -398,15 +438,45 @@ struct NewNoteFormView: View {
         }
     }
 
-    private func toggleLabelField() {
+    private func togglePinned() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.easeInOut(duration: 0.2)) {
-            showLabelField.toggle()
+        isPinned.toggle()
+        starPulse = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            starPulse = false
         }
-        if showLabelField {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                labelFocused = true
-            }
+    }
+
+    // MARK: - Undo
+
+    /// Push the pre-edit text state onto the undo stack, coalescing
+    /// rapid keystrokes into comfortable chunks. Mirrors the editor.
+    private func recordUndoSnapshot(previousBody: String, previousTitle: String) {
+        guard !isUndoing else { return }
+        let now = Date()
+        if now.timeIntervalSince(lastSnapshotAt) < 1.2,
+           let last = undoStack.last,
+           last.body == previousBody, last.title == previousTitle {
+            return
+        }
+        if now.timeIntervalSince(lastSnapshotAt) >= 1.2 || undoStack.isEmpty {
+            undoStack.append(NewNoteTextSnapshot(body: previousBody, title: previousTitle))
+            if undoStack.count > 50 { undoStack.removeFirst(undoStack.count - 50) }
+            lastSnapshotAt = now
+        }
+    }
+
+    private func performUndo() {
+        guard let snapshot = undoStack.popLast() else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        isUndoing = true
+        withAnimation(.easeInOut(duration: 0.15)) {
+            noteText = snapshot.body
+            title = snapshot.title
+        }
+        lastSnapshotAt = .distantPast
+        DispatchQueue.main.async {
+            isUndoing = false
         }
     }
 
@@ -460,7 +530,7 @@ struct NewNoteFormView: View {
         }
 
         let trimmedBody = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let note = Note(
             createdAt: Date(),
@@ -469,13 +539,20 @@ struct NewNoteFormView: View {
             photos: photos,
             tags: store.noteTagsEnabled ? tags : [],
             folderId: selectedFolderId,
-            label: trimmedLabel.isEmpty ? nil : trimmedLabel
+            label: trimmedTitle.isEmpty ? nil : trimmedTitle,
+            isPinned: isPinned
         )
         store.addNote(note)
 
         dismiss()
         onSave()
     }
+}
+
+/// A captured title + body pair for the composer's undo stack.
+private struct NewNoteTextSnapshot {
+    let body: String
+    let title: String
 }
 
 #Preview {

@@ -291,7 +291,7 @@ struct SunZoneView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 Button {
-                    daySheetDate = Date()
+                    daySheetDate = store.displayedDay
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     showDaySheet = true
                 } label: {
@@ -420,12 +420,12 @@ struct SunZoneView: View {
 
     // MARK: - Helpers
 
-    /// Locale-friendly "EEE · MMM d" string for today. Replaces the
-    /// static `SampleData.dateLine` so the date is always live.
+    /// Locale-friendly "EEE · MMM d" string for the displayed day —
+    /// today on the live home, the travelled day in the time machine.
     private var todayDateLine: String {
         let f = DateFormatter()
         f.dateFormat = "EEE · MMM d"
-        return f.string(from: Date())
+        return f.string(from: store.displayedDay)
     }
 
     /// Translate the Store's 7-day score series into the opacities the

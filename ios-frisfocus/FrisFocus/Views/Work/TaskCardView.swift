@@ -29,6 +29,9 @@ struct TaskCardView: View {
     @State private var showScheduleSheet: Bool = false
     @State private var showDeleteConfirm: Bool = false
     @State private var showFocusMode: Bool = false
+    /// Confirmation gate while the home is travelled to a past day —
+    /// history never changes by accident.
+    @State private var showPastEditConfirm: Bool = false
 
     /// Today's completed entry for this task, if any. Carries the actual
     /// points earned (which, for tiered / quantity tasks, depends on the
@@ -38,7 +41,7 @@ struct TaskCardView: View {
         return store.logEntries.first {
             $0.taskId == task.id
                 && $0.entryType == .completed
-                && cal.isDate($0.date, inSameDayAs: Date())
+                && cal.isDate($0.date, inSameDayAs: store.displayedDay)
         }
     }
 
@@ -47,7 +50,7 @@ struct TaskCardView: View {
     /// Proofs pinned to this task for today — surfaced as round mini
     /// previews beneath the title so the card stays compact when empty.
     private var todayProofPins: [ProofPin] {
-        store.proofPins(forTaskId: task.id, on: Date())
+        store.proofPins(forTaskId: task.id, on: store.displayedDay)
     }
 
     /// Primary ink — charcoal on paper, cream on the sky.
@@ -259,6 +262,15 @@ struct TaskCardView: View {
                 Label("Delete task", systemImage: "trash")
             }
         }
+        .alert("Editing a previous day", isPresented: $showPastEditConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Edit this day") {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                store.setTaskCompleted(task, completed: !isCompleted, on: store.displayedDay)
+            }
+        } message: {
+            Text("You're changing a past day, not today. The day's score and history will update.")
+        }
         .confirmationDialog(
             "Delete \u{201C}\(task.title)\u{201D}?",
             isPresented: $showDeleteConfirm,
@@ -377,6 +389,12 @@ struct TaskCardView: View {
 
     private func toggle() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        // A travelled past day confirms first — history never changes
+        // by accident.
+        if store.isViewingPast {
+            showPastEditConfirm = true
+            return
+        }
         if isCompleted {
             store.uncompleteTask(task)
         } else if task.requiresQuantityLogging {

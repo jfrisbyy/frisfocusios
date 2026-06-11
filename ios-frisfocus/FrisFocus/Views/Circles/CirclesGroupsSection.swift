@@ -144,17 +144,13 @@ struct CirclesGroupsSection: View {
                             )
                         }
                     }
-                    .overlay(alignment: .topTrailing) {
-                        if store.circleHasUnwatchedStory(circleId: circle.id) {
-                            NewStoryBadge()
-                                .padding(10)
-                        }
-                    }
+                    .newStoryGlow(store.circleHasUnwatchedStory(circleId: circle.id))
                 }
 
                 // Pacts — a circle of two, rendered alongside circles.
                 ForEach(activePacts) { pact in
                     PactCircleCard(pact: pact, onTap: { onPactTap?(pact) })
+                        .newStoryGlow(store.circleHasUnwatchedStory(circleId: pact.id))
                 }
 
                 startJoinRow

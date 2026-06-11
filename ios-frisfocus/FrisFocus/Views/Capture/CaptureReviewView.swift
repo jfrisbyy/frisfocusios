@@ -2224,10 +2224,17 @@ struct CaptureReviewView: View {
                     attachedCircleTaskId: task?.id,
                     durationSeconds: duration
                 )
+                store.recordProofToLibrary(
+                    imageData: mediaData,
+                    type: mediaType,
+                    duration: duration,
+                    source: .posted
+                )
             case .generalPost:
                 // Any combination: a public story post (when `everyone`
-                // is on) and/or one private send covering every selected
-                // friend and circle. They share the same composed media.
+                // is on), one circle CLIP per selected circle (so the
+                // circle's story + badge light up), and/or one private
+                // send per selected friend. Same composed media.
                 if audience.everyone {
                     _ = store.postMedia(
                         imageData: mediaData,
@@ -2238,16 +2245,35 @@ struct CaptureReviewView: View {
                         durationSeconds: duration
                     )
                 }
-                if audience.hasPrivateRecipients {
-                    store.sendDirect(
+                for circleId in audience.circleIds {
+                    _ = store.postMedia(
+                        imageData: mediaData,
+                        type: mediaType,
+                        caption: captionToSend,
+                        circleId: circleId,
+                        attachedCircleTaskId: nil,
+                        durationSeconds: duration
+                    )
+                }
+                if !audience.friendIds.isEmpty {
+                    store.sendDirectToFriends(
                         imageData: mediaData,
                         type: mediaType,
                         caption: captionToSend,
                         friendIds: Array(audience.friendIds),
-                        circleIds: Array(audience.circleIds),
                         durationSeconds: duration
                     )
+                }
+                if audience.hasPrivateRecipients {
                     toast = "Proof sent to \(summaryLabel(tokens: privateTokens, empty: "your picks"))"
+                }
+                if audience.everyone || !audience.circleIds.isEmpty {
+                    store.recordProofToLibrary(
+                        imageData: mediaData,
+                        type: mediaType,
+                        duration: duration,
+                        source: .posted
+                    )
                 }
             }
 

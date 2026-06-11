@@ -85,17 +85,6 @@ struct HomeView: View {
                 .environment(auth)
         }
         .profileQuickCard(isPresented: $showProfileSheet)
-        .fullScreenCover(isPresented: Binding(
-            get: { store.viewingDay != nil },
-            set: { if !$0 { store.viewingDay = nil } }
-        )) {
-            if let day = store.viewingDay {
-                PastDayHomeView(day: day) {
-                    store.viewingDay = nil
-                }
-                .environment(store)
-            }
-        }
         .sheet(isPresented: $showFriendsFromBanner) {
             NavigationStack {
                 FriendsView()
@@ -237,6 +226,16 @@ struct HomeView: View {
             }
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
+                    // Time machine — the real home has transformed to a
+                    // past day; this pill is the marker + the way back.
+                    if let day = store.viewingDay {
+                        PastDayBanner(day: day) {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                store.viewingDay = nil
+                            }
+                        }
+                    }
+
                     // Live friend-graph moments — a request just arrived,
                     // or someone accepted yours. Tap opens Friends.
                     FriendRequestBanner {
