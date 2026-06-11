@@ -506,6 +506,27 @@ export type Database = {
           },
         ]
       }
+      contact_keys: {
+        Row: {
+          phone: string | null
+          phone_hash: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          phone?: string | null
+          phone_hash?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          phone?: string | null
+          phone_hash?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       device_tokens: {
         Row: {
           created_at: string
@@ -1104,6 +1125,8 @@ export type Database = {
       }
       profiles: {
         Row: {
+          area_key: string | null
+          area_name: string | null
           avatar_url: string | null
           bio: string | null
           created_at: string | null
@@ -1116,6 +1139,8 @@ export type Database = {
           username: string | null
         }
         Insert: {
+          area_key?: string | null
+          area_name?: string | null
           avatar_url?: string | null
           bio?: string | null
           created_at?: string | null
@@ -1128,6 +1153,8 @@ export type Database = {
           username?: string | null
         }
         Update: {
+          area_key?: string | null
+          area_name?: string | null
           avatar_url?: string | null
           bio?: string | null
           created_at?: string | null
@@ -1425,6 +1452,18 @@ export type Database = {
       is_blocked: { Args: { other_id: string }; Returns: boolean }
       is_circle_member: { Args: { p_circle_id: string }; Returns: boolean }
       is_pact_member: { Args: { p_pact_id: string }; Returns: boolean }
+      match_contact_keys: {
+        Args: { p_emails: string[]; p_phone_hashes: string[] }
+        Returns: {
+          matched_email: string
+          matched_phone_hash: string
+          profile_id: string
+        }[]
+      }
+      match_contacts: {
+        Args: { p_emails: string[]; p_phone_hashes: string[] }
+        Returns: string[]
+      }
       my_circle_role: { Args: { p_circle_id: string }; Returns: string }
       owns_circle: { Args: { p_circle_id: string }; Returns: boolean }
       shares_circle_with: { Args: { other_id: string }; Returns: boolean }

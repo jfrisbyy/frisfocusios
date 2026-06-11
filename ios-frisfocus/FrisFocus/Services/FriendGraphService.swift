@@ -30,11 +30,17 @@ nonisolated struct RemoteProfile: Codable, Identifiable, Sendable, Hashable {
     /// `decodeIfPresent` (synthesized for optionals), so selects that
     /// don't include the column still decode cleanly.
     var headerUrl: String?
+    /// Opt-in "Near you" coarse area (a ~50 km grid cell) and its
+    /// friendly name. Only present when the user turned Near you on.
+    var areaKey: String?
+    var areaName: String?
 
     enum CodingKeys: String, CodingKey {
         case id, email, name, username
         case avatarUrl = "avatar_url"
         case headerUrl = "header_url"
+        case areaKey = "area_key"
+        case areaName = "area_name"
     }
 
     var displayName: String {

@@ -18,6 +18,7 @@
 import Foundation
 import Supabase
 import UIKit
+import CoreLocation
 
 // MARK: - Wire payloads
 
@@ -73,6 +74,54 @@ private nonisolated struct ProfileEditUpsert: Encodable, Sendable {
     }
 }
 
+/// Update payload for the Near-you columns. Encodes explicit nulls on
+/// clear so turning Near you off actually removes the area.
+private nonisolated struct NearYouUpdate: Encodable, Sendable {
+    let areaKey: String?
+    let areaName: String?
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case areaKey = "area_key"
+        case areaName = "area_name"
+        case updatedAt = "updated_at"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        if let areaKey { try c.encode(areaKey, forKey: .areaKey) } else { try c.encodeNil(forKey: .areaKey) }
+        if let areaName { try c.encode(areaName, forKey: .areaName) } else { try c.encodeNil(forKey: .areaName) }
+        try c.encode(updatedAt, forKey: .updatedAt)
+    }
+}
+
+/// The user's own private contact-key row (phone for matching).
+private nonisolated struct ContactKeyRow: Decodable, Sendable {
+    let phone: String?
+}
+
+private nonisolated struct ContactKeyUpsert: Encodable, Sendable {
+    let userId: String
+    let phone: String?
+    let phoneHash: String?
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id"
+        case phone
+        case phoneHash = "phone_hash"
+        case updatedAt = "updated_at"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(userId, forKey: .userId)
+        if let phone { try c.encode(phone, forKey: .phone) } else { try c.encodeNil(forKey: .phone) }
+        if let phoneHash { try c.encode(phoneHash, forKey: .phoneHash) } else { try c.encodeNil(forKey: .phoneHash) }
+        try c.encode(updatedAt, forKey: .updatedAt)
+    }
+}
+
 // MARK: - Store
 
 @Observable
@@ -87,7 +136,15 @@ final class ProfileStore {
     var errorMessage: String?
     var showError = false
 
+    /// The user's own phone number (private, matching-only). Loaded
+    /// from `contact_keys` on demand; nil when unset.
+    var myPhone: String?
+
     @ObservationIgnored private var loadedForUserId: String?
+    @ObservationIgnored private var phoneLoadedForUserId: String?
+
+    /// The columns the store reads/writes on `profiles`.
+    private static let profileColumns = "id, email, name, username, avatar_url, header_url, area_key, area_name"
 
     private static let iso: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -106,7 +163,7 @@ final class ProfileStore {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select(Self.profileColumns)
                 .eq("id", value: myUserId)
                 .limit(1)
                 .execute()
@@ -122,6 +179,8 @@ final class ProfileStore {
     func clear() {
         myProfile = nil
         loadedForUserId = nil
+        myPhone = nil
+        phoneLoadedForUserId = nil
     }
 
     // MARK: Username
@@ -191,7 +250,7 @@ final class ProfileStore {
                     header: header,
                     updatedAt: Self.iso.string(from: Date())
                 ))
-                .select("id, email, name, username, avatar_url, header_url")
+                .select(Self.profileColumns)
                 .single()
                 .execute()
                 .value
@@ -205,6 +264,103 @@ final class ProfileStore {
             } else {
                 fail("Couldn't save your profile.", error)
             }
+            return false
+        }
+    }
+
+    // MARK: Phone (private matching key)
+
+    /// Load the user's own phone from the private `contact_keys` row.
+    /// Cheap to call repeatedly.
+    func loadPhone(myUserId: String, force: Bool = false) async {
+        if !force, phoneLoadedForUserId == myUserId { return }
+        do {
+            let rows: [ContactKeyRow] = try await supabase
+                .from("contact_keys")
+                .select("phone")
+                .eq("user_id", value: myUserId)
+                .limit(1)
+                .execute()
+                .value
+            myPhone = rows.first?.phone
+            phoneLoadedForUserId = myUserId
+        } catch {
+            print("[ProfileStore] phone load failed: \(error)")
+        }
+    }
+
+    /// Save (or clear, when empty) the matching-only phone number. The
+    /// raw number stays readable only by its owner; matching uses the
+    /// hash.
+    @discardableResult
+    func savePhone(_ raw: String?, myUserId: String) async -> Bool {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalized = trimmed.isEmpty ? nil : ContactsMatchService.normalizePhone(trimmed)
+        if !trimmed.isEmpty && normalized == nil {
+            fail("That phone number looks too short.", NSError(domain: "ProfileStore", code: -3))
+            return false
+        }
+        do {
+            try await supabase
+                .from("contact_keys")
+                .upsert(ContactKeyUpsert(
+                    userId: myUserId,
+                    phone: trimmed.isEmpty ? nil : trimmed,
+                    phoneHash: normalized.map { ContactsMatchService.phoneHash($0) },
+                    updatedAt: Self.iso.string(from: Date())
+                ), onConflict: "user_id")
+                .execute()
+            myPhone = trimmed.isEmpty ? nil : trimmed
+            phoneLoadedForUserId = myUserId
+            return true
+        } catch {
+            fail("Couldn't save your phone number.", error)
+            return false
+        }
+    }
+
+    // MARK: Near you
+
+    /// Whether the user currently shares a coarse area.
+    var nearYouEnabled: Bool { myProfile?.areaKey != nil }
+
+    /// Turn Near you on from a coordinate: derive the coarse grid cell
+    /// and a friendly city-level name, then store both on the profile.
+    @discardableResult
+    func enableNearYou(latitude: Double, longitude: Double, myUserId: String) async -> Bool {
+        let key = AreaGrid.key(latitude: latitude, longitude: longitude)
+        var name: String?
+        do {
+            let placemarks = try await CLGeocoder().reverseGeocodeLocation(
+                CLLocation(latitude: latitude, longitude: longitude)
+            )
+            let mark = placemarks.first
+            name = mark?.locality ?? mark?.subAdministrativeArea ?? mark?.administrativeArea
+        } catch {
+            // Geocoding is best-effort — the key alone still matches.
+            print("[ProfileStore] reverse geocode failed: \(error)")
+        }
+        return await setNearYou(areaKey: key, areaName: name, myUserId: myUserId)
+    }
+
+    /// Write (or clear, with nils) the Near-you area columns.
+    @discardableResult
+    func setNearYou(areaKey: String?, areaName: String?, myUserId: String) async -> Bool {
+        do {
+            try await supabase
+                .from("profiles")
+                .update(NearYouUpdate(
+                    areaKey: areaKey,
+                    areaName: areaName,
+                    updatedAt: Self.iso.string(from: Date())
+                ))
+                .eq("id", value: myUserId)
+                .execute()
+            myProfile?.areaKey = areaKey
+            myProfile?.areaName = areaName
+            return true
+        } catch {
+            fail("Couldn't update Near you.", error)
             return false
         }
     }

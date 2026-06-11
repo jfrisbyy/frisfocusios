@@ -40,6 +40,18 @@ final class DiscoverService {
     var isLoading = false
     var hasLoaded = false
 
+    /// Live as-you-type search over all profiles, local to the Discover
+    /// surface so it never clobbers the Friends page's results.
+    var searchResults: [RemoteProfile] = []
+    var isSearching = false
+
+    /// Opted-in people roughly in the user's coarse area.
+    var nearby: [DiscoverSuggestion] = []
+
+    /// The columns every discover read pulls — includes the opt-in
+    /// Near-you area so rows can whisper "Near Austin".
+    static let profileColumns = "id, email, name, username, avatar_url, header_url, area_key, area_name"
+
     /// How many newest-member profiles to pull as the long tail behind
     /// the friends-of-friends tier.
     private static let newestLimit = 60
@@ -99,7 +111,7 @@ final class DiscoverService {
             // Tier 2 — the newest accounts on the app.
             let newest: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select(Self.profileColumns)
                 .order("created_at", ascending: false)
                 .limit(Self.newestLimit)
                 .execute()
@@ -115,7 +127,7 @@ final class DiscoverService {
             if !missingIds.isEmpty {
                 let extra: [RemoteProfile] = try await supabase
                     .from("profiles")
-                    .select("id, email, name, username, avatar_url, header_url")
+                    .select(Self.profileColumns)
                     .in("id", values: Array(missingIds))
                     .execute()
                     .value
@@ -155,5 +167,64 @@ final class DiscoverService {
             friendIds: graph.friends.map(\.id),
             excludedIds: excluded
         )
+    }
+
+    // MARK: - Live search
+
+    /// Case-insensitive as-you-type search across @username, name, and
+    /// email. Same grammar-safety filtering as the Friends page search.
+    func search(query rawQuery: String, myUserId: String) async {
+        let cleaned = rawQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "@", with: "")
+        let safe = String(cleaned.filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." || $0 == "-" || $0 == " " })
+        guard safe.count >= 2 else {
+            searchResults = []
+            return
+        }
+        isSearching = true
+        defer { isSearching = false }
+        do {
+            let results: [RemoteProfile] = try await supabase
+                .from("profiles")
+                .select(Self.profileColumns)
+                .or("username.ilike.*\(safe)*,name.ilike.*\(safe)*,email.ilike.*\(safe)*")
+                .limit(20)
+                .execute()
+                .value
+            searchResults = results.filter { $0.id != myUserId }
+        } catch {
+            print("[Discover] search failed: \(error)")
+        }
+    }
+
+    // MARK: - Near you
+
+    /// Pull opted-in people in (or adjacent to) the user's coarse area.
+    /// Pass nil to clear the section (Near you off).
+    func refreshNearby(myUserId: String, graph: FriendGraphService, areaKey: String?) async {
+        guard let areaKey else {
+            nearby = []
+            return
+        }
+        var hidden = Set(graph.incoming.map(\.profile.id))
+        hidden.formUnion(graph.outgoing.map(\.profile.id))
+        hidden.formUnion(graph.friends.map(\.id))
+        hidden.insert(myUserId)
+        do {
+            let rows: [RemoteProfile] = try await supabase
+                .from("profiles")
+                .select(Self.profileColumns)
+                .in("area_key", values: AreaGrid.neighborKeys(of: areaKey))
+                .limit(40)
+                .execute()
+                .value
+            nearby = rows
+                .filter { !hidden.contains($0.id) }
+                .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+                .map { DiscoverSuggestion(profile: $0, mutualCount: 0) }
+        } catch {
+            print("[Discover] nearby failed: \(error)")
+        }
     }
 }

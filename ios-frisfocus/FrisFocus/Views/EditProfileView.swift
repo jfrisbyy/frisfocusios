@@ -11,6 +11,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import CoreLocation
 
 /// Identifiable wrapper so `fullScreenCover(item:)` can present the
 /// header crop screen for a freshly picked image.
@@ -27,6 +28,14 @@ struct EditProfileView: View {
     @State private var name: String = ""
     @State private var username: String = ""
     @State private var originalUsername: String = ""
+
+    @State private var phone: String = ""
+    @State private var originalPhone: String = ""
+
+    @State private var nearYouOn: Bool = false
+    @State private var nearYouBusy: Bool = false
+    @State private var nearYouHint: String?
+    @State private var location = LocationService()
 
     @State private var photoItem: PhotosPickerItem?
     @State private var pickedImage: UIImage?
@@ -88,6 +97,8 @@ struct EditProfileView: View {
                 headerSection
                 nameField
                 usernameField
+                phoneField
+                nearYouSection
             }
             .padding(.horizontal, 24)
             .padding(.top, 22)
@@ -352,6 +363,110 @@ struct EditProfileView: View {
             .animation(.easeOut(duration: 0.2), value: usernameStatus)
     }
 
+    // MARK: - Phone (matching only)
+
+    private var phoneField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            fieldCard(label: "PHONE NUMBER") {
+                TextField("Optional", text: $phone)
+                    .font(.sans(16, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary)
+                    .keyboardType(.phonePad)
+            }
+            Text("Only used so friends with your number can find you from their contacts. Never shown to anyone.")
+                .font(.sans(12, weight: .regular))
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.leading, 4)
+        }
+    }
+
+    // MARK: - Near you
+
+    private var nearYouSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("NEAR YOU")
+                .font(.sans(11, weight: .semibold))
+                .tracking(1.5)
+                .foregroundStyle(Theme.textPrimary.opacity(0.5))
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Appear in Near you")
+                        .font(.sans(15, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(nearYouStatusText)
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                if nearYouBusy {
+                    ProgressView().tint(Theme.textTertiary)
+                } else {
+                    Toggle("", isOn: $nearYouOn)
+                        .labelsHidden()
+                        .tint(Theme.textPrimary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Theme.paperCream)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Theme.textPrimary.opacity(0.1), lineWidth: 1)
+            )
+
+            Text(nearYouHint ?? "Shares only a coarse, city-level area on Discover — never your exact position.")
+                .font(.sans(12, weight: .regular))
+                .foregroundStyle(nearYouHint == nil ? Theme.textTertiary : Theme.alertRed)
+                .padding(.leading, 4)
+        }
+        .onChange(of: nearYouOn) { oldValue, newValue in
+            guard oldValue != newValue, !nearYouBusy else { return }
+            handleNearYouToggle(newValue)
+        }
+    }
+
+    private var nearYouStatusText: String {
+        if let area = profileStore.myProfile?.areaName, profileStore.nearYouEnabled {
+            return "Near \(area)"
+        }
+        return profileStore.nearYouEnabled ? "On" : "Off"
+    }
+
+    private func handleNearYouToggle(_ turnOn: Bool) {
+        guard let myId else { return }
+        nearYouHint = nil
+        if !turnOn {
+            Task { await profileStore.setNearYou(areaKey: nil, areaName: nil, myUserId: myId) }
+            return
+        }
+        nearYouBusy = true
+        location.requestPermissionIfNeeded()
+        Task {
+            var waited = 0
+            while location.coordinate == nil && waited < 24 {
+                if location.authorizationStatus == .denied || location.authorizationStatus == .restricted { break }
+                try? await Task.sleep(for: .milliseconds(250))
+                waited += 1
+            }
+            if let coordinate = location.coordinate {
+                let ok = await profileStore.enableNearYou(
+                    latitude: coordinate.latitude,
+                    longitude: coordinate.longitude,
+                    myUserId: myId
+                )
+                if !ok { nearYouOn = false }
+            } else {
+                nearYouOn = false
+                nearYouHint = location.authorizationStatus == .denied || location.authorizationStatus == .restricted
+                    ? "Location is off for FrisFocus. Allow it in Settings to use Near you."
+                    : "Couldn't get your location just now. Try again in a moment."
+            }
+            nearYouBusy = false
+        }
+    }
+
     // MARK: - Shared field card
 
     private func fieldCard<Content: View>(
@@ -381,12 +496,18 @@ struct EditProfileView: View {
         guard !didLoad else { return }
         didLoad = true
         Task {
-            if let myId { await profileStore.load(myUserId: myId) }
+            if let myId {
+                await profileStore.load(myUserId: myId)
+                await profileStore.loadPhone(myUserId: myId)
+            }
             let profile = profileStore.myProfile
             name = profile?.name ?? auth.user?.name ?? ""
             username = profile?.username ?? ""
             originalUsername = username
             usernameStatus = username.isEmpty ? .idle : .unchanged
+            phone = profileStore.myPhone ?? ""
+            originalPhone = phone
+            nearYouOn = profileStore.nearYouEnabled
         }
     }
 
@@ -445,6 +566,11 @@ struct EditProfileView: View {
             headerEdit = .set(uploaded)
         } else if headerRemoved, profileStore.myProfile?.headerUrl != nil {
             headerEdit = .remove
+        }
+
+        if phone.trimmingCharacters(in: .whitespaces) != originalPhone.trimmingCharacters(in: .whitespaces) {
+            let phoneOk = await profileStore.savePhone(phone, myUserId: myId)
+            guard phoneOk else { return }
         }
 
         let ok = await profileStore.save(

@@ -41,6 +41,7 @@ struct InviteFriendsView: View {
                 intro
                 qrCard
                 actions
+                contactsRow
             }
             .padding(.horizontal, 24)
             .padding(.top, 18)
@@ -173,6 +174,40 @@ struct InviteFriendsView: View {
                     .foregroundStyle(Theme.textTertiary)
             }
         }
+    }
+
+    // MARK: - Contacts
+
+    private var contactsRow: some View {
+        NavigationLink {
+            ContactsMatchView()
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Theme.textPrimary.opacity(0.08))
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Find friends from contacts")
+                        .font(.sans(15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("See who you know is already here")
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(14)
+            .background(Theme.paperCream)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - QR

@@ -24,6 +24,7 @@ struct FriendsView: View {
     @State private var discover = DiscoverService()
     @State private var query: String = ""
     @State private var hasSearched: Bool = false
+    @State private var searchTask: Task<Void, Never>?
     @State private var reportTarget: ReportTarget?
     @State private var discoverPreview: DiscoverSuggestion?
     @FocusState private var searchFocused: Bool
@@ -155,7 +156,7 @@ struct FriendsView: View {
                     .focused($searchFocused)
                     .submitLabel(.search)
                     .onSubmit { Task { await runSearch() } }
-                    .onChange(of: query) { _, _ in hasSearched = false }
+                    .onChange(of: query) { _, newValue in scheduleLiveSearch(newValue) }
                     .font(.sans(15, weight: .regular))
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 14)
@@ -492,6 +493,24 @@ struct FriendsView: View {
         searchFocused = false
         hasSearched = true
         await service.searchPeople(query: query, myUserId: myId)
+    }
+
+    /// Live as-you-type search: a short debounce, then the same query
+    /// the magnifier runs — without stealing keyboard focus.
+    private func scheduleLiveSearch(_ text: String) {
+        hasSearched = false
+        searchTask?.cancel()
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard trimmed.count >= 2 else {
+            service.searchResults = []
+            return
+        }
+        searchTask = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, let myId else { return }
+            await service.searchPeople(query: trimmed, myUserId: myId)
+            if !Task.isCancelled { hasSearched = true }
+        }
     }
 }
 

@@ -518,6 +518,7 @@
 				INFOPLIST_FILE = FrisFocus/Info.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Capture a photo to share a moment from your day with friends or your circle.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Find friends from your contacts who are already on FrisFocus. Contacts are matched privately and never stored.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Used to position the sun based on your local sunrise and sunset times.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice memos and speak your answers during season setup.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Your speech is transcribed on this device so you can talk through your season setup instead of typing.";
@@ -560,6 +561,7 @@
 				INFOPLIST_FILE = FrisFocus/Info.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Capture a photo to share a moment from your day with friends or your circle.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Find friends from your contacts who are already on FrisFocus. Contacts are matched privately and never stored.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Used to position the sun based on your local sunrise and sunset times.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice memos and speak your answers during season setup.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Your speech is transcribed on this device so you can talk through your season setup instead of typing.";
