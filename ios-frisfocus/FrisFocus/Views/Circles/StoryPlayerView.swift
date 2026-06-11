@@ -123,23 +123,15 @@ struct StoryPlayerView: View {
     /// friend shared, matching the rest of the social UI's order.
     private var posts: [StoryPost] {
         switch mode {
-        case .friend:
-            // Flat queue across every friend with an active story so
-            // tapping past the last segment autoplays the next
-            // friend's tape instead of dismissing. Friend order
-            // follows the stories rail (newest-post-first), and each
-            // friend's posts replay oldest → newest within their
-            // block.
-            let active = store.activeFriendStories
-            var seenAuthors: [UUID] = []
-            for post in active where !seenAuthors.contains(post.authorId) {
-                seenAuthors.append(post.authorId)
-            }
-            return seenAuthors.flatMap { authorId in
-                active
-                    .filter { $0.authorId == authorId }
-                    .sorted { $0.createdAt < $1.createdAt }
-            }
+        case .friend(let friend):
+            // Isolated tape: only the tapped friend's unexpired posts,
+            // oldest → newest. The player closes when their last
+            // segment ends — never rolling into another friend's
+            // story, so opening from a profile or the friends row
+            // always stays on that one person.
+            return store.activeFriendStories
+                .filter { $0.authorId == friend.id }
+                .sorted { $0.createdAt < $1.createdAt }
         case .mine:
             return store.activeMyStories
         case .circle(let circle):
@@ -164,9 +156,8 @@ struct StoryPlayerView: View {
         return posts[currentIndex]
     }
 
-    /// In `.friend` mode the header tracks the author of the
-    /// current segment so the queue can roll across multiple friends
-    /// without the avatar/name lagging behind the visible photo.
+    /// The author of the current segment, resolved fresh from the
+    /// store so the header always shows live friend data.
     private var currentFriend: Friend? {
         guard let authorId = currentPost?.authorId else { return nil }
         return store.friend(by: authorId)
@@ -263,16 +254,6 @@ struct StoryPlayerView: View {
                 DispatchQueue.main.async { dismiss() }
                 return
             }
-            // In `.friend` mode the queue spans every friend with an
-            // active story; jump the playhead to the first post by
-            // the friend the user actually tapped so the tape starts
-            // on them and rolls onward from there.
-            if case .friend(let friend) = mode,
-               let start = posts.firstIndex(where: { $0.authorId == friend.id }) {
-                currentIndex = start
-                clock.progress = 0
-            }
-            markCurrentViewed()
         }
         .onChange(of: currentIndex) { _, _ in
             markCurrentViewed()
@@ -356,25 +337,12 @@ struct StoryPlayerView: View {
 
     // MARK: - Progress bars
 
-    /// The window of the queue the top bars represent. In `.friend`
-    /// mode the queue spans every friend with an active story, but the
-    /// bars must only describe the person currently on screen — their
-    /// contiguous block of posts. `.mine` and `.circle` tapes belong to
-    /// one owner, so the whole queue is the window.
+    /// The window of the queue the top bars represent. Every mode now
+    /// plays a single owner's tape — a friend's isolated story, your
+    /// own posts, or one circle's clips — so the whole queue is the
+    /// window.
     private var segmentWindow: (count: Int, index: Int, ownerKey: String) {
-        guard case .friend = mode, let post = currentPost else {
-            return (posts.count, currentIndex, "single-owner")
-        }
-        let author = post.authorId
-        var blockStart = currentIndex
-        while blockStart > 0 && posts[blockStart - 1].authorId == author {
-            blockStart -= 1
-        }
-        var blockEnd = currentIndex
-        while blockEnd + 1 < posts.count && posts[blockEnd + 1].authorId == author {
-            blockEnd += 1
-        }
-        return (blockEnd - blockStart + 1, currentIndex - blockStart, author.uuidString)
+        (posts.count, currentIndex, "single-owner")
     }
 
     /// Per-person segmented bars. Keyed by the current author so the

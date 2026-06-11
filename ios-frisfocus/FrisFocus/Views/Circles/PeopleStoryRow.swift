@@ -117,8 +117,8 @@ private struct YourStoryBubble: View {
     let action: () -> Void
     let addAction: () -> Void
 
-    private let discSize: CGFloat = 56
-    private let ringSize: CGFloat = 64
+    private let discSize: CGFloat = 63
+    private let ringSize: CGFloat = 72
 
     var body: some View {
         VStack(spacing: 8) {
@@ -147,10 +147,10 @@ private struct YourStoryBubble: View {
                             .fill(Theme.sunWarm)
                             .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.8))
                         Image(systemName: "plus")
-                            .font(.sans(10, weight: .bold))
+                            .font(.sans(11, weight: .bold))
                             .foregroundStyle(Theme.textPrimary)
                     }
-                    .frame(width: 21, height: 21)
+                    .frame(width: 23, height: 23)
                     .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -163,7 +163,7 @@ private struct YourStoryBubble: View {
                 .foregroundStyle(Theme.textPrimary.opacity(0.75))
                 .lineLimit(1)
         }
-        .frame(width: 68)
+        .frame(width: 76)
     }
 
     @ViewBuilder
@@ -207,8 +207,8 @@ private struct FriendStoryBubble: View {
     var thumbCaption: String? = nil
     let action: () -> Void
 
-    private let discSize: CGFloat = 56
-    private let ringSize: CGFloat = 64
+    private let discSize: CGFloat = 63
+    private let ringSize: CGFloat = 72
 
     private var accent: Color { Color(hex: friend.accentColorHex) }
 
@@ -227,7 +227,7 @@ private struct FriendStoryBubble: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            .frame(width: 68)
+            .frame(width: 76)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -260,9 +260,9 @@ private struct FriendStoryBubble: View {
             // the stroke — the unmistakable "new" signal.
             Circle()
                 .trim(from: 0.045, to: 1.0)
-                .stroke(accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .stroke(accent, style: StrokeStyle(lineWidth: 2.8, lineCap: .round))
                 .rotationEffect(.degrees(-64))
-                .padding(1.25)
+                .padding(1.4)
         case .seen:
             Circle()
                 .strokeBorder(Theme.textPrimary.opacity(0.22), lineWidth: 1.2)
@@ -287,7 +287,7 @@ private struct FriendStoryBubble: View {
                 initials: friend.initials,
                 avatarURL: friend.avatarURL,
                 size: discSize,
-                initialsSize: 19
+                initialsSize: 21
             )
         }
     }
@@ -488,11 +488,11 @@ struct MomentThumb: View {
                         ],
                         center: .center,
                         startRadius: 0,
-                        endRadius: 22
+                        endRadius: 25
                     )
                 )
-                .frame(width: 44, height: 44)
-                .offset(y: 6)
+                .frame(width: 50, height: 50)
+                .offset(y: 7)
             LinearGradient(
                 colors: [Color.black.opacity(0.18), .clear, Color.black.opacity(0.22)],
                 startPoint: .top,
@@ -517,17 +517,17 @@ private struct AddPersonBubble: View {
                         style: StrokeStyle(lineWidth: 1.4, dash: [4, 3.5])
                     )
                     Image(systemName: "plus")
-                        .font(.sans(18, weight: .semibold))
+                        .font(.sans(20, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary.opacity(0.65))
                 }
-                .frame(width: 64, height: 64)
+                .frame(width: 72, height: 72)
 
                 Text("Add")
                     .font(.sans(11, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(0.7))
                     .lineLimit(1)
             }
-            .frame(width: 68)
+            .frame(width: 76)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
