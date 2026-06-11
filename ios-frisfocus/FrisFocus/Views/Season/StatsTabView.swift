@@ -1,30 +1,25 @@
 //
-//  WeekStatsView.swift
+//  StatsTabView.swift
 //  FrisFocus
 //
-//  Full-screen statistics, opened from the "This week" card on the
-//  season dashboard or the week score in the home header. Styled in
-//  the same deep-sky glass language so it reads as a continuation of
-//  the expanded season view.
-//
-//  Structure: top bar (title + close) → Week · Month · Season scope
-//  switcher → the active scope's content. Week keeps the pager,
-//  seven-day chart with goal line and tappable bars, day breakdown,
-//  week summary, gains & losses, and the "vs last week" strip. Month
-//  and Season live in MonthStatsView / SeasonStatsView; tapping a
-//  week bar in the season chart jumps back into that week's detail.
-//  Periods with no activity show a quiet empty state instead.
+//  The Stats tab of the expanded season area — the old full-screen
+//  stats page, now rendered inline beneath the sky band. A quiet
+//  Week · Month · Season underline switcher sits at the top; Week
+//  keeps the pager, seven-day chart with goal line and tappable bars,
+//  day breakdown, week summary, gains & losses, and the "vs last
+//  week" strip. Month and Season live in MonthStatsView /
+//  SeasonStatsView; tapping a week bar in the season chart jumps
+//  back into that week's detail. A small share icon beside the week
+//  pager opens the share camera with the week's suns.
 //
 
 import SwiftUI
 import UIKit
 
-struct WeekStatsView: View {
+struct StatsTabView: View {
     @Environment(Store.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.sunSky) private var sky
 
-    /// The three zoom levels of the stats page.
+    /// The three zoom levels of the stats tab.
     private enum StatsScope: String, CaseIterable {
         case week = "Week"
         case month = "Month"
@@ -36,8 +31,9 @@ struct WeekStatsView: View {
     /// the earliest log entry.
     @State private var weekOffset: Int = 0
     @State private var selectedDay: Date? = Calendar.current.startOfDay(for: Date())
-    /// Bars grow from the baseline when the view opens or the week flips.
+    /// Bars grow from the baseline when the tab opens or the week flips.
     @State private var barsRevealed: Bool = false
+    @State private var showWeekShare: Bool = false
 
     // Glass-on-sky tokens — matching SeasonInlineDetailView.
     private let glassFill = Color.white.opacity(0.10)
@@ -50,34 +46,27 @@ struct WeekStatsView: View {
     private var today: Date { cal.startOfDay(for: Date()) }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            backdrop
+        VStack(spacing: 0) {
+            scopeSwitcher
+                .padding(.top, 2)
 
-            VStack(spacing: 0) {
-                topBar
-                scopeSwitcher
-
-                ScrollView(showsIndicators: false) {
-                    Group {
-                        switch scope {
-                        case .week:
-                            weekContent
-                        case .month:
-                            MonthStatsView()
-                                .transition(.opacity)
-                        case .season:
-                            SeasonStatsView { offset in
-                                jumpToWeek(offset)
-                            }
-                            .transition(.opacity)
-                        }
+            Group {
+                switch scope {
+                case .week:
+                    weekContent
+                case .month:
+                    MonthStatsView()
+                        .transition(.opacity)
+                case .season:
+                    SeasonStatsView { offset in
+                        jumpToWeek(offset)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 10)
-                    .padding(.bottom, 40)
+                    .transition(.opacity)
                 }
             }
+            .padding(.top, 14)
         }
+        .padding(.horizontal, 22)
         .onAppear { barsRevealed = true }
         .onChange(of: weekOffset) { _, newOffset in
             barsRevealed = false
@@ -87,68 +76,24 @@ struct WeekStatsView: View {
                 barsRevealed = true
             }
         }
-    }
-
-    // MARK: - Backdrop
-
-    /// Same deepened sky as the inline season detail — gradient, stars,
-    /// grain — so the stats page feels like part of the landscape.
-    private var backdrop: some View {
-        let palette = sky.palette
-        let top = palette.skyStops.last ?? Theme.skyLow
-        let deep = Color.lerpHSL(top, Color(hex: 0x05080A), t: 0.5)
-
-        return ZStack(alignment: .top) {
-            LinearGradient(
-                colors: [top, deep, deep],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-
-            StarFieldView()
-                .frame(height: 380)
-                .opacity(0.3)
-
-            FilmGrainView(strength: 0.16)
+        .fullScreenCover(isPresented: $showWeekShare) {
+            ShareCameraView(context: store.weekShareContext())
         }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
     }
 
     // MARK: - Scope switcher
 
-    /// The Week · Month · Season pill row — the page's zoom control.
+    /// Week · Month · Season — plain text with a thin sliding underline.
     private var scopeSwitcher: some View {
-        HStack(spacing: 4) {
-            ForEach(StatsScope.allCases, id: \.self) { item in
-                Button {
-                    guard item != scope else { return }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                        scope = item
-                    }
-                } label: {
-                    Text(item.rawValue)
-                        .font(.sans(12, weight: scope == item ? .semibold : .regular))
-                        .foregroundStyle(
-                            scope == item ? Theme.textPrimary : Theme.textCream.opacity(0.8)
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(scope == item ? Theme.textCream : Color.clear)
-                        .clipShape(Capsule())
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(item.rawValue) stats")
-                .accessibilityAddTraits(scope == item ? .isSelected : [])
+        UnderlineTabSwitcher(
+            items: StatsScope.allCases.map(\.rawValue),
+            selectedIndex: StatsScope.allCases.firstIndex(of: scope) ?? 0,
+            accessibilityLabels: StatsScope.allCases.map { "\($0.rawValue) stats" }
+        ) { index in
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                scope = StatsScope.allCases[index]
             }
         }
-        .padding(4)
-        .background(glassFill)
-        .clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(glassStroke, lineWidth: 0.5))
-        .padding(.horizontal, 20)
     }
 
     /// Jumps from the season chart into one specific week's detail.
@@ -187,46 +132,10 @@ struct WeekStatsView: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: weekOffset)
     }
 
-    // MARK: - Top bar
-
-    private var topBar: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Stats")
-                    .font(.serif(22, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-                Text(store.currentSeason.name)
-                    .font(.sans(11, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.55))
-            }
-
-            Spacer()
-
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.textCream.opacity(0.85))
-                    .frame(width: 36, height: 36)
-                    .background(glassFill)
-                    .clipShape(Circle())
-                    .overlay(Circle().strokeBorder(glassStroke, lineWidth: 0.5))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close stats")
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 14)
-        .padding(.bottom, 14)
-    }
-
     // MARK: - Week pager
 
     private var weekPager: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             pagerArrow(iconName: "chevron.left", enabled: canGoBack) {
                 weekOffset -= 1
             }
@@ -245,6 +154,8 @@ struct WeekStatsView: View {
             pagerArrow(iconName: "chevron.right", enabled: canGoForward) {
                 weekOffset += 1
             }
+
+            shareWeekButton
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 10)
@@ -254,6 +165,24 @@ struct WeekStatsView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(glassStroke, lineWidth: 0.5)
         )
+    }
+
+    /// Small, discreet share entry beside the pager — opens the share
+    /// camera with seven small suns for the week.
+    private var shareWeekButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showWeekShare = true
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.textCream.opacity(0.6))
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Share your week")
+        .accessibilityHint("Opens the share camera with seven small suns for the week")
     }
 
     @ViewBuilder
@@ -802,7 +731,7 @@ struct WeekStatsView: View {
             .foregroundStyle(Theme.textCream.opacity(0.6))
     }
 
-    /// Slim glowing progress bar — same warm gradient as the dashboard.
+    /// Slim glowing progress bar — same warm gradient as the charts.
     @ViewBuilder
     private func progressTrack(_ progress: Double) -> some View {
         GeometryReader { proxy in
@@ -893,7 +822,9 @@ private struct Line: Shape {
 }
 
 #Preview {
-    WeekStatsView()
-        .environment(\.sunSky, .make(now: .now, coordinate: nil))
-        .environment(Store())
+    ScrollView {
+        StatsTabView()
+    }
+    .background(Theme.skyDeep)
+    .environment(Store())
 }

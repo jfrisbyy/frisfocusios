@@ -54,7 +54,9 @@ struct SunZoneView: View {
     @State private var showDaySheet: Bool = false
     @State private var daySheetDate: Date = Date()
     @State private var showShareCamera: Bool = false
-    @State private var showWeekStats: Bool = false
+    /// Which face of the expanded season detail is showing. The score
+    /// band always opens Tasks; the header week score opens Stats.
+    @State private var seasonDetailTab: SeasonDetailTab = .tasks
 
     private var zoneHeight: CGFloat { 580 + topSafeInset }
 
@@ -65,7 +67,7 @@ struct SunZoneView: View {
             compactBand(palette: palette)
 
             if isExpanded {
-                SeasonInlineDetailView(onMinimize: collapse)
+                SeasonInlineDetailView(onMinimize: collapse, activeTab: $seasonDetailTab)
                     .transition(.opacity)
             }
         }
@@ -77,9 +79,6 @@ struct SunZoneView: View {
         }
         .fullScreenCover(isPresented: $showShareCamera) {
             ShareCameraView(context: store.dayShareContext())
-        }
-        .fullScreenCover(isPresented: $showWeekStats) {
-            WeekStatsView()
         }
     }
 
@@ -252,8 +251,19 @@ struct SunZoneView: View {
 
     private func toggleExpanded() {
         UIImpactFeedbackGenerator(style: isExpanded ? .light : .medium).impactOccurred()
+        if !isExpanded { seasonDetailTab = .tasks }
         withAnimation(.spring(response: 0.55, dampingFraction: 0.86)) {
             isExpanded.toggle()
+        }
+    }
+
+    /// Opens (or refocuses) the expanded season detail directly on its
+    /// inline Stats tab — the header week score's destination.
+    private func openStats() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.86)) {
+            seasonDetailTab = .stats
+            isExpanded = true
         }
     }
 
@@ -320,10 +330,10 @@ struct SunZoneView: View {
                 .padding(.bottom, 12)
 
                 // The whole week peek — label, score, stripe — is one
-                // button that opens the full stats page on its Week view.
+                // button that unfolds the season detail on its inline
+                // Stats tab.
                 Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showWeekStats = true
+                    openStats()
                 } label: {
                     VStack(alignment: .trailing, spacing: 0) {
                         EyebrowText(
@@ -354,7 +364,7 @@ struct SunZoneView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Week score \(store.weekScore) of \(store.currentSeason.weeklyGoal)")
-                .accessibilityHint("Opens week, month, and season stats")
+                .accessibilityHint("Unfolds the season detail on its week, month, and season stats")
             }
         }
         .padding(.leading, 24)
