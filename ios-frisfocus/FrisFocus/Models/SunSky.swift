@@ -50,7 +50,8 @@ struct SunSky {
             for: now,
             latitude: coord.latitude,
             longitude: coord.longitude
-           ) {
+           ),
+           isSane(sunrise: result.sunrise, sunset: result.sunset) {
             return (result.sunrise, result.sunset, true)
         }
 
@@ -70,6 +71,14 @@ struct SunSky {
         let sunrise = cal.date(from: rise) ?? now
         let sunset = cal.date(from: set) ?? now.addingTimeInterval(14 * 3600)
         return (sunrise, sunset, false)
+    }
+
+    /// Guards against a degenerate geo result (sunset before sunrise, or
+    /// an impossible day length) freezing the sky — if the calculator
+    /// ever produces one, callers fall back to the fixed times instead.
+    private static func isSane(sunrise: Date, sunset: Date) -> Bool {
+        let span = sunset.timeIntervalSince(sunrise)
+        return span > 2 * 3600 && span < 23 * 3600
     }
 
     // MARK: - Day progress

@@ -35,15 +35,51 @@ nonisolated enum SolarCalculator {
 
         var utcCal = Calendar(identifier: .gregorian)
         utcCal.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
-        let dayComponents = utcCal.dateComponents([.year, .month, .day], from: date)
 
-        guard let sunrise = makeDate(utHour: utRise, dayComponents: dayComponents, calendar: utcCal),
-              let sunset  = makeDate(utHour: utSet,  dayComponents: dayComponents, calendar: utcCal)
+        // The UT hours are wrapped to 0–24, so the event may actually
+        // belong to the UTC day before or after the user's local day
+        // (e.g. an 8:27 PM EDT sunset is 00:27 UTC *tomorrow*). Naively
+        // pinning both onto today's UTC day puts sunset ~24 h before
+        // sunrise in the Americas, or sunrise a day ahead far east of
+        // UTC. Resolve each event onto whichever adjacent UTC day makes
+        // it land inside the user's local calendar day.
+        guard let sunrise = resolveToLocalDay(utHour: utRise, near: date, utcCalendar: utcCal),
+              let sunset  = resolveToLocalDay(utHour: utSet,  near: date, utcCalendar: utcCal),
+              sunset > sunrise
         else {
             return nil
         }
 
         return (sunrise, sunset)
+    }
+
+    /// Tries the UTC day of `date` and its neighbours, returning the
+    /// candidate that falls on the same *local* calendar day as `date`.
+    private static func resolveToLocalDay(
+        utHour: Double,
+        near date: Date,
+        utcCalendar: Calendar
+    ) -> Date? {
+        var localCal = Calendar(identifier: .gregorian)
+        localCal.timeZone = .current
+
+        for dayOffset in [-1, 0, 1] {
+            guard let shifted = utcCalendar.date(byAdding: .day, value: dayOffset, to: date) else {
+                continue
+            }
+            let dayComponents = utcCalendar.dateComponents([.year, .month, .day], from: shifted)
+            guard let candidate = makeDate(
+                utHour: utHour,
+                dayComponents: dayComponents,
+                calendar: utcCalendar
+            ) else {
+                continue
+            }
+            if localCal.isDate(candidate, inSameDayAs: date) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     // MARK: - Math
