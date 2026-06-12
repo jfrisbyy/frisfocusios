@@ -21,6 +21,12 @@ final class Store {
     // MARK: - State
 
     var currentSeason: Season { didSet { markDirty(.season) } }
+
+    /// Archived chapters — one summary per season that came before the
+    /// current one. Newest first. Published to friends (per their
+    /// sharing tier) as part of the season card.
+    var pastSeasons: [PastSeasonSummary] = [] { didSet { markDirty(.pastSeasons) } }
+
     var tasks: [FFTask] = [] { didSet { markDirty(.tasks) } }
     var todos: [Todo] = [] { didSet { markDirty(.todos) } }
     var logEntries: [LogEntry] = [] { didSet { markDirty(.logEntries) } }
@@ -264,6 +270,7 @@ final class Store {
 
     private enum Keys {
         static let currentSeason = "currentSeason"
+        static let pastSeasons = "pastSeasons"
         static let tasks = "tasks"
         static let todos = "todos"
         static let logEntries = "logEntries"
@@ -422,6 +429,7 @@ final class Store {
                 }
                 self.currentSeason = Store.seedSeason()
             }
+            self.pastSeasons = Store.loadArray(Keys.pastSeasons) ?? []
             self.tasks = Store.loadArray(Keys.tasks) ?? []
             self.todos = Store.loadArray(Keys.todos) ?? []
             self.logEntries = Store.loadArray(Keys.logEntries) ?? []
@@ -600,7 +608,7 @@ final class Store {
     /// One persistable slice of the Store. Each case maps to a single
     /// UserDefaults key.
     enum DataKey: CaseIterable {
-        case season, tasks, todos, logEntries, notes, folders, proofPins, proofLibrary
+        case season, pastSeasons, tasks, todos, logEntries, notes, folders, proofPins, proofLibrary
         case friends, circles, circleTaskCompletions, circleContributions
         case circleEvents, eventRSVPs, eventCheckIns
         case signalFacts, cheers, storyPosts, directShares, likes, comments, mediaAssets
@@ -658,7 +666,7 @@ final class Store {
 
     /// The slices mirrored to the user's account by `SeasonSyncService`.
     static let seasonSyncedKeys: Set<DataKey> = [
-        .season, .tasks, .todos, .logEntries,
+        .season, .pastSeasons, .tasks, .todos, .logEntries,
         .boosters, .habitTrains, .avoidanceItems, .avoidanceOccurrences
     ]
 
@@ -684,6 +692,7 @@ final class Store {
     private func write(_ key: DataKey, with encoder: JSONEncoder) {
         switch key {
         case .season: setJSON(currentSeason, forKey: Keys.currentSeason, encoder: encoder)
+        case .pastSeasons: setJSON(pastSeasons, forKey: Keys.pastSeasons, encoder: encoder)
         case .tasks: setJSON(tasks, forKey: Keys.tasks, encoder: encoder)
         case .todos: setJSON(todos, forKey: Keys.todos, encoder: encoder)
         case .logEntries: setJSON(logEntries, forKey: Keys.logEntries, encoder: encoder)
@@ -741,7 +750,7 @@ final class Store {
     /// Every key the Store persists — the list a release-version bump
     /// snapshots before any new code touches the data.
     private static let allPersistedKeys: [String] = [
-        Keys.currentSeason, Keys.tasks, Keys.todos, Keys.logEntries,
+        Keys.currentSeason, Keys.pastSeasons, Keys.tasks, Keys.todos, Keys.logEntries,
         Keys.notes, Keys.folders, Keys.proofPins, Keys.proofLibrary, Keys.friends, Keys.circles,
         Keys.circleTaskCompletions, Keys.circleContributions,
         Keys.signalFacts, Keys.cheers, Keys.storyPosts, Keys.directShares,
@@ -1047,6 +1056,64 @@ extension Store {
             return "\(goal) to a productive day"
         }
         return "\(goal - score) to a productive day"
+    }
+
+    // MARK: - Season look + the public season card
+
+    /// The owner-chosen accent hex for this season, when set. Surfaces
+    /// fall back to the auto-assigned account accent when nil.
+    var seasonAccentHex: String? { currentSeason.accentHex }
+
+    /// Update how friends see this season — cover, accent, intention.
+    /// Writes through the season slice, so the card republishes.
+    func setSeasonLook(coverId: String?, accentHex: String?, intention: String?) {
+        currentSeason.coverId = coverId
+        currentSeason.accentHex = accentHex
+        let trimmed = intention?.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentSeason.intention = (trimmed?.isEmpty == false) ? trimmed : nil
+        persistAll()
+    }
+
+    /// The friend-readable summary of my season life, built fresh from
+    /// the live season + archived chapters. Published to
+    /// `profiles.season_card` by the season sync bridge.
+    var mySeasonCard: SeasonCard {
+        SeasonCard(
+            coverId: currentSeason.coverId,
+            accentHex: currentSeason.accentHex,
+            intention: currentSeason.intention,
+            seasonName: currentSeason.name,
+            seasonStartDate: currentSeason.startDate,
+            seasonLengthDays: currentSeason.lengthDays,
+            milestonesDone: currentSeason.milestones.filter { $0.status == .cleared }.count,
+            milestonesTotal: currentSeason.milestones.count,
+            pastSeasons: pastSeasons
+        )
+    }
+
+    /// Archive the season currently being lived as a past chapter —
+    /// called right before a new season replaces it. Seasons that never
+    /// actually started (created today) and already-archived ids are
+    /// skipped, so re-commits never write duplicate chapters.
+    func archiveCurrentSeasonAsChapter() {
+        let cal = Calendar.current
+        let old = currentSeason
+        guard cal.startOfDay(for: old.startDate) < cal.startOfDay(for: Date()) else { return }
+        guard !pastSeasons.contains(where: { $0.id == old.id }) else { return }
+        let plannedEnd = cal.date(byAdding: .day, value: old.lengthDays, to: old.startDate) ?? Date()
+        pastSeasons.insert(
+            PastSeasonSummary(
+                id: old.id,
+                name: old.name,
+                startDate: old.startDate,
+                endDate: min(Date(), plannedEnd),
+                milestonesReached: old.milestones.filter { $0.status == .cleared }.count,
+                milestonesTotal: old.milestones.count,
+                coverId: old.coverId,
+                accentHex: old.accentHex
+            ),
+            at: 0
+        )
     }
 
     /// 1-based day count into the current season, clamped to `1...lengthDays`.

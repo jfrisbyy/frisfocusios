@@ -713,6 +713,18 @@ struct Season: Codable, Identifiable {
     var weeklyGoal: Int
     var categories: [SeasonCategory]
     var milestones: [Milestone]
+
+    // MARK: Season look (published to friends via the season card)
+
+    /// The curated cover this season wears on profile pages
+    /// (a `SeasonCoverKind` raw value). Nil → header photo or the
+    /// accent band. Optional so persisted seasons decode cleanly.
+    var coverId: String?
+    /// The owner-chosen signature color hex. Nil → the auto-assigned
+    /// account accent.
+    var accentHex: String?
+    /// A short "why this season" line shown under the season title.
+    var intention: String?
 }
 
 // MARK: - Tasks / To-dos / Log / Notes

@@ -180,6 +180,12 @@ struct Friend: Codable, Identifiable {
     /// default. nil = locked (never asked). Optional so friends
     /// persisted before this landed decode cleanly.
     var pointsAccess: PointsAccess?
+
+    /// The friend's published season card — cover, chosen accent,
+    /// intention line, season info, and past chapters. Mirrored from
+    /// their profile row on every friends refresh. Optional so
+    /// persisted friends decode cleanly.
+    var seasonCard: SeasonCard?
 }
 
 /// The two post-ask states of the exact-points permission. The locked

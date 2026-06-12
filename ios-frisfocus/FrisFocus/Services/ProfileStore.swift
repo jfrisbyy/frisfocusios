@@ -144,7 +144,7 @@ final class ProfileStore {
     @ObservationIgnored private var phoneLoadedForUserId: String?
 
     /// The columns the store reads/writes on `profiles`.
-    private static let profileColumns = "id, email, name, username, avatar_url, header_url, area_key, area_name"
+    private static let profileColumns = "id, email, name, username, avatar_url, header_url, area_key, area_name, season_card"
 
     private static let iso: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()

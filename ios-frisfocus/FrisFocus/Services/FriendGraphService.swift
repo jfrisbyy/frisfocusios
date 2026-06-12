@@ -34,6 +34,11 @@ nonisolated struct RemoteProfile: Codable, Identifiable, Sendable, Hashable {
     /// friendly name. Only present when the user turned Near you on.
     var areaKey: String?
     var areaName: String?
+    /// The person's published season card as raw JSON — cover choice,
+    /// accent, intention, season info, and past chapters. Decoded
+    /// lazily via `card`. Optional so selects without the column
+    /// still decode cleanly.
+    var seasonCard: String?
 
     enum CodingKeys: String, CodingKey {
         case id, email, name, username
@@ -41,6 +46,7 @@ nonisolated struct RemoteProfile: Codable, Identifiable, Sendable, Hashable {
         case headerUrl = "header_url"
         case areaKey = "area_key"
         case areaName = "area_name"
+        case seasonCard = "season_card"
     }
 
     var displayName: String {
@@ -74,6 +80,9 @@ nonisolated struct RemoteProfile: Codable, Identifiable, Sendable, Hashable {
         guard let headerUrl, let url = URL(string: headerUrl) else { return nil }
         return url
     }
+
+    /// The decoded season card, when one was published.
+    var card: SeasonCard? { SeasonCard.decode(fromJSON: seasonCard) }
 }
 
 private nonisolated struct FriendRequestRow: Codable, Sendable {
@@ -299,7 +308,7 @@ final class FriendGraphService {
         do {
             let results: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select("id, email, name, username, avatar_url, header_url, season_card")
                 .or("username.ilike.*\(safe)*,name.ilike.*\(safe)*,email.ilike.*\(safe)*")
                 .limit(20)
                 .execute()
@@ -316,7 +325,7 @@ final class FriendGraphService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select("id, email, name, username, avatar_url, header_url, season_card")
                 .eq("id", value: id)
                 .limit(1)
                 .execute()
@@ -417,6 +426,54 @@ final class FriendGraphService {
         }
     }
 
+    // MARK: - Profile texture (mutuals + join date)
+
+    /// The friends this user shares with `otherId` — the other person's
+    /// friendship edges intersected with the already-loaded friend
+    /// list. Returns profiles straight from `friends` so avatars are
+    /// already resolved.
+    func mutualFriends(with otherId: String, myUserId: String) async -> [RemoteProfile] {
+        guard otherId != myUserId else { return [] }
+        do {
+            let rows: [FriendshipRow] = try await supabase
+                .from("friendships")
+                .select("id, user_a, user_b")
+                .or("user_a.eq.\(otherId),user_b.eq.\(otherId)")
+                .execute()
+                .value
+            let theirFriendIds = Set(rows.map { $0.userA == otherId ? $0.userB : $0.userA })
+                .subtracting([myUserId])
+            return friends.filter { theirFriendIds.contains($0.id) }
+        } catch {
+            print("[FriendGraph] mutuals fetch failed: \(error)")
+            return []
+        }
+    }
+
+    private nonisolated struct ProfileJoinedRow: Decodable, Sendable {
+        let createdAt: String?
+        enum CodingKeys: String, CodingKey { case createdAt = "created_at" }
+    }
+
+    /// When this account was created — the quiet "Joined June 2025"
+    /// line. Fetched lazily since profile selects don't carry it.
+    func joinedDate(of profileId: String) async -> Date? {
+        do {
+            let rows: [ProfileJoinedRow] = try await supabase
+                .from("profiles")
+                .select("created_at")
+                .eq("id", value: profileId)
+                .limit(1)
+                .execute()
+                .value
+            guard let raw = rows.first?.createdAt else { return nil }
+            return SyncDates.parse(raw)
+        } catch {
+            print("[FriendGraph] joined date fetch failed: \(error)")
+            return nil
+        }
+    }
+
     // MARK: - Realtime
 
     /// Subscribe to live changes on the friend graph (friendships and
@@ -462,7 +519,7 @@ final class FriendGraphService {
         guard !ids.isEmpty else { return [:] }
         let rows: [RemoteProfile] = try await supabase
             .from("profiles")
-            .select("id, email, name, username, avatar_url, header_url")
+            .select("id, email, name, username, avatar_url, header_url, season_card")
             .in("id", values: ids)
             .execute()
             .value

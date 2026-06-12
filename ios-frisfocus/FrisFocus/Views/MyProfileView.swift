@@ -62,9 +62,10 @@ struct MyProfileView: View {
         return value.isEmpty ? "?" : value
     }
 
-    /// My signature color — the band friends see when no header photo
-    /// is set. Derived from the account id, same as everywhere else.
+    /// My signature color — the chosen season accent when set, else
+    /// the auto-assigned account accent, same as friends see it.
     private var accent: Color {
+        if let chosen = store.currentSeason.accentHex { return Color(hex: chosen) }
         if let myId { return Color(hex: RemoteIDMapper.accentHex(forRemoteId: myId)) }
         return Theme.textPrimary
     }
@@ -94,6 +95,10 @@ struct MyProfileView: View {
                     daySection
                         .padding(.horizontal, Theme.pageHorizontalPadding)
                         .padding(.top, 18)
+                        .padding(.bottom, 18)
+
+                    chaptersSection
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
                         .padding(.bottom, 18)
 
                     cheersRow
@@ -191,10 +196,14 @@ struct MyProfileView: View {
                     .font(.sans(12, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.82))
 
+                seasonTitleBlock
+                    .padding(.top, 10)
+
                 editPill
-                    .padding(.top, 8)
+                    .padding(.top, 10)
             }
             .padding(.top, 8)
+            .padding(.horizontal, Theme.pageHorizontalPadding)
 
             previewActionRow
                 .padding(.horizontal, Theme.pageHorizontalPadding)
@@ -212,44 +221,55 @@ struct MyProfileView: View {
     }
 
     private var metaLine: String {
-        var parts: [String] = []
-        if let handle { parts.append(handle) }
-        let season = store.currentSeason.name.replacingOccurrences(of: " Season", with: "")
-        if !season.isEmpty {
-            parts.append("\(season) · day \(store.currentSeasonDay)")
+        handle ?? "This is you"
+    }
+
+    /// The season title carved into the poster — the exact shape
+    /// friends see, built from my live season.
+    private var seasonTitleBlock: some View {
+        VStack(spacing: 5) {
+            Text(store.currentSeason.name.replacingOccurrences(of: " Season", with: ""))
+                .font(.serif(32, weight: .medium))
+                .foregroundStyle(Theme.textCream)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 2)
+
+            Text("DAY \(store.currentSeasonDay) OF \(store.currentSeason.lengthDays)")
+                .font(.sans(10, weight: .semibold))
+                .tracking(2)
+                .foregroundStyle(Theme.textCream.opacity(0.85))
+
+            if let intention = store.currentSeason.intention, !intention.isEmpty {
+                Text("“\(intention)”")
+                    .font(.serifItalic(14, weight: .regular))
+                    .foregroundStyle(Theme.textCream.opacity(0.9))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.horizontal, 12)
+            } else {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showEditProfile = true
+                } label: {
+                    Text("Add an intention line…")
+                        .font(.serifItalic(13, weight: .regular))
+                        .foregroundStyle(Theme.textCream.opacity(0.6))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add an intention line for this season")
+            }
         }
-        return parts.isEmpty ? "This is you" : parts.joined(separator: " · ")
     }
 
     private var heroBackground: some View {
-        let hasPhoto = headerPhotoURL != nil
-        return ZStack {
-            accent
-            if let headerPhotoURL {
-                Color.clear
-                    .overlay {
-                        CachedImage(url: headerPhotoURL) { image in
-                            image.resizable().scaledToFill()
-                        } placeholder: {
-                            accent
-                        }
-                    }
-                    .clipped()
-                    .allowsHitTesting(false)
-            }
-            LinearGradient(
-                colors: hasPhoto
-                    ? [Color.black.opacity(0.48), Color.black.opacity(0.22), Color.black.opacity(0.30)]
-                    : [Color.black.opacity(0.34), Color.black.opacity(0.04), Color.black.opacity(0.10)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            LinearGradient(
-                colors: [.clear, .clear, Theme.warmWheat.opacity(0.22)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
+        ProfilePosterBackground(
+            coverId: store.currentSeason.coverId,
+            headerURL: headerPhotoURL,
+            accent: accent
+        )
     }
 
     // MARK: Top bar
@@ -452,6 +472,26 @@ struct MyProfileView: View {
             Capsule(style: .continuous)
                 .strokeBorder(Theme.textCream.opacity(filled ? 0 : 0.35), lineWidth: 0.8)
         )
+    }
+
+    // MARK: - Past chapters
+
+    /// My own story season by season — the same chapter rail friends
+    /// see, built from the archived seasons.
+    @ViewBuilder
+    private var chaptersSection: some View {
+        if !store.pastSeasons.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionLabel("PAST CHAPTERS · \(store.pastSeasons.count)")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(store.pastSeasons) { chapter in
+                            PastSeasonChapterCard(chapter: chapter, showsMilestones: true)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Cheers row

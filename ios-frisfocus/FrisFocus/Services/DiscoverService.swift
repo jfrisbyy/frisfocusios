@@ -50,7 +50,7 @@ final class DiscoverService {
 
     /// The columns every discover read pulls — includes the opt-in
     /// Near-you area so rows can whisper "Near Austin".
-    static let profileColumns = "id, email, name, username, avatar_url, header_url, area_key, area_name"
+    static let profileColumns = "id, email, name, username, avatar_url, header_url, area_key, area_name, season_card"
 
     /// How many newest-member profiles to pull as the long tail behind
     /// the friends-of-friends tier.

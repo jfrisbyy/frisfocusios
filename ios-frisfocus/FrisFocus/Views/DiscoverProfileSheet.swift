@@ -61,6 +61,7 @@ struct DiscoverProfileSheet: View {
 
                     VStack(spacing: 14) {
                         identity
+                        seasonLine
                         if let bio, !bio.isEmpty {
                             Text(bio)
                                 .font(.sans(14, weight: .regular))
@@ -106,31 +107,49 @@ struct DiscoverProfileSheet: View {
         .accessibilityLabel("Close")
     }
 
-    /// Their header photo behind the top of the card — signature color
-    /// underneath so nothing flashes empty while it loads (and as the
-    /// default band when no photo is set).
+    /// The same poster hero every profile wears — their chosen season
+    /// cover, else their header photo, else the signature-color band.
     private var headerBanner: some View {
-        profile.signatureColor
-            .frame(height: 118)
-            .overlay {
-                if let url = profile.headerURL {
-                    CachedImage(url: url) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        profile.signatureColor
-                    }
-                    .allowsHitTesting(false)
+        ProfilePosterBackground(
+            coverId: profile.card?.coverId,
+            headerURL: profile.headerURL,
+            accent: profile.signatureColor,
+            animated: false
+        )
+        .frame(height: 118)
+        .clipped()
+    }
+
+    /// Their published season, when one exists — "In Foundation · day
+    /// 12" with the intention line underneath.
+    @ViewBuilder
+    private var seasonLine: some View {
+        if let card = profile.card, let seasonName = card.seasonName {
+            VStack(spacing: 4) {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(card.accentHex.map { Color(hex: $0) } ?? profile.signatureColor)
+                        .frame(width: 6, height: 6)
+                    Text(seasonMetaText(seasonName: seasonName, day: card.currentDay))
+                        .font(.sans(12, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                if let intention = card.intention, !intention.isEmpty {
+                    Text("“\(intention)”")
+                        .font(.serifItalic(13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .padding(.horizontal, 28)
                 }
             }
-            .overlay(
-                LinearGradient(
-                    colors: [Color.black.opacity(0.18), .clear, Theme.warmWheat.opacity(0.16)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .allowsHitTesting(false)
-            )
-            .clipped()
+        }
+    }
+
+    private func seasonMetaText(seasonName: String, day: Int?) -> String {
+        let short = seasonName.replacingOccurrences(of: " Season", with: "")
+        if let day { return "In \(short) · day \(day)" }
+        return "In \(short)"
     }
 
     private var avatar: some View {

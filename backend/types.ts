@@ -1144,6 +1144,7 @@ export type Database = {
           id: string
           is_test: boolean
           name: string | null
+          season_card: string | null
           updated_at: string | null
           username: string | null
         }
@@ -1158,6 +1159,7 @@ export type Database = {
           id: string
           is_test?: boolean
           name?: string | null
+          season_card?: string | null
           updated_at?: string | null
           username?: string | null
         }
@@ -1172,6 +1174,7 @@ export type Database = {
           id?: string
           is_test?: boolean
           name?: string | null
+          season_card?: string | null
           updated_at?: string | null
           username?: string | null
         }

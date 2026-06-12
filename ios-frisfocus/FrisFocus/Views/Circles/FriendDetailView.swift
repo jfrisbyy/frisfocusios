@@ -23,19 +23,13 @@
 import SwiftUI
 import UIKit
 
-/// Identifiable wrapper so `sheet(item:)` can drive comment-thread
-/// presentation off a `UUID` post id.
-private struct CommentsSheetTarget: Identifiable {
-    let postId: UUID
-    var id: UUID { postId }
-}
-
 struct FriendDetailView: View {
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
     @Environment(ModerationService.self) private var moderation
     @Environment(MessageGraphService.self) private var messageGraph
     @Environment(SocialSyncService.self) private var socialSync
+    @Environment(FriendGraphService.self) private var friendGraph
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -43,7 +37,6 @@ struct FriendDetailView: View {
 
     @State private var showCheerComposer: Bool = false
     @State private var showSharingSettings: Bool = false
-    @State private var commentsPostId: UUID?
     @State private var showStories: Bool = false
     @State private var showSendProof: Bool = false
     @State private var showProposePact: Bool = false
@@ -52,6 +45,15 @@ struct FriendDetailView: View {
     @State private var detailPact: Pact?
     @State private var ringPulse: Bool = false
     @State private var ringFill: Double = 0
+
+    // Friend controls + profile texture
+    @State private var reportTarget: ReportTarget?
+    @State private var showBlockConfirm: Bool = false
+    @State private var showUnfriendConfirm: Bool = false
+    @State private var showMutualsList: Bool = false
+    @State private var isRelationshipWorking: Bool = false
+    @State private var mutuals: [RemoteProfile] = []
+    @State private var joinedDate: Date?
 
     /// Zoom-transition namespace — the story player grows out of the
     /// hero avatar and shrinks back into it on dismiss.
@@ -80,6 +82,19 @@ struct FriendDetailView: View {
     /// local-only pipeline.
     private var remoteProfile: RemoteProfile? { socialSync.profile(forLocal: friend.id) }
 
+    /// The friend's published season card — cover, accent, intention,
+    /// season info, past chapters. Prefers the synced Friend record;
+    /// falls back to the cached remote profile.
+    private var publishedCard: SeasonCard? { liveFriend.seasonCard ?? remoteProfile?.card }
+
+    /// The live connection state — drives the hero pill. People on
+    /// this page are friends in practice, but the pill stays honest if
+    /// the graph changed underneath (an unfriend elsewhere).
+    private var relationship: FriendRelationship {
+        guard let remote = remoteProfile, let myId = myUserId else { return .friends }
+        return friendGraph.relationship(to: remote.id, myUserId: myId)
+    }
+
     private var unreadFromFriend: Int {
         if let remote = remoteProfile, let myId = myUserId {
             return messageGraph.unreadCount(fromFriendId: remote.id, myUserId: myId)
@@ -94,11 +109,6 @@ struct FriendDetailView: View {
         }.count
     }
 
-    /// The friend's most recent unexpired post — react target.
-    private var currentPost: StoryPost? {
-        store.currentStoryPost(forFriendId: friend.id)
-    }
-
     private var moodText: String {
         tier == .full ? day.moodLine : store.headlineFromFriend(friend)
     }
@@ -110,7 +120,9 @@ struct FriendDetailView: View {
                     hero
 
                     VStack(alignment: .leading, spacing: 20) {
+                        seasonProgressStrip
                         themLayer
+                        chaptersBlock
                         Divider().overlay(Theme.textPrimary.opacity(0.08))
                         usLayer
                     }
@@ -141,12 +153,37 @@ struct FriendDetailView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .edgeSwipeBack()
-        .sheet(item: Binding(
-            get: { commentsPostId.map { CommentsSheetTarget(postId: $0) } },
-            set: { commentsPostId = $0?.postId }
-        )) { target in
-            CommentsSheetView(postId: target.postId, headline: "\(friend.displayName) · today")
-                .environment(store)
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: target.messageId,
+                subjectName: target.subjectName
+            )
+            .environment(auth)
+            .environment(moderation)
+        }
+        .sheet(isPresented: $showMutualsList) {
+            MutualFriendsListSheet(name: friend.displayName, mutuals: mutuals)
+        }
+        .alert("Block \(friend.displayName)?", isPresented: $showBlockConfirm) {
+            Button("Block", role: .destructive) {
+                Task { await blockFriend() }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Blocking removes the friendship and stops all messages and requests between you. They aren't notified.")
+        }
+        .confirmationDialog(
+            "Unfriend \(friend.displayName)?",
+            isPresented: $showUnfriendConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Unfriend", role: .destructive) {
+                Task { await unfriendNow() }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("You can add them again later. They aren't notified.")
         }
         .sheet(isPresented: $showCheerComposer) {
             CheerComposerView(friend: friend).environment(store)
@@ -224,13 +261,46 @@ struct FriendDetailView: View {
                 }
             }
         }
+        .task { await loadProfileTexture() }
+    }
+
+    // MARK: - Friend-control actions
+
+    /// Mutual friends + join date — the hero's relationship texture.
+    private func loadProfileTexture() async {
+        guard let remote = remoteProfile, let myId = myUserId else { return }
+        async let mutualsFetch = friendGraph.mutualFriends(with: remote.id, myUserId: myId)
+        async let joinedFetch = friendGraph.joinedDate(of: remote.id)
+        mutuals = await mutualsFetch
+        joinedDate = await joinedFetch
+    }
+
+    private func unfriendNow() async {
+        guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
+        isRelationshipWorking = true
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        await friendGraph.unfriend(remote, myUserId: myId)
+        await socialSync.refreshFriends()
+        isRelationshipWorking = false
+        dismiss()
+    }
+
+    private func blockFriend() async {
+        guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
+        isRelationshipWorking = true
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        await moderation.block(remote.id, myUserId: myId)
+        await friendGraph.load(myUserId: myId)
+        await socialSync.refreshFriends()
+        isRelationshipWorking = false
+        dismiss()
     }
 
     // MARK: - Hero
 
-    /// Compact hero: identity *and* the action row live inside the
-    /// signature-color band, so the page opens straight into content
-    /// instead of a tall header followed by floating buttons.
+    /// The poster hero: the friend's season cover (or header photo /
+    /// accent band) with their identity, season title, intention, and
+    /// the friend pill carved into it.
     @ViewBuilder
     private var hero: some View {
         VStack(spacing: 0) {
@@ -260,8 +330,15 @@ struct FriendDetailView: View {
                 Text(metaLine)
                     .font(.sans(12, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.82))
+
+                seasonTitleBlock
+                    .padding(.top, 10)
+
+                friendPillRow
+                    .padding(.top, 12)
             }
             .padding(.top, 8)
+            .padding(.horizontal, Theme.pageHorizontalPadding)
 
             actionRow
                 .padding(.horizontal, Theme.pageHorizontalPadding)
@@ -269,7 +346,13 @@ struct FriendDetailView: View {
                 .padding(.bottom, 18)
         }
         .frame(maxWidth: .infinity)
-        .background(heroBackground)
+        .background(
+            ProfilePosterBackground(
+                coverId: publishedCard?.coverId,
+                headerURL: headerPhotoURL,
+                accent: accent
+            )
+        )
     }
 
     /// The friend's custom header background, when they've set one.
@@ -279,48 +362,201 @@ struct FriendDetailView: View {
         liveFriend.headerURL ?? remoteProfile?.headerURL
     }
 
-    private var heroBackground: some View {
-        let hasPhoto = headerPhotoURL != nil
-        return ZStack {
-            accent
-            if let headerPhotoURL {
-                Color.clear
-                    .overlay {
-                        CachedImage(url: headerPhotoURL) { image in
-                            image.resizable().scaledToFill()
-                        } placeholder: {
-                            accent
-                        }
-                    }
-                    .clipped()
-                    .allowsHitTesting(false)
-            }
-            // A slightly deeper wash over a photo keeps the cream
-            // identity text and action buttons perfectly readable.
-            LinearGradient(
-                colors: hasPhoto
-                    ? [Color.black.opacity(0.48), Color.black.opacity(0.22), Color.black.opacity(0.30)]
-                    : [Color.black.opacity(0.34), Color.black.opacity(0.04), Color.black.opacity(0.10)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            // Warm cream lift at the very bottom so the hero melts into
-            // the page instead of cutting hard.
-            LinearGradient(
-                colors: [.clear, .clear, Theme.warmWheat.opacity(0.22)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-    }
-
+    /// Handle · joined · connected — the quiet identity facts.
     private var metaLine: String {
         var parts: [String] = []
-        if let season = shortSeasonName, let dayN = friend.currentSeasonDay {
-            parts.append("\(season) · day \(dayN)")
+        if let handle = remoteProfile?.handle { parts.append(handle) }
+        if let joinedDate {
+            parts.append("Joined \(joinedDate.formatted(.dateTime.month(.abbreviated).year()))")
         }
         parts.append(store.connectedDescription(friend))
         return parts.joined(separator: " · ")
+    }
+
+    /// The season title carved into the poster — big serif name,
+    /// "DAY N", and the owner's intention line.
+    @ViewBuilder
+    private var seasonTitleBlock: some View {
+        if let seasonName = shortSeasonName {
+            VStack(spacing: 5) {
+                Text(seasonName)
+                    .font(.serif(32, weight: .medium))
+                    .foregroundStyle(Theme.textCream)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                    .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 2)
+
+                if let day = publishedCard?.currentDay ?? friend.currentSeasonDay {
+                    Text(seasonDayLine(day))
+                        .font(.sans(10, weight: .semibold))
+                        .tracking(2)
+                        .foregroundStyle(Theme.textCream.opacity(0.85))
+                }
+
+                if let intention = publishedCard?.intention, !intention.isEmpty {
+                    Text("“\(intention)”")
+                        .font(.serifItalic(14, weight: .regular))
+                        .foregroundStyle(Theme.textCream.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .padding(.horizontal, 12)
+                }
+            }
+        }
+    }
+
+    private func seasonDayLine(_ day: Int) -> String {
+        if let length = publishedCard?.seasonLengthDays, length > 0 {
+            return "DAY \(day) OF \(length)"
+        }
+        return "DAY \(day)"
+    }
+
+    // MARK: Friend pill + mutuals
+
+    private var friendPillRow: some View {
+        VStack(spacing: 8) {
+            friendPill
+            if !mutuals.isEmpty {
+                mutualsButton
+            }
+        }
+    }
+
+    /// The honest relationship pill — Friends ✓ (tap to unfriend),
+    /// Add friend, Requested, or Accept request.
+    @ViewBuilder
+    private var friendPill: some View {
+        switch relationship {
+        case .friends, .isMe:
+            heroPillButton(icon: "checkmark", title: "Friends", filled: false) {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showUnfriendConfirm = true
+            }
+            .accessibilityLabel("Friends with \(friend.displayName). Tap for options.")
+        case .none:
+            heroPillButton(icon: "person.badge.plus", title: "Add friend", filled: true) {
+                guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                isRelationshipWorking = true
+                Task {
+                    await friendGraph.sendRequest(to: remote, myUserId: myId)
+                    isRelationshipWorking = false
+                }
+            }
+        case .requestSent:
+            heroPillLabel(icon: "hourglass", title: "Requested")
+        case .requestReceived:
+            heroPillButton(icon: "checkmark.circle", title: "Accept request", filled: true) {
+                guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
+                guard let request = friendGraph.incoming.first(where: { $0.profile.id == remote.id }) else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                isRelationshipWorking = true
+                Task {
+                    await friendGraph.accept(request, myUserId: myId)
+                    await socialSync.refreshFriends()
+                    isRelationshipWorking = false
+                }
+            }
+        }
+    }
+
+    private func heroPillButton(icon: String, title: String, filled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if isRelationshipWorking {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(filled ? Theme.textPrimary : Theme.textCream)
+                } else {
+                    Image(systemName: icon)
+                        .font(.sans(12, weight: .bold))
+                }
+                Text(title)
+                    .font(.sans(14, weight: .semibold))
+            }
+            .foregroundStyle(filled ? Theme.textPrimary : Theme.textCream)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 9)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(filled ? Theme.textCream : Color.white.opacity(0.16))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Theme.textCream.opacity(filled ? 0 : 0.45), lineWidth: 1)
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isRelationshipWorking)
+    }
+
+    private func heroPillLabel(icon: String, title: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.sans(12, weight: .semibold))
+            Text(title)
+                .font(.sans(14, weight: .semibold))
+        }
+        .foregroundStyle(Theme.textCream.opacity(0.8))
+        .padding(.horizontal, 22)
+        .padding(.vertical, 9)
+        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.10)))
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Theme.textCream.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    /// Overlapping mutual avatars + "N friends in common" — taps open
+    /// the full list.
+    private var mutualsButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showMutualsList = true
+        } label: {
+            HStack(spacing: 8) {
+                HStack(spacing: -8) {
+                    ForEach(Array(mutuals.prefix(3).enumerated()), id: \.element.id) { _, profile in
+                        mutualDisc(profile)
+                    }
+                }
+                Text("\(mutuals.count) friend\(mutuals.count == 1 ? "" : "s") in common")
+                    .font(.sans(12, weight: .medium))
+                    .foregroundStyle(Theme.textCream.opacity(0.9))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(mutuals.count) mutual friends. Tap to view.")
+    }
+
+    private func mutualDisc(_ profile: RemoteProfile) -> some View {
+        ZStack {
+            if let url = profile.photoURL {
+                CachedImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    mutualInitials(profile)
+                }
+            } else {
+                mutualInitials(profile)
+            }
+        }
+        .frame(width: 24, height: 24)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.8), lineWidth: 1.2))
+    }
+
+    private func mutualInitials(_ profile: RemoteProfile) -> some View {
+        ZStack {
+            Color(hex: RemoteIDMapper.accentHex(forRemoteId: profile.id))
+            Text(profile.initials)
+                .font(.sans(9, weight: .semibold))
+                .foregroundStyle(Theme.textCream)
+        }
     }
 
     private var shortSeasonName: String? {
@@ -354,6 +590,25 @@ struct FriendDetailView: View {
                     showSharingSettings = true
                 } label: {
                     Label("What \(friend.displayName) sees", systemImage: "eye")
+                }
+                if let remote = remoteProfile {
+                    Divider()
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        reportTarget = ReportTarget(
+                            reportedUserId: remote.id,
+                            messageId: nil,
+                            subjectName: friend.displayName
+                        )
+                    } label: {
+                        Label("Report \(friend.displayName)", systemImage: "flag")
+                    }
+                    Button(role: .destructive) {
+                        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                        showBlockConfirm = true
+                    } label: {
+                        Label("Block \(friend.displayName)", systemImage: "hand.raised")
+                    }
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -521,13 +776,47 @@ struct FriendDetailView: View {
                 fullChecklistCard
                 routinesCard
                 focusMilestoneRow
-                reactRow
             }
 
             if tier != .quiet {
                 exactPointsRow
                 rhythmFooter
             }
+        }
+    }
+
+    /// Milestone progress for the current season — the "this season"
+    /// strip under the hero. Only when their tier shares goal status
+    /// and a card with milestones was published.
+    @ViewBuilder
+    private var seasonProgressStrip: some View {
+        if tier != .quiet,
+           let published = publishedCard,
+           let total = published.milestonesTotal, total > 0 {
+            let done = published.milestonesDone ?? 0
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    sectionLabel("THIS SEASON")
+                    Spacer()
+                    Text("\(done) of \(total) milestones")
+                        .font(.sans(12, weight: .semibold))
+                        .foregroundStyle(done == total && total > 0 ? Theme.alertGreen : Theme.textPrimary.opacity(0.65))
+                }
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Theme.textPrimary.opacity(0.08))
+                        Capsule()
+                            .fill(accent)
+                            .frame(width: proxy.size.width * CGFloat(min(1, Double(done) / Double(max(1, total)))))
+                    }
+                }
+                .frame(height: 8)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(glanceBackground)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(done) of \(total) milestones reached this season")
         }
     }
 
@@ -967,60 +1256,30 @@ struct FriendDetailView: View {
         .background(card)
     }
 
-    // MARK: Full — react row
+    // MARK: - Past chapters
 
-    private var reactRow: some View {
-        let post = currentPost
-        let liked = post.map { store.isPostLikedByMe($0.id) } ?? false
-        return HStack(spacing: 10) {
-            reactPill(icon: liked ? "heart.fill" : "heart", title: "Like",
-                      tint: liked ? Color(hex: 0xED93B1) : Theme.textPrimary.opacity(0.8),
-                      enabled: post != nil) {
-                guard let post else { return }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                withAnimation(.easeInOut(duration: 0.18)) { store.toggleLike(postId: post.id) }
-            }
-            reactPill(icon: "bubble.right", title: "Comment",
-                      tint: Theme.textPrimary.opacity(0.8), enabled: post != nil) {
-                guard let post else { return }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                commentsPostId = post.id
-            }
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showCheerComposer = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "hands.clap.fill").font(.sans(13, weight: .semibold))
-                    Text("Cheer").font(.sans(13, weight: .semibold))
+    /// The friend's story season by season — a scrollable rail of
+    /// chapter posters built from their published season card. Quiet
+    /// friends see names + lengths only; Open / Full also see
+    /// milestones reached.
+    @ViewBuilder
+    private var chaptersBlock: some View {
+        let past = publishedCard?.pastSeasons ?? []
+        if !past.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionLabel("PAST CHAPTERS · \(past.count)")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(past) { chapter in
+                            PastSeasonChapterCard(
+                                chapter: chapter,
+                                showsMilestones: tier != .quiet
+                            )
+                        }
+                    }
                 }
-                .foregroundStyle(Theme.textCream)
-                .padding(.vertical, 11)
-                .frame(maxWidth: .infinity)
-                .background(Capsule(style: .continuous).fill(Theme.textPrimary))
-                .contentShape(Capsule(style: .continuous))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Cheer \(friend.displayName)")
         }
-    }
-
-    private func reactPill(icon: String, title: String, tint: Color, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.sans(13, weight: .medium)).foregroundStyle(tint)
-                Text(title).font(.sans(13, weight: .regular)).foregroundStyle(Theme.textPrimary.opacity(0.8))
-            }
-            .padding(.vertical, 11)
-            .frame(maxWidth: .infinity)
-            .background(Capsule(style: .continuous).fill(Color.white.opacity(0.75)))
-            .overlay(Capsule(style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 0.5))
-            .contentShape(Capsule(style: .continuous))
-            .opacity(enabled ? 1 : 0.5)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .accessibilityLabel(title)
     }
 
     // MARK: - US layer
@@ -1033,7 +1292,6 @@ struct FriendDetailView: View {
                 .foregroundStyle(Theme.textPrimary)
 
             togetherBlock
-            privatelyBlock
             sinceConnectedBlock
         }
     }
@@ -1133,108 +1391,6 @@ struct FriendDetailView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(card)
-    }
-
-    /// Messages + sharing settings, grouped into one card split by a
-    /// hairline — the cleaner "between you two" list from the redesign.
-    private var privatelyBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("PRIVATELY")
-            VStack(spacing: 0) {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showThread = true
-                } label: {
-                    HStack(spacing: 12) {
-                        ZStack(alignment: .topTrailing) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 11, style: .continuous).fill(accent.opacity(0.18))
-                                Image(systemName: "bubble.left.and.bubble.right.fill")
-                                    .font(.sans(16, weight: .semibold))
-                                    .foregroundStyle(accent)
-                            }
-                            .frame(width: 42, height: 42)
-                            if unreadFromFriend > 0 {
-                                Text("\(unreadFromFriend)")
-                                    .font(.sans(10, weight: .bold))
-                                    .foregroundStyle(Theme.textCream)
-                                    .frame(minWidth: 17, minHeight: 17)
-                                    .background(Circle().fill(Theme.alertRed))
-                                    .overlay(Circle().strokeBorder(Color.white.opacity(0.9), lineWidth: 1.5))
-                                    .offset(x: 5, y: -5)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Your messages")
-                                .font(.sans(15, weight: .semibold))
-                                .foregroundStyle(Theme.textPrimary)
-                            Text(privatePreview)
-                                .font(.sans(13, weight: .regular))
-                                .foregroundStyle(Theme.textPrimary.opacity(0.6))
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 4)
-                        Image(systemName: "chevron.right")
-                            .font(.sans(12, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary.opacity(0.3))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 11)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Your messages with \(friend.displayName)")
-
-                Rectangle().fill(Theme.textPrimary.opacity(0.07)).frame(height: 0.5)
-                    .padding(.horizontal, 12)
-
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showSharingSettings = true
-                } label: {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .fill(Theme.textPrimary.opacity(0.06))
-                            Image(systemName: "eye")
-                                .font(.sans(15, weight: .medium))
-                                .foregroundStyle(Theme.textPrimary.opacity(0.75))
-                        }
-                        .frame(width: 42, height: 42)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Sharing & connection")
-                                .font(.sans(15, weight: .medium))
-                                .foregroundStyle(Theme.textPrimary)
-                            Text("What \(friend.displayName) sees of you")
-                                .font(.sans(13, weight: .regular))
-                                .foregroundStyle(Theme.textPrimary.opacity(0.6))
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 4)
-                        Image(systemName: "chevron.right")
-                            .font(.sans(12, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary.opacity(0.3))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 11)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Sharing and connection settings")
-            }
-            .background(card)
-        }
-    }
-
-    private var privatePreview: String {
-        if let latest = store.latestShare(withFriendId: friend.id) {
-            let who = latest.authorId == store.currentUserId ? "You" : friend.displayName
-            if latest.isProof { return "\(who): sent a proof" }
-            if let c = latest.caption?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty {
-                return "\(who): \"\(c)\""
-            }
-        }
-        return "Share a proof or a quiet note"
     }
 
     private var sinceConnectedBlock: some View {
@@ -1348,6 +1504,104 @@ struct FriendDetailView: View {
         let kept = max(store.pactDaysKept(pact: pact, userId: store.currentUserId),
                        store.pactDaysKept(pact: pact, userId: themId))
         return "\(kept) days kept so far"
+    }
+}
+
+// MARK: - Mutual friends sheet
+
+/// The full "friends in common" list — a calm sheet of avatar rows
+/// opened from the hero's mutuals button.
+struct MutualFriendsListSheet: View {
+    let name: String
+    let mutuals: [RemoteProfile]
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.warmWheat.ignoresSafeArea()
+
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(mutuals.enumerated()), id: \.element.id) { idx, profile in
+                            if idx > 0 {
+                                Rectangle()
+                                    .fill(Theme.textPrimary.opacity(0.06))
+                                    .frame(height: 0.5)
+                                    .padding(.leading, 64)
+                            }
+                            mutualRow(profile)
+                        }
+                    }
+                    .background(Theme.paperCream)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 0.5)
+                    )
+                    .padding(.horizontal, Theme.pageHorizontalPadding)
+                    .padding(.top, 14)
+                    .padding(.bottom, 30)
+                }
+            }
+            .navigationTitle("In common with \(name)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.warmWheat, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(Theme.textPrimary)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func mutualRow(_ profile: RemoteProfile) -> some View {
+        HStack(spacing: 13) {
+            ZStack {
+                if let url = profile.photoURL {
+                    CachedImage(url: url) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        mutualRowInitials(profile)
+                    }
+                } else {
+                    mutualRowInitials(profile)
+                }
+            }
+            .frame(width: 40, height: 40)
+            .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(profile.displayName)
+                    .font(.sans(15, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if let handle = profile.handle {
+                    Text(handle)
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 10)
+    }
+
+    private func mutualRowInitials(_ profile: RemoteProfile) -> some View {
+        ZStack {
+            Color(hex: RemoteIDMapper.accentHex(forRemoteId: profile.id))
+            Text(profile.initials)
+                .font(.sans(15, weight: .semibold))
+                .foregroundStyle(Theme.textCream)
+        }
     }
 }
 

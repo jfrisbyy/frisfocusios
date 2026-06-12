@@ -73,6 +73,7 @@ final class SeasonSyncService {
     private static func slice(for key: Store.DataKey) -> String? {
         switch key {
         case .season: return "season"
+        case .pastSeasons: return "pastSeasons"
         case .tasks: return "tasks"
         case .todos: return "todos"
         case .logEntries: return "logEntries"
@@ -85,9 +86,13 @@ final class SeasonSyncService {
     }
 
     private static let allSlices = [
-        "season", "tasks", "todos", "logEntries",
+        "season", "pastSeasons", "tasks", "todos", "logEntries",
         "boosters", "habitTrains", "avoidanceItems", "avoidanceOccurrences"
     ]
+
+    /// Slices whose content feeds the public season card on the
+    /// profile row — flushing one republishes the card.
+    private static let seasonCardSlices: Set<String> = ["season", "pastSeasons"]
 
     // MARK: Lifecycle
 
@@ -115,6 +120,9 @@ final class SeasonSyncService {
 
         await pullRemote()
         await flushNow()
+        // Make sure friends see the freshest season card even when no
+        // slice needed flushing this launch.
+        await pushSeasonCard()
     }
 
     /// Stop syncing on sign-out. The local season stays put — it
@@ -198,6 +206,9 @@ final class SeasonSyncService {
         case "season":
             guard let value = try? decoder.decode(Season.self, from: data) else { return false }
             store.currentSeason = value
+        case "pastSeasons":
+            guard let value = try? decoder.decode([PastSeasonSummary].self, from: data) else { return false }
+            store.pastSeasons = value
         case "tasks":
             guard let value = try? decoder.decode([FFTask].self, from: data) else { return false }
             store.tasks = value
@@ -235,6 +246,7 @@ final class SeasonSyncService {
         }
         switch slice {
         case "season": return encode(store.currentSeason)
+        case "pastSeasons": return encode(store.pastSeasons)
         case "tasks": return encode(store.tasks)
         case "todos": return encode(store.todos)
         case "logEntries": return encode(store.logEntries)
@@ -265,6 +277,8 @@ final class SeasonSyncService {
         isFlushing = true
         defer { isFlushing = false }
 
+        let touchesSeasonCard = !pendingSlices.isDisjoint(with: Self.seasonCardSlices)
+
         for slice in pendingSlices {
             // The season slice carries the milestone media references —
             // make sure the files are up before the row points at them.
@@ -289,6 +303,48 @@ final class SeasonSyncService {
         }
 
         persistState()
+
+        if touchesSeasonCard {
+            await pushSeasonCard()
+        }
+    }
+
+    // MARK: Season card (public, friend-readable)
+
+    private nonisolated struct SeasonCardUpdate: Encodable, Sendable {
+        let seasonCard: String?
+        let updatedAt: String
+
+        enum CodingKeys: String, CodingKey {
+            case seasonCard = "season_card"
+            case updatedAt = "updated_at"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            if let seasonCard { try c.encode(seasonCard, forKey: .seasonCard) } else { try c.encodeNil(forKey: .seasonCard) }
+            try c.encode(updatedAt, forKey: .updatedAt)
+        }
+    }
+
+    /// Publish the friend-readable season card (cover, accent,
+    /// intention, season info, past chapters) onto the user's own
+    /// profile row, where every profile surface reads it. Best-effort
+    /// — the next flush retries naturally.
+    func pushSeasonCard() async {
+        guard let myUserId, let store else { return }
+        do {
+            try await supabase
+                .from("profiles")
+                .update(SeasonCardUpdate(
+                    seasonCard: store.mySeasonCard.encodedJSON(),
+                    updatedAt: SyncDates.iso(Date())
+                ))
+                .eq("id", value: myUserId)
+                .execute()
+        } catch {
+            print("[SeasonSync] season card push failed: \(error)")
+        }
     }
 
     // MARK: Media

@@ -29,11 +29,17 @@ private struct AvatarCropTarget: Identifiable {
 struct EditProfileView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(ProfileStore.self) private var profileStore
+    @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     @State private var name: String = ""
     @State private var username: String = ""
     @State private var originalUsername: String = ""
+
+    // Season look — how friends see this season on the profile poster.
+    @State private var seasonCoverId: String?
+    @State private var seasonAccentHex: String?
+    @State private var seasonIntention: String = ""
 
     @State private var phone: String = ""
     @State private var originalPhone: String = ""
@@ -75,11 +81,18 @@ struct EditProfileView: View {
         croppedHeader != nil || (!headerRemoved && currentHeaderURL != nil)
     }
 
-    /// The user's own signature color — the default band friends see
-    /// when no header photo is set.
+    /// The user's own signature color — the chosen season accent when
+    /// set, else the auto-assigned account accent.
     private var myAccent: Color {
+        if let seasonAccentHex { return Color(hex: seasonAccentHex) }
         if let myId { return Color(hex: RemoteIDMapper.accentHex(forRemoteId: myId)) }
         return Theme.textPrimary
+    }
+
+    /// The accent automatically assigned to this account — the
+    /// "default" swatch in the accent picker.
+    private var autoAccentHex: String? {
+        myId.map { RemoteIDMapper.accentHex(forRemoteId: $0) }
     }
 
     private var initials: String {
@@ -102,6 +115,7 @@ struct EditProfileView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 28) {
                 headerSection
+                seasonLookSection
                 nameField
                 usernameField
                 phoneField
@@ -245,7 +259,9 @@ struct EditProfileView: View {
 
     @ViewBuilder
     private var headerImage: some View {
-        if let croppedHeader {
+        if let kind = seasonCoverId.flatMap(SeasonCoverKind.init(rawValue:)) {
+            SeasonCoverView(kind: kind)
+        } else if let croppedHeader {
             Image(uiImage: croppedHeader)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -256,6 +272,176 @@ struct EditProfileView: View {
                 myAccent
             }
         }
+    }
+
+    // MARK: - Your season look
+
+    /// How friends see this season on the profile poster: the cover
+    /// scene (or photo / accent band), the chosen accent color, and a
+    /// short intention line. Saved with the rest of the profile.
+    private var seasonLookSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("YOUR SEASON LOOK")
+                .font(.sans(11, weight: .semibold))
+                .tracking(1.5)
+                .foregroundStyle(Theme.textPrimary.opacity(0.5))
+
+            Text("The scene, color, and line friends see behind “\(store.currentSeason.name.replacingOccurrences(of: " Season", with: ""))” on your profile.")
+                .font(.sans(12, weight: .regular))
+                .foregroundStyle(Theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Cover rail — photo/color first, then the curated scenes.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    photoCoverOption
+                    ForEach(SeasonCoverKind.allCases) { kind in
+                        coverOption(kind)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+
+            // Accent swatches.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("YOUR COLOR")
+                    .font(.sans(10, weight: .semibold))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 40), spacing: 10)], spacing: 10) {
+                    ForEach(SeasonAccentPalette.options, id: \.self) { hex in
+                        accentSwatch(hex)
+                    }
+                }
+            }
+            .padding(.top, 4)
+
+            // Intention line.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("THIS SEASON I’M…")
+                    .font(.sans(10, weight: .semibold))
+                    .tracking(1.5)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                TextField("A short line about why this season", text: $seasonIntention, axis: .vertical)
+                    .font(.serifItalic(15, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1...2)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 13)
+                    .background(Theme.paperCream)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Theme.textPrimary.opacity(0.1), lineWidth: 1)
+                    )
+                    .onChange(of: seasonIntention) { _, newValue in
+                        if newValue.count > 80 { seasonIntention = String(newValue.prefix(80)) }
+                    }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    /// The "no cover" option — your header photo when set, else the
+    /// plain accent band.
+    private var photoCoverOption: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeOut(duration: 0.2)) { seasonCoverId = nil }
+        } label: {
+            VStack(spacing: 6) {
+                ZStack {
+                    myAccent
+                    if let croppedHeader {
+                        Image(uiImage: croppedHeader)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else if !headerRemoved, let url = currentHeaderURL {
+                        CachedImage(url: url) { image in
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            myAccent
+                        }
+                    }
+                }
+                .frame(width: 96, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(
+                            seasonCoverId == nil ? Theme.textPrimary : Theme.textPrimary.opacity(0.1),
+                            lineWidth: seasonCoverId == nil ? 2 : 1
+                        )
+                )
+
+                Text(hasCustomHeader ? "Your photo" : "Your color")
+                    .font(.sans(11, weight: seasonCoverId == nil ? .semibold : .regular))
+                    .foregroundStyle(seasonCoverId == nil ? Theme.textPrimary : Theme.textSecondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Use your photo or color as the profile background")
+        .accessibilityAddTraits(seasonCoverId == nil ? [.isSelected] : [])
+    }
+
+    private func coverOption(_ kind: SeasonCoverKind) -> some View {
+        let isSelected = seasonCoverId == kind.rawValue
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeOut(duration: 0.2)) { seasonCoverId = kind.rawValue }
+        } label: {
+            VStack(spacing: 6) {
+                SeasonCoverView(kind: kind, animated: false)
+                    .frame(width: 96, height: 60)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(
+                                isSelected ? Theme.textPrimary : Theme.textPrimary.opacity(0.1),
+                                lineWidth: isSelected ? 2 : 1
+                            )
+                    )
+
+                Text(kind.displayName)
+                    .font(.sans(11, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textSecondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(kind.displayName) cover")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    private func accentSwatch(_ hex: String) -> some View {
+        let isSelected = (seasonAccentHex ?? autoAccentHex) == hex
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeOut(duration: 0.15)) {
+                seasonAccentHex = hex == autoAccentHex ? nil : hex
+            }
+        } label: {
+            ZStack {
+                Circle().fill(Color(hex: hex))
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: 36, height: 36)
+            .overlay(
+                Circle().strokeBorder(
+                    isSelected ? Theme.textPrimary.opacity(0.6) : Theme.textPrimary.opacity(0.12),
+                    lineWidth: isSelected ? 2 : 1
+                )
+            )
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Accent color")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private var photoPicker: some View {
@@ -520,6 +706,9 @@ struct EditProfileView: View {
             phone = profileStore.myPhone ?? ""
             originalPhone = phone
             nearYouOn = profileStore.nearYouEnabled
+            seasonCoverId = store.currentSeason.coverId
+            seasonAccentHex = store.currentSeason.accentHex
+            seasonIntention = store.currentSeason.intention ?? ""
         }
     }
 
@@ -587,6 +776,14 @@ struct EditProfileView: View {
             guard phoneOk else { return }
         }
 
+        // The season look writes through the season slice, which also
+        // republishes the public season card for friends.
+        store.setSeasonLook(
+            coverId: seasonCoverId,
+            accentHex: seasonAccentHex,
+            intention: seasonIntention
+        )
+
         let ok = await profileStore.save(
             name: name,
             username: username.isEmpty ? nil : username,
@@ -604,5 +801,6 @@ struct EditProfileView: View {
         EditProfileView()
             .environment(AuthManager())
             .environment(ProfileStore())
+            .environment(Store())
     }
 }

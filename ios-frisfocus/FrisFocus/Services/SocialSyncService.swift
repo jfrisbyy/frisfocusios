@@ -200,7 +200,7 @@ final class SocialSyncService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select("id, email, name, username, avatar_url, header_url, season_card")
                 .in("id", values: Array(missing))
                 .execute()
                 .value
@@ -210,6 +210,29 @@ final class SocialSyncService {
             }
         } catch {
             print("[SocialSync] profile fetch failed: \(error)")
+        }
+        for id in remoteIds { _ = localId(forRemote: id) }
+    }
+
+    /// Re-fetch these profiles unconditionally (overwriting the cache)
+    /// so live-updating fields — the season card, avatar, header —
+    /// stay fresh across a session. Used by the friends refresh.
+    func refreshProfiles(remoteIds: [String]) async {
+        let ids = Array(Set(remoteIds))
+        guard !ids.isEmpty else { return }
+        do {
+            let rows: [RemoteProfile] = try await supabase
+                .from("profiles")
+                .select("id, email, name, username, avatar_url, header_url, season_card")
+                .in("id", values: ids)
+                .execute()
+                .value
+            for row in rows {
+                profilesByRemote[row.id] = row
+                _ = localId(forRemote: row.id)
+            }
+        } catch {
+            print("[SocialSync] profile refresh failed: \(error)")
         }
         for id in remoteIds { _ = localId(forRemote: id) }
     }
@@ -252,7 +275,7 @@ final class SocialSyncService {
                 let other = row.userA == myUserId ? row.userB : row.userA
                 return (other, SyncDates.parse(row.createdAt))
             }
-            await ensureProfiles(remoteIds: counterparts.map { $0.id })
+            await refreshProfiles(remoteIds: counterparts.map { $0.id })
 
             let existingById = Dictionary(store.friends.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             var mapped: [Friend] = []
@@ -270,6 +293,13 @@ final class SocialSyncService {
                 friend.initials = profile.initials
                 friend.avatarURL = profile.photoURL
                 friend.headerURL = profile.headerURL
+                // Their published season card drives the poster profile:
+                // chosen accent, season name + day, intention, chapters.
+                let card = profile.card
+                friend.seasonCard = card
+                friend.currentSeasonName = card?.seasonName ?? friend.currentSeasonName
+                friend.currentSeasonDay = card?.currentDay ?? friend.currentSeasonDay
+                friend.accentColorHex = card?.accentHex ?? RemoteIDMapper.accentHex(forRemoteId: remote)
                 if friend.connectedAt == nil { friend.connectedAt = since }
                 friend.sharesWithMe = .full
                 mapped.append(friend)

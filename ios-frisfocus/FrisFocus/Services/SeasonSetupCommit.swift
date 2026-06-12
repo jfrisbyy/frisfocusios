@@ -156,6 +156,9 @@ extension Store {
         }
 
         // The freeze. Log history, to-dos, and notes stay untouched.
+        // The season being replaced is archived as a past chapter first
+        // so profile pages can tell the story season by season.
+        archiveCurrentSeasonAsChapter()
         currentSeason = season
         tasks = newTasks
         avoidanceItems = newNegatives
