@@ -41,7 +41,8 @@ final class FocusBlockingService {
         /// User declined Screen Time access.
         case denied
         /// Family Controls can't run here (e.g. the simulator). The
-        /// product flow still works; blocking is demo-only.
+        /// product flow still works; real shielding takes effect on
+        /// a physical iPhone.
         case unavailable
     }
 
@@ -96,8 +97,24 @@ final class FocusBlockingService {
     var summaryLine: String {
         guard isEnabled, hasSelection else { return "No apps silenced" }
         let n = blockedItemCount
-        let base = "\(n) \(n == 1 ? "thing" : "things") silenced"
-        return canBlockForReal ? base : "\(base) · demo"
+        return "\(n) \(n == 1 ? "thing" : "things") silenced"
+    }
+
+    /// True when the user has apps to silence but hasn't yet granted the
+    /// Screen Time approval needed to actually block them. Drives the
+    /// "Tap to allow blocking" prompt at session start.
+    var needsPermission: Bool {
+        isEnabled && hasSelection && authStatus == .notDetermined
+    }
+
+    /// Ensure we hold Screen Time approval before a session begins —
+    /// asks once if it's never been requested. Safe to call anytime;
+    /// no-op when already approved, denied, or unavailable.
+    func ensureAuthorizedForSessionStart() async {
+        guard isEnabled, hasSelection else { return }
+        if authStatus == .notDetermined {
+            await requestAuthorization()
+        }
     }
 
     // MARK: - Authorization
@@ -123,8 +140,8 @@ final class FocusBlockingService {
             refreshAuthStatus()
         } catch {
             // On the simulator (and when the entitlement isn't present)
-            // this throws — fall back to demo mode rather than blocking
-            // the user from continuing.
+            // this throws — mark it unavailable so the flow keeps working
+            // (real shielding takes effect on a physical iPhone).
             print("[FocusBlocking] authorization failed: \(error)")
             authStatus = .unavailable
         }
@@ -137,7 +154,7 @@ final class FocusBlockingService {
 
     /// Apply the shield for the duration of a focus block. No-op when
     /// disabled, empty, or unauthorized (the running screen still shows
-    /// the demo summary).
+    /// the silenced-apps summary).
     func beginShielding() {
         guard isEnabled, hasSelection else { return }
         #if canImport(FamilyControls)

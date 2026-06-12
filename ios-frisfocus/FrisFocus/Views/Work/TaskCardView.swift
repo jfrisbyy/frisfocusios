@@ -265,8 +265,7 @@ struct TaskCardView: View {
         .alert("Editing a previous day", isPresented: $showPastEditConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Edit this day") {
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                store.setTaskCompleted(task, completed: !isCompleted, on: store.displayedDay)
+                confirmPastDayEdit()
             }
         } message: {
             Text("You're changing a past day, not today. The day's score and history will update.")
@@ -297,7 +296,7 @@ struct TaskCardView: View {
             FocusModeView(
                 sessionLength: 45 * 60,
                 label: task.title,
-                linkedTaskId: task.id
+                attachments: [FocusTaskAttachment(taskId: task.id, shared: false)]
             )
         }
         .sheet(isPresented: $showLogAmount) {
@@ -313,6 +312,12 @@ struct TaskCardView: View {
             )
             .environment(store)
         }
+    }
+
+    private func confirmPastDayEdit() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let newValue = !isCompleted
+        store.setTaskCompleted(task, completed: newValue, on: store.displayedDay)
     }
 
     // MARK: - Checkbox

@@ -25,15 +25,18 @@ struct SharedFocusModeView: View {
     let sessionLength: TimeInterval
     let label: String?
     let participantFriendIds: [UUID]
+    let attachments: [FocusTaskAttachment]
 
     init(
         sessionLength: TimeInterval,
         label: String? = nil,
-        participantFriendIds: [UUID]
+        participantFriendIds: [UUID],
+        attachments: [FocusTaskAttachment] = []
     ) {
         self.sessionLength = sessionLength
         self.label = label
         self.participantFriendIds = participantFriendIds
+        self.attachments = attachments
     }
 
     // MARK: - State
@@ -57,6 +60,8 @@ struct SharedFocusModeView: View {
     /// Tracks whether we've already started this view's local F1
     /// session so a re-render doesn't start a second one.
     @State private var didStart: Bool = false
+    /// Drives the mid-session invite sheet.
+    @State private var showInvite: Bool = false
 
     var body: some View {
         ZStack {
@@ -82,6 +87,25 @@ struct SharedFocusModeView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("End grove")
                     Spacer()
+                    if !store.groveInvitableFriends.isEmpty {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            showInvite = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "person.badge.plus")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text("Invite")
+                                    .font(.sans(12, weight: .semibold))
+                            }
+                            .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(Color.white.opacity(0.45)))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Invite a friend to the grove")
+                    }
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 10)
@@ -110,6 +134,16 @@ struct SharedFocusModeView: View {
                     Text("of \(Int(sessionLength / 60)) minutes · together")
                         .font(.serifItalic(13))
                         .foregroundStyle(Theme.textPrimary.opacity(0.55))
+
+                    if !attachments.isEmpty || !friendSharedTasks.isEmpty {
+                        FocusTaskTrayView(
+                            attachments: attachments,
+                            friendTasks: friendSharedTasks,
+                            onToggle: { store.publishMyGroveSharedTasks() }
+                        )
+                        .padding(.horizontal, 18)
+                        .padding(.top, 14)
+                    }
                 }
                 .padding(.bottom, 36)
             }
@@ -136,6 +170,14 @@ struct SharedFocusModeView: View {
         .sheet(item: $nudgeTarget) { friend in
             CheerComposerView(friend: friend)
         }
+        .sheet(isPresented: $showInvite) {
+            GroveInviteSheet()
+        }
+    }
+
+    /// Friends' shared tasks for the active block, excluding mine.
+    private var friendSharedTasks: [GroveSharedTask] {
+        store.groveSharedTasks.filter { $0.userId != store.currentUserId }
     }
 
     // MARK: - Grove projection
@@ -159,6 +201,16 @@ struct SharedFocusModeView: View {
     /// block + presence array. Me first (depth 0, centered); friends
     /// fanned out by depth — first friend mid-left, second mid-right,
     /// third back.
+    /// Friend ids currently in the grove — derived from the live block so
+    /// mid-session invites appear immediately; falls back to the initial
+    /// roster before the block exists.
+    private var currentFriendIds: [UUID] {
+        if let block = store.activeSharedFocusBlock {
+            return block.participantIds.filter { $0 != store.currentUserId }
+        }
+        return participantFriendIds
+    }
+
     private var groveParticipants: [GroveParticipant] {
         var out: [GroveParticipant] = []
 
@@ -190,7 +242,7 @@ struct SharedFocusModeView: View {
             (1, 0.82, 73),
             (2, 0.50, 109)
         ]
-        for (i, fid) in participantFriendIds.prefix(3).enumerated() {
+        for (i, fid) in currentFriendIds.prefix(3).enumerated() {
             guard let friend = store.friends.first(where: { $0.id == fid }) else { continue }
             let presence = store.focusPresences.first(where: { $0.userId == fid })
             let tier = presence?.leafTier ?? .full
@@ -256,6 +308,7 @@ struct SharedFocusModeView: View {
             )
         }
         publishMyPresence()
+        store.publishMyGroveSharedTasks()
         blocking.beginShielding()
     }
 

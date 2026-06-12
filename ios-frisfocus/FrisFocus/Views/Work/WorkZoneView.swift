@@ -26,7 +26,7 @@ struct WorkZoneView: View {
     @State private var showFocusGrove: Bool = false
     @State private var pendingFocusDuration: TimeInterval = 45 * 60
     @State private var pendingFocusLabel: String? = nil
-    @State private var pendingFocusTaskId: UUID? = nil
+    @State private var pendingFocusAttachments: [FocusTaskAttachment] = []
     @State private var pendingGroveFriendIds: [UUID] = []
 
     var body: some View {
@@ -96,10 +96,10 @@ struct WorkZoneView: View {
                 .environment(store)
         }
         .sheet(isPresented: $showFocusStart) {
-            FocusStartSheet { duration, label, taskId in
+            FocusStartSheet { duration, label, attachments in
                 pendingFocusDuration = duration
                 pendingFocusLabel = label
-                pendingFocusTaskId = taskId
+                pendingFocusAttachments = attachments
                 // Defer the full-screen cover by a tick so the start
                 // sheet finishes dismissing before the focus scene
                 // pushes on top of it.
@@ -114,14 +114,15 @@ struct WorkZoneView: View {
             FocusModeView(
                 sessionLength: pendingFocusDuration,
                 label: pendingFocusLabel,
-                linkedTaskId: pendingFocusTaskId
+                attachments: pendingFocusAttachments
             )
         }
         .sheet(isPresented: $showFocusTogether) {
-            FocusTogetherSheet { friendIds, duration, lbl in
+            FocusTogetherSheet { friendIds, duration, lbl, attachments in
                 pendingGroveFriendIds = friendIds
                 pendingFocusDuration = duration
                 pendingFocusLabel = lbl
+                pendingFocusAttachments = attachments
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     showFocusGrove = true
                 }
@@ -133,7 +134,8 @@ struct WorkZoneView: View {
             SharedFocusModeView(
                 sessionLength: pendingFocusDuration,
                 label: pendingFocusLabel,
-                participantFriendIds: pendingGroveFriendIds
+                participantFriendIds: pendingGroveFriendIds,
+                attachments: pendingFocusAttachments
             )
         }
     }

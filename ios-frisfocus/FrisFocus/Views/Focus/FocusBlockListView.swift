@@ -6,7 +6,7 @@
 //  Apple's official `FamilyActivityPicker` (the only way to choose real
 //  apps — their tokens are opaque and can't be built by hand) behind the
 //  app's warm paper aesthetic, with a first-run Screen Time explainer and
-//  an honest "demo only" note where OS-level blocking can't take effect.
+//  a clear "tap to allow blocking" prompt until approval is granted.
 //
 
 import SwiftUI
@@ -141,9 +141,9 @@ struct FocusBlockListView: View {
     private var authNote: String {
         switch blocking.authStatus {
         case .approved: return ""
-        case .denied: return "Screen Time access is off — demo only"
-        case .notDetermined: return "We'll ask for Screen Time access"
-        case .unavailable: return "Demo only here — real blocking runs on your iPhone"
+        case .denied: return "Screen Time access is off — tap to allow blocking"
+        case .notDetermined: return "Tap to allow blocking"
+        case .unavailable: return "Real blocking runs on your iPhone"
         }
     }
 

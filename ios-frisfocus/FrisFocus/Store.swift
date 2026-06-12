@@ -214,6 +214,11 @@ final class Store {
     /// here are seeded / simulated locally.
     var focusPresences: [FocusPresence] = []
 
+    /// Friends' shared tasks in the active grove, relayed live so the
+    /// task panel can show each participant's published to-dos and their
+    /// check-off progress. Never includes private tasks.
+    var groveSharedTasks: [GroveSharedTask] = []
+
     /// Groves planned for later (optionally recurring). Persisted
     /// locally; each schedules a local reminder + invite pushes.
     var scheduledGroves: [ScheduledGrove] = [] { didSet { markDirty(.scheduledGroves) } }
@@ -754,14 +759,16 @@ final class Store {
     func startFocusSession(
         plannedDuration: TimeInterval,
         label: String? = nil,
-        linkedTaskId: UUID? = nil
+        linkedTaskId: UUID? = nil,
+        attachments: [FocusTaskAttachment] = []
     ) -> FocusSession {
-        let session = FocusSession(
+        var session = FocusSession(
             label: label?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true ? nil : label,
             startedAt: Date(),
             plannedDuration: plannedDuration,
             linkedTaskId: linkedTaskId
         )
+        session.attachments = attachments
         activeFocusSession = session
         return session
     }
@@ -798,15 +805,9 @@ final class Store {
         }
         session.endedAt = date
 
-        // Credit the linked task only on a clean block — and only if
-        // it isn't already completed today (`completeTask` guards
-        // against double-counting on its own, but checking here keeps
-        // the intent legible).
-        if session.clean, let linkedId = session.linkedTaskId,
-           let task = personalTask(by: linkedId),
-           !hasLogEntryToday(forTaskId: linkedId) {
-            completeTask(task)
-        }
+        // Tasks are credited only when the user checks them off during
+        // the session — never auto-credited on a clean block — so a
+        // completion is never double-counted.
 
         focusSessions.append(session)
         activeFocusSession = nil
@@ -894,6 +895,55 @@ final class Store {
     /// sharing settings or presence.
     var sharedFocusInviteCandidates: [Friend] {
         friends
+    }
+
+    /// Invite another friend into the *running* grove. Adds them to the
+    /// active block's roster (respecting the 3-friend cap), seeds a soft
+    /// `.invited` presence so their waiting tree appears, and relays the
+    /// invite so their device can join. No-op if already in or capped.
+    func inviteFriendToActiveGrove(_ friendId: UUID) {
+        guard var block = activeSharedFocusBlock else { return }
+        let friendCount = block.participantIds.filter { $0 != currentUserId }.count
+        guard friendCount < 3 else { return }
+        guard !block.participantIds.contains(friendId) else { return }
+        block.participantIds.append(friendId)
+        activeSharedFocusBlock = block
+        if !focusPresences.contains(where: { $0.userId == friendId }) {
+            focusPresences.append(
+                FocusPresence(
+                    blockId: block.id,
+                    userId: friendId,
+                    state: .invited,
+                    leafTier: .full,
+                    updatedAt: Date()
+                )
+            )
+        }
+        social?.groveFriendInvited(blockId: block.id, friendId: friendId)
+    }
+
+    /// Friends not yet in the active grove who can still be invited
+    /// mid-session (cap of 3 friends total).
+    var groveInvitableFriends: [Friend] {
+        guard let block = activeSharedFocusBlock else { return [] }
+        let current = Set(block.participantIds)
+        let friendCount = block.participantIds.filter { $0 != currentUserId }.count
+        guard friendCount < 3 else { return [] }
+        return friends.filter { !current.contains($0.id) }
+    }
+
+    /// Publish my shared (non-private) attached tasks + their done state
+    /// to the grove so friends see them live. Pulls titles + completion
+    /// from the current session and task log. Private tasks are skipped.
+    func publishMyGroveSharedTasks() {
+        guard let block = activeSharedFocusBlock,
+              let session = activeFocusSession else { return }
+        let shared = session.attachments.filter { $0.shared }
+        let wire: [(taskId: UUID, title: String, done: Bool)] = shared.compactMap { att in
+            guard let task = personalTask(by: att.taskId) else { return nil }
+            return (att.taskId, task.title, hasLogEntryToday(forTaskId: att.taskId))
+        }
+        social?.groveSharedTasksChanged(blockId: block.id, tasks: wire)
     }
 }
 

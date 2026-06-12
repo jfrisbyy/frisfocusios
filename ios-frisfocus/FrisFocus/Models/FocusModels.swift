@@ -29,7 +29,12 @@ struct FocusSession: Identifiable, Codable {
     var plannedDuration: TimeInterval
     var endedAt: Date?
     var leaves: [FocusLeave] = []
+    /// Legacy single linked task. Kept for decoding older sessions; new
+    /// sessions use `attachments`. No longer auto-credited on completion.
     var linkedTaskId: UUID?
+    /// Personal tasks attached to this session, each flagged shared /
+    /// private. Checked off manually during the session.
+    var attachments: [FocusTaskAttachment] = []
 
     /// A clean block has no real leaves — the only way to keep every
     /// canopy leaf. Clean blocks also credit a linked task.

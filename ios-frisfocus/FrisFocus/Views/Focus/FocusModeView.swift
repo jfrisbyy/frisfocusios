@@ -30,17 +30,17 @@ struct FocusModeView: View {
     let sessionLength: TimeInterval
     /// Optional label shown in the eyebrow ("FOCUS · {label}").
     let label: String?
-    /// Optional personal task to credit on a clean block.
-    let linkedTaskId: UUID?
+    /// Personal tasks attached to this session, checked off manually.
+    let attachments: [FocusTaskAttachment]
 
     init(
         sessionLength: TimeInterval = 45 * 60,
         label: String? = nil,
-        linkedTaskId: UUID? = nil
+        attachments: [FocusTaskAttachment] = []
     ) {
         self.sessionLength = sessionLength
         self.label = label
-        self.linkedTaskId = linkedTaskId
+        self.attachments = attachments
     }
 
     // MARK: - State
@@ -148,6 +148,12 @@ struct FocusModeView: View {
                     Text("of \(Int(sessionLength / 60)) minutes")
                         .font(.serifItalic(13))
                         .foregroundStyle(Theme.textPrimary.opacity(0.55))
+
+                    if !attachments.isEmpty {
+                        FocusTaskTrayView(attachments: attachments, friendTasks: [])
+                            .padding(.horizontal, 18)
+                            .padding(.top, 14)
+                    }
                 }
                 .padding(.bottom, 36)
             }
@@ -323,9 +329,7 @@ struct FocusModeView: View {
                     .font(.serif(26, weight: .regular))
                     .foregroundStyle(Theme.textPrimary)
                 Text(completedClean
-                     ? (linkedTaskId != nil
-                        ? "Block credited to your task."
-                        : "Every leaf stayed on the tree.")
+                     ? "Every leaf stayed on the tree."
                      : "\(completedLeafCount) leaf\(completedLeafCount == 1 ? "" : "ves") fell — the tree's still standing."
                 )
                 .font(.serifItalic(14))
@@ -392,7 +396,7 @@ struct FocusModeView: View {
             let started = store.startFocusSession(
                 plannedDuration: sessionLength,
                 label: label,
-                linkedTaskId: linkedTaskId
+                attachments: attachments
             )
             startedAt = started.startedAt
             FocusActivityManager.shared.start(

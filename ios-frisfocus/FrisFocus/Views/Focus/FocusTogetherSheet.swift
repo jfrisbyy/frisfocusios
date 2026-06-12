@@ -17,14 +17,17 @@ struct FocusTogetherSheet: View {
     @Environment(Store.self) private var store
     @Environment(FocusBlockingService.self) private var blocking
 
-    /// Hand-off to the host: (selected friend ids, duration in seconds, optional label).
-    let onStart: ([UUID], TimeInterval, String?) -> Void
+    /// Hand-off to the host: (selected friend ids, duration in seconds, optional label, attached tasks).
+    let onStart: ([UUID], TimeInterval, String?, [FocusTaskAttachment]) -> Void
 
     @State private var selectedFriendIds: Set<UUID> = []
     @State private var selectedMinutes: Int = 45
     @State private var customMinutes: Int = 30
     @State private var useCustom: Bool = false
     @State private var label: String = ""
+    /// Ordered attached task ids and which are shared with the grove.
+    @State private var selectedTaskIds: [UUID] = []
+    @State private var sharedTaskIds: Set<UUID> = []
     @State private var showBlockList = false
     @State private var showSchedule = false
     @State private var showHistory = false
@@ -79,6 +82,18 @@ struct FocusTogetherSheet: View {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .fill(Theme.warmWheat)
                         )
+
+                    if !store.tasks.isEmpty {
+                        sectionHeader("Attach tasks (optional)")
+                        Text("Check them off during the session. Tap the share toggle to let the grove see one.")
+                            .font(.serifItalic(13))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        VStack(spacing: 6) {
+                            ForEach(store.tasks) { task in
+                                taskRow(task)
+                            }
+                        }
+                    }
 
                     sectionHeader("Silence apps")
                     Button {
@@ -263,6 +278,67 @@ struct FocusTogetherSheet: View {
     }
 
     @ViewBuilder
+    private func taskRow(_ task: FFTask) -> some View {
+        let isSelected = selectedTaskIds.contains(task.id)
+        let isShared = sharedTaskIds.contains(task.id)
+        VStack(spacing: 0) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                if isSelected {
+                    selectedTaskIds.removeAll { $0 == task.id }
+                    sharedTaskIds.remove(task.id)
+                } else {
+                    selectedTaskIds.append(task.id)
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(isSelected ? Theme.alertGreen : Theme.textPrimary.opacity(0.3))
+                    Text(task.title)
+                        .font(.serif(15, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    if isSelected {
+                        sharePill(isShared: isShared, taskId: task.id)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? Theme.alertGreen.opacity(0.10) : Theme.warmWheat)
+        )
+    }
+
+    @ViewBuilder
+    private func sharePill(isShared: Bool, taskId: UUID) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if isShared { sharedTaskIds.remove(taskId) } else { sharedTaskIds.insert(taskId) }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: isShared ? "person.2.fill" : "lock.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(isShared ? "Shared" : "Private")
+                    .font(.sans(10, weight: .semibold))
+            }
+            .foregroundStyle(isShared ? Theme.warmWheat : Theme.textPrimary.opacity(0.6))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(isShared ? Theme.textPrimary : Theme.textPrimary.opacity(0.08))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
     private func durationChip(_ m: Int, selected: Bool, action: @escaping () -> Void) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -324,7 +400,13 @@ struct FocusTogetherSheet: View {
             .map(\.id)
             .filter { selectedFriendIds.contains($0) }
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        onStart(ordered, duration, trimmed.isEmpty ? nil : trimmed)
-        dismiss()
+        let attachments = selectedTaskIds.map {
+            FocusTaskAttachment(taskId: $0, shared: sharedTaskIds.contains($0))
+        }
+        Task {
+            await blocking.ensureAuthorizedForSessionStart()
+            onStart(ordered, duration, trimmed.isEmpty ? nil : trimmed, attachments)
+            dismiss()
+        }
     }
 }

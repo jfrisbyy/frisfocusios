@@ -17,13 +17,15 @@ struct FocusStartSheet: View {
     @Environment(Store.self) private var store
     @Environment(FocusBlockingService.self) private var blocking
 
-    let onStart: (TimeInterval, String?, UUID?) -> Void
+    let onStart: (TimeInterval, String?, [FocusTaskAttachment]) -> Void
 
     @State private var selectedMinutes: Int = 45
     @State private var customMinutes: Int = 30
     @State private var useCustom: Bool = false
     @State private var label: String = ""
-    @State private var linkedTaskId: UUID? = nil
+    /// Ordered list of attached task ids — preserves tap order in the
+    /// running screen's task tray.
+    @State private var selectedTaskIds: [UUID] = []
     @State private var showBlockList = false
 
     private let presets: [Int] = [25, 45, 60]
@@ -68,8 +70,8 @@ struct FocusStartSheet: View {
                     silenceRow
 
                     if !store.tasks.isEmpty {
-                        sectionHeader("Link a task (optional)")
-                        Text("A clean block credits the task once for today.")
+                        sectionHeader("Attach tasks (optional)")
+                        Text("Check them off yourself during the session — they count toward your day.")
                             .font(.serifItalic(13))
                             .foregroundStyle(Theme.textPrimary.opacity(0.55))
                         VStack(spacing: 6) {
@@ -162,10 +164,14 @@ struct FocusStartSheet: View {
 
     @ViewBuilder
     private func taskRow(_ task: FFTask) -> some View {
-        let isSelected = linkedTaskId == task.id
+        let isSelected = selectedTaskIds.contains(task.id)
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            linkedTaskId = isSelected ? nil : task.id
+            if isSelected {
+                selectedTaskIds.removeAll { $0 == task.id }
+            } else {
+                selectedTaskIds.append(task.id)
+            }
         } label: {
             HStack(spacing: 10) {
                 Circle()
@@ -227,7 +233,12 @@ struct FocusStartSheet: View {
         let minutes = useCustom ? customMinutes : selectedMinutes
         let duration = TimeInterval(max(1, minutes) * 60)
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        onStart(duration, trimmed.isEmpty ? nil : trimmed, linkedTaskId)
-        dismiss()
+        // Solo sessions have no audience, so every attachment is private.
+        let attachments = selectedTaskIds.map { FocusTaskAttachment(taskId: $0, shared: false) }
+        Task {
+            await blocking.ensureAuthorizedForSessionStart()
+            onStart(duration, trimmed.isEmpty ? nil : trimmed, attachments)
+            dismiss()
+        }
     }
 }

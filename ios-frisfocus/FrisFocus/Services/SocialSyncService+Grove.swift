@@ -59,6 +59,20 @@ private nonisolated struct FocusBlockEndUpdate: Encodable, Sendable {
     }
 }
 
+private nonisolated struct FocusSharedTaskRow: Codable, Sendable {
+    let blockId: String
+    let userId: String
+    let taskId: String
+    let title: String
+    let done: Bool
+    enum CodingKeys: String, CodingKey {
+        case title, done
+        case blockId = "block_id"
+        case userId = "user_id"
+        case taskId = "task_id"
+    }
+}
+
 private nonisolated struct FocusParticipantRow: Codable, Sendable {
     let blockId: UUID
     let userId: String
@@ -88,6 +102,7 @@ extension SocialSyncService {
                 .execute()
                 .value
             await ensureProfiles(remoteIds: rows.map { $0.userId })
+            await refreshGroveSharedTasks(blockId: block.id)
             store.focusPresences = rows.map { row in
                 let state: PresenceState
                 switch row.state {
@@ -144,6 +159,88 @@ extension SocialSyncService {
                 await self.refreshGrove()
             } catch {
                 print("[SocialSync] grove start failed: \(error)")
+            }
+        }
+    }
+
+    /// Pull every participant's shared tasks for the block (mine excluded
+    /// in the panel by `userId`). Best-effort: a missing table just
+    /// leaves the list empty so the rest of the grove keeps working.
+    func refreshGroveSharedTasks(blockId: UUID) async {
+        guard let store else { return }
+        do {
+            let rows: [FocusSharedTaskRow] = try await supabase
+                .from("focus_shared_tasks")
+                .select("block_id, user_id, task_id, title, done")
+                .eq("block_id", value: blockId.uuidString)
+                .execute()
+                .value
+            store.groveSharedTasks = rows.compactMap { row in
+                guard let taskId = UUID(uuidString: row.taskId) else { return nil }
+                return GroveSharedTask(
+                    userId: localId(forRemote: row.userId),
+                    taskId: taskId,
+                    title: row.title,
+                    done: row.done
+                )
+            }
+        } catch {
+            print("[SocialSync] grove shared tasks refresh failed: \(error)")
+        }
+    }
+
+    /// Add a friend to an already-running grove: insert their invited
+    /// participant row and push them a join prompt.
+    nonisolated func groveFriendInvited(blockId: UUID, friendId: UUID) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let remote = self.remoteId(forLocal: friendId) else { return }
+            do {
+                try await supabase.from("focus_participants").insert(FocusParticipantInsert(
+                    blockId: blockId.uuidString,
+                    userId: remote,
+                    state: "invited",
+                    leafTier: "full"
+                )).execute()
+                PushService.send(to: remote, kind: .focusInvite, preview: nil)
+                self.pokeEngine(trigger: "grove")
+                await self.refreshGrove()
+            } catch {
+                print("[SocialSync] grove mid-session invite failed: \(error)")
+            }
+        }
+    }
+
+    /// Replace my published shared-task rows for the block. Deletes the
+    /// old set then inserts the current one so check-off + removal both
+    /// propagate. Best-effort against a `focus_shared_tasks` table.
+    nonisolated func groveSharedTasksChanged(
+        blockId: UUID,
+        tasks: [(taskId: UUID, title: String, done: Bool)]
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self, let myUserId = self.myUserId else { return }
+            do {
+                try await supabase.from("focus_shared_tasks")
+                    .delete()
+                    .eq("block_id", value: blockId.uuidString)
+                    .eq("user_id", value: myUserId)
+                    .execute()
+                if !tasks.isEmpty {
+                    let rows = tasks.map { t in
+                        FocusSharedTaskRow(
+                            blockId: blockId.uuidString,
+                            userId: myUserId,
+                            taskId: t.taskId.uuidString,
+                            title: t.title,
+                            done: t.done
+                        )
+                    }
+                    try await supabase.from("focus_shared_tasks").insert(rows).execute()
+                }
+                await self.refreshGroveSharedTasks(blockId: blockId)
+            } catch {
+                print("[SocialSync] grove shared tasks publish failed: \(error)")
             }
         }
     }
