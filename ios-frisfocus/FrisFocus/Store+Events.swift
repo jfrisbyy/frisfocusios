@@ -190,11 +190,20 @@ extension Store {
     }
 
     /// Stamp the current user present at an event. Idempotent within the
-    /// presence window. Only meaningful while the event is happening.
+    /// presence window. Allowed from one hour before the start through
+    /// the event's effective end (see `CircleEvent.isCheckInOpen`).
     func checkIn(eventId: UUID) {
         guard !isCheckedIn(eventId: eventId) else { return }
         eventCheckIns.append(EventCheckIn(eventId: eventId, memberId: currentUserId))
         persistAll()
+    }
+
+    /// True when the current user has EVER checked into the event —
+    /// unlike `isCheckedIn` this never fades with the presence window.
+    /// Drives the homescreen reminder: once you've checked in, the
+    /// nag is gone for that occurrence for good.
+    func hasEverCheckedIn(eventId: UUID) -> Bool {
+        eventCheckIns.contains { $0.eventId == eventId && $0.memberId == currentUserId }
     }
 
     /// Member ids checked in within the presence window, most-recent

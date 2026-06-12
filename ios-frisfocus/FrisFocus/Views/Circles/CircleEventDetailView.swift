@@ -2,11 +2,12 @@
 //  CircleEventDetailView.swift
 //  FrisFocus
 //
-//  The full picture of a single circle event: description, when & where,
-//  the linked task, RSVP buttons + tallies, the "I'm here" check-in with
-//  a live present-now row, and the grid of proofs posted to this event
-//  (its own archive). Any member can RSVP and check in; the creator (or
-//  a circle owner/admin) can delete it.
+//  The full picture of a single circle event: a story strip of the
+//  proofs posted to it right under the title (tap to play full-screen),
+//  description, when & where, the linked task, RSVP buttons + tallies,
+//  and the "I'm here" check-in — open from one hour before the start
+//  through the end — with a live present-now row. Any member can RSVP
+//  and check in; the creator (or a circle owner/admin) can delete it.
 //
 
 import Combine
@@ -20,6 +21,7 @@ struct CircleEventDetailView: View {
     let eventId: UUID
 
     @State private var showProofCapture: Bool = false
+    @State private var showProofStory: Bool = false
     @State private var showDeleteConfirm: Bool = false
     @State private var checkInFlourish: Bool = false
     /// Drives a 1s ticking clock so "happening now" / presence refresh
@@ -61,13 +63,13 @@ struct CircleEventDetailView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 22) {
                 headerBlock(event: event, tint: tint, tintDark: tintDark)
+                proofStoryStrip(event: event, tint: tint, tintDark: tintDark)
                 whenWhereBlock(event: event, tintDark: tintDark)
                 if let taskTitle = linkedTaskTitle(event: event, circle: circle) {
                     linkedTaskBlock(title: taskTitle, tintDark: tintDark)
                 }
                 rsvpBlock(event: event, tint: tint, tintDark: tintDark)
                 presenceBlock(event: event, tint: tint, tintDark: tintDark)
-                proofsBlock(event: event, tintDark: tintDark)
                 if store.canManageEvent(event) {
                     deleteButton
                 }
@@ -78,7 +80,9 @@ struct CircleEventDetailView: View {
         }
         .background(Theme.warmWheat)
         .safeAreaInset(edge: .bottom) {
-            if event.isHappeningNow(at: now) {
+            // Check-in opens an hour before the start and runs through
+            // the event's end — the bar covers the whole window.
+            if event.isCheckInOpen(at: now) {
                 liveActionBar(event: event, circle: circle, tint: tint, tintDark: tintDark)
             }
         }
@@ -92,6 +96,12 @@ struct CircleEventDetailView: View {
                     task: linkedTask(event: liveEvent, circle: liveCircle)
                 ))
                 .environment(store)
+            }
+        }
+        .fullScreenCover(isPresented: $showProofStory) {
+            if let liveEvent = store.event(by: eventId) {
+                StoryPlayerView(mode: .event(liveEvent))
+                    .environment(store)
             }
         }
         .confirmationDialog("Delete this event?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
@@ -133,6 +143,8 @@ struct CircleEventDetailView: View {
                     .foregroundStyle(tintDark)
                 if event.isHappeningNow(at: now) {
                     happeningNowTag(tint: tint, tintDark: tintDark)
+                } else if event.isCheckInOpen(at: now) {
+                    startingSoonTag(tint: tint, tintDark: tintDark)
                 } else if event.repeatRule.repeats {
                     Text(event.repeatRule.summary.uppercased())
                         .font(.sans(10, weight: .semibold))
@@ -166,6 +178,70 @@ struct CircleEventDetailView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(Capsule().fill(tint.opacity(0.18)))
+    }
+
+    private func startingSoonTag(tint: Color, tintDark: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "clock")
+                .font(.sans(8, weight: .bold))
+                .foregroundStyle(tintDark)
+            Text("STARTING SOON")
+                .font(.sans(9, weight: .bold))
+                .tracking(1)
+                .foregroundStyle(tintDark)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(tint.opacity(0.14)))
+    }
+
+    // MARK: - Proof story strip
+
+    /// The proofs posted to this event, as a story strip right under
+    /// the title — glowing poster-frame bubbles that play full-screen
+    /// like any other story. Replaces the old static grid.
+    @ViewBuilder
+    private func proofStoryStrip(event: CircleEvent, tint: Color, tintDark: Color) -> some View {
+        let proofs = store.eventProofs(eventId: event.id).sorted { $0.createdAt < $1.createdAt }
+        if proofs.isEmpty {
+            if event.isCheckInOpen(at: now) {
+                Text("Check in and post the first proof — it'll play here as a story.")
+                    .font(.serifItalic(13, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "play.circle.fill")
+                        .font(.sans(13, weight: .semibold))
+                        .foregroundStyle(tintDark)
+                    Text("Event story")
+                        .font(.sans(11, weight: .bold))
+                        .tracking(1.5)
+                        .foregroundStyle(tintDark)
+                    Spacer()
+                    Text("\(proofs.count) proof\(proofs.count == 1 ? "" : "s")")
+                        .font(.sans(12, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(proofs) { post in
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                showProofStory = true
+                            } label: {
+                                EventProofBubble(post: post, tint: tint)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Play event story")
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
     }
 
     // MARK: - When / where
@@ -332,37 +408,6 @@ struct CircleEventDetailView: View {
         }
     }
 
-    // MARK: - Proofs
-
-    private func proofsBlock(event: CircleEvent, tintDark: Color) -> some View {
-        let proofs = store.eventProofs(eventId: event.id)
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Proofs")
-                    .font(.serif(18, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-                Text("\(proofs.count)")
-                    .font(.sans(13, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-            }
-
-            if proofs.isEmpty {
-                Text(event.isPast(at: now)
-                     ? "No proofs were posted to this event."
-                     : "Check in and post the first proof from this event.")
-                    .font(.serifItalic(13, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-            } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                    ForEach(proofs) { post in
-                        EventProofThumb(post: post)
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - Live action bar
 
     private func liveActionBar(event: CircleEvent, circle: FFCircle, tint: Color, tintDark: Color) -> some View {
@@ -392,6 +437,7 @@ struct CircleEventDetailView: View {
                 }
                 .buttonStyle(.plain)
             } else {
+                let early = event.isUpcoming(at: now)
                 Button {
                     UINotificationFeedbackGenerator().notificationOccurred(.success)
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { checkInFlourish = true }
@@ -401,13 +447,20 @@ struct CircleEventDetailView: View {
                         checkInFlourish = false
                     }
                 } label: {
-                    Label("I'm here", systemImage: "hand.wave.fill")
-                        .font(.sans(15, weight: .bold))
-                        .foregroundStyle(Theme.textCream)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 15)
-                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(tintDark))
-                        .scaleEffect(checkInFlourish ? 1.03 : 1)
+                    VStack(spacing: 2) {
+                        Label(early ? "Check in early" : "I'm here", systemImage: "hand.wave.fill")
+                            .font(.sans(15, weight: .bold))
+                        if early {
+                            Text("starts \(event.startAt.formatted(date: .omitted, time: .shortened))")
+                                .font(.sans(11, weight: .medium))
+                                .opacity(0.85)
+                        }
+                    }
+                    .foregroundStyle(Theme.textCream)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, early ? 11 : 15)
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(tintDark))
+                    .scaleEffect(checkInFlourish ? 1.03 : 1)
                 }
                 .buttonStyle(.plain)
             }
@@ -472,19 +525,13 @@ struct EventMemberStack: View {
     @ViewBuilder
     private func avatar(for id: UUID) -> some View {
         if id == store.currentUserId {
-            ZStack {
-                Circle().fill(Theme.textPrimary)
-                Text("J")
-                    .font(.sans(12, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-            }
-            .frame(width: diameter, height: diameter)
-            .overlay(
-                Circle().strokeBorder(
-                    LinearGradient(colors: [Theme.sunWarm, Theme.sunOuter], startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 1.6
+            MyAvatarDisc(size: diameter)
+                .overlay(
+                    Circle().strokeBorder(
+                        LinearGradient(colors: [Theme.sunWarm, Theme.sunOuter], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        lineWidth: 1.6
+                    )
                 )
-            )
         } else if let friend = store.friend(by: id) {
             FriendAvatarView(friend: friend, size: diameter)
                 .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.4))
@@ -497,20 +544,24 @@ struct EventMemberStack: View {
     }
 }
 
-// MARK: - Proof thumbnail
+// MARK: - Proof story bubble
 
-/// A single event-proof tile. Resolves the post's media and shows the
-/// poster frame; falls back to a caption card when the bytes are gone.
-struct EventProofThumb: View {
+/// One glowing story bubble in the event's proof strip. Shows the
+/// proof's poster frame ringed in the circle's warm tint; falls back
+/// to a caption disc when the media bytes are gone.
+struct EventProofBubble: View {
     @Environment(Store.self) private var store
     let post: StoryPost
+    let tint: Color
+
+    private let size: CGFloat = 62
 
     var body: some View {
         let asset = post.mediaId.flatMap { store.media(by: $0) }
         let url = asset?.resolvedThumbnailURL ?? asset?.resolvedLocalURL
-        return RoundedRectangle(cornerRadius: 10, style: .continuous)
+        Circle()
             .fill(Theme.textPrimary.opacity(0.08))
-            .aspectRatio(1, contentMode: .fit)
+            .frame(width: size, height: size)
             .overlay {
                 if let url, asset?.type != .video || asset?.resolvedThumbnailURL != nil {
                     CachedImage(url: url) { image in
@@ -521,22 +572,35 @@ struct EventProofThumb: View {
                     .allowsHitTesting(false)
                 } else if let caption = post.caption {
                     Text(caption)
-                        .font(.serifItalic(12, weight: .regular))
+                        .font(.serifItalic(9, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.6))
                         .multilineTextAlignment(.center)
+                        .lineLimit(3)
                         .padding(6)
                 }
             }
-            .overlay(alignment: .topTrailing) {
+            .clipShape(Circle())
+            .overlay(
+                Circle().strokeBorder(
+                    AngularGradient(
+                        colors: [tint, Theme.sunWarm, tint.opacity(0.6), Theme.sunWarm, tint],
+                        center: .center
+                    ),
+                    lineWidth: 2.2
+                )
+                .padding(-3)
+            )
+            .overlay(alignment: .bottomTrailing) {
                 if asset?.type == .video {
                     Image(systemName: "play.fill")
-                        .font(.system(size: 9, weight: .black))
+                        .font(.system(size: 8, weight: .black))
                         .foregroundStyle(Color.white)
                         .padding(4)
-                        .background(Circle().fill(Color.black.opacity(0.4)))
-                        .padding(5)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
+                        .offset(x: 1, y: 1)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .shadow(color: Theme.sunWarm.opacity(0.35), radius: 6, y: 2)
+            .padding(3)
     }
 }

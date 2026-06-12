@@ -8,6 +8,7 @@
 //  cleanly when they tap back in).
 //
 
+import Combine
 import SwiftUI
 
 /// An invite link's target, wrapped so it can drive a `.sheet(item:)`.
@@ -106,6 +107,17 @@ struct ContentView: View {
                 if store.activeFocusSession == nil && store.activeSharedFocusBlock == nil {
                     FocusBlockingService.shared.endShielding()
                 }
+            }
+            // True midnight watcher: iOS posts this the moment the local
+            // calendar day changes (midnight, timezone change, DST). With
+            // the app sitting open overnight, this rolls pins + notes over
+            // on the spot instead of waiting for a background/foreground hop.
+            .onReceive(
+                NotificationCenter.default
+                    .publisher(for: .NSCalendarDayChanged)
+                    .receive(on: DispatchQueue.main)
+            ) { _ in
+                store.performDayRolloverIfNeeded()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {

@@ -15,13 +15,56 @@ struct UpcomingEventsGlance: View {
     /// Called with the event to open when the card is tapped.
     let onOpen: (CircleEvent) -> Void
 
+    /// Horizontal swipe offset while the user drags the card away.
+    @State private var dragX: CGFloat = 0
+
     private let amber = Color(red: 216.0 / 255, green: 125.0 / 255, blue: 68.0 / 255)
 
-    var body: some View {
-        let events = store.myUpcomingEvents(limit: 1)
-        if let next = events.first {
-            card(for: next)
+    /// The next event worth surfacing. Skips occurrences the user
+    /// swiped away, and — the key rule — anything they've already
+    /// checked into: once you're checked in, the nag is done.
+    private var nextEvent: CircleEvent? {
+        store.myUpcomingEvents(limit: 5).first { event in
+            guard !store.isEventGlanceDismissed(event.id) else { return false }
+            guard !store.hasEverCheckedIn(eventId: event.id) else { return false }
+            return true
         }
+    }
+
+    var body: some View {
+        if let next = nextEvent {
+            card(for: next)
+                .offset(x: dragX)
+                .opacity(1 - min(0.9, abs(dragX) / 220))
+                .simultaneousGesture(swipeAway(for: next))
+                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: dragX)
+        }
+    }
+
+    /// Horizontal swipe-to-dismiss. Only claims horizontal-dominant
+    /// drags so the page's vertical scroll keeps working over the card.
+    private func swipeAway(for event: CircleEvent) -> some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onChanged { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                dragX = value.translation.width
+            }
+            .onEnded { value in
+                let flungFar = abs(value.translation.width) > 90
+                let flungFast = abs(value.predictedEndTranslation.width) > 220
+                if (flungFar || flungFast), abs(value.translation.width) > abs(value.translation.height) {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.easeOut(duration: 0.22)) {
+                        dragX = value.translation.width < 0 ? -500 : 500
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        store.dismissEventGlance(event.id)
+                        dragX = 0
+                    }
+                } else {
+                    dragX = 0
+                }
+            }
     }
 
     private func card(for event: CircleEvent) -> some View {
@@ -78,6 +121,7 @@ struct UpcomingEventsGlance: View {
 
     private func whenLine(event: CircleEvent, live: Bool) -> String {
         if live { return "Tap to check in & post a proof" }
+        if event.isCheckInOpen() { return "Starting soon · check in early" }
         let cal = Calendar.current
         let timeStr = event.startAt.formatted(date: .omitted, time: .shortened)
         if cal.isDateInToday(event.startAt) { return "Today · \(timeStr)" }

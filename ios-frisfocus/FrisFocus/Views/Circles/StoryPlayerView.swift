@@ -38,6 +38,10 @@ enum StoryPlayerMode {
     /// tapping the "You" avatar in the stories row when at least one
     /// active post exists. Adds a delete affordance to the header.
     case mine
+    /// One circle event's proofs, oldest → newest — the story strip at
+    /// the top of the event page plays through here. Proofs never
+    /// expire from an event, so this is the gathering's full tape.
+    case event(CircleEvent)
 }
 
 /// Time slice the circle group story renders. `today` scopes to the
@@ -147,6 +151,9 @@ struct StoryPlayerView: View {
                         return true
                     }
                 }
+                .sorted { $0.createdAt < $1.createdAt }
+        case .event(let event):
+            return store.eventProofs(eventId: event.id)
                 .sorted { $0.createdAt < $1.createdAt }
         }
     }
@@ -431,6 +438,30 @@ struct StoryPlayerView: View {
                             .foregroundStyle(Theme.textCream.opacity(0.75))
                     }
                 }
+            case .event(let event):
+                if let authorId = currentPost?.authorId,
+                   store.profileTarget(forMemberId: authorId) != nil {
+                    Button {
+                        showAuthorProfile(authorId)
+                    } label: {
+                        eventHeaderAvatar(for: event)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open profile")
+                } else {
+                    eventHeaderAvatar(for: event)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(event.title)
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                        .lineLimit(1)
+                    if let post = currentPost {
+                        Text("\(authorName(for: post)) · \(elapsedString(from: post.createdAt))")
+                            .font(.sans(11, weight: .regular))
+                            .foregroundStyle(Theme.textCream.opacity(0.75))
+                    }
+                }
             }
 
             Spacer()
@@ -466,18 +497,12 @@ struct StoryPlayerView: View {
         }
     }
 
-    /// The user's own avatar disc used in `.mine` mode — charcoal
-    /// fill with a cream initial, ringed in cream so it reads against
-    /// the dark canvas.
+    /// The user's own avatar disc used in `.mine` mode — their real
+    /// profile photo (or real initials), ringed in cream so it reads
+    /// against the dark canvas.
     private var myAvatar: some View {
-        ZStack {
-            Circle().fill(Theme.textPrimary)
-            Text("J")
-                .font(.sans(13, weight: .semibold))
-                .foregroundStyle(Theme.textCream)
-        }
-        .frame(width: 34, height: 34)
-        .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.5), lineWidth: 1))
+        MyAvatarDisc(size: 34)
+            .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.5), lineWidth: 1))
     }
 
     private func friendAvatar(_ friend: Friend) -> some View {
@@ -493,10 +518,7 @@ struct StoryPlayerView: View {
         let isYou = authorId == store.currentUserId
         ZStack {
             if isYou {
-                Circle().fill(Theme.textPrimary)
-                Text("J")
-                    .font(.sans(13, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
+                MyAvatarDisc(size: 34)
             } else if let id = authorId, let friend = store.friend(by: id) {
                 FriendAvatarView(friend: friend, size: 34)
             } else {
@@ -508,6 +530,26 @@ struct StoryPlayerView: View {
         }
         .frame(width: 34, height: 34)
         .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.5), lineWidth: 1))
+    }
+
+    /// The author avatar for `.event` mode — the circle avatar styling
+    /// when the event's circle resolves, a neutral disc otherwise.
+    @ViewBuilder
+    private func eventHeaderAvatar(for event: CircleEvent) -> some View {
+        if let circle = store.circle(by: event.circleId) {
+            circleHeaderAvatar(for: circle)
+        } else {
+            Circle()
+                .fill(Theme.textTertiary)
+                .frame(width: 34, height: 34)
+                .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.5), lineWidth: 1))
+        }
+    }
+
+    /// The current segment's author as a short display name.
+    private func authorName(for post: StoryPost) -> String {
+        if post.authorId == store.currentUserId { return "You" }
+        return store.friend(by: post.authorId)?.displayName ?? "Member"
     }
 
     /// `{circle name}` already lives on the line above; this provides
@@ -855,7 +897,7 @@ struct StoryPlayerView: View {
                     isPaused = focused
                 }
 
-                if case .circle = mode, let target = cheerCandidate(for: post) {
+                if allowsCheer, let target = cheerCandidate(for: post) {
                     Button {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         isPaused = true
@@ -895,6 +937,15 @@ struct StoryPlayerView: View {
         }
     }
 
+    /// Whether this surface offers the amber cheer pill — circle and
+    /// event tapes do; a friend's own story and your own tape don't.
+    private var allowsCheer: Bool {
+        switch mode {
+        case .circle, .event: return true
+        case .friend, .mine: return false
+        }
+    }
+
     /// Resolves the cheer recipient for the current clip: the post's
     /// author if they're a known friend. Returns `nil` for the user's
     /// own clips (you can't cheer yourself) and for circle-only
@@ -911,7 +962,7 @@ struct StoryPlayerView: View {
             return "Reply…"
         case .mine:
             return "Note to self…"
-        case .circle:
+        case .circle, .event:
             if post.authorId == store.currentUserId {
                 return "Reply…"
             }
@@ -963,7 +1014,7 @@ struct StoryPlayerView: View {
         case .friend:
             guard post.authorId != store.currentUserId else { return }
             store.markStoryViewed(post.id)
-        case .circle:
+        case .circle, .event:
             store.markStoryViewed(post.id)
         }
     }

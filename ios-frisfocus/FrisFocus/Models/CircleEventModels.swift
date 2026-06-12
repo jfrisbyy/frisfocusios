@@ -238,4 +238,16 @@ extension CircleEvent {
     func isUpcoming(at now: Date = Date()) -> Bool {
         now < startAt
     }
+
+    /// When early check-in opens — one hour before the start.
+    var checkInOpensAt: Date {
+        startAt.addingTimeInterval(-60 * 60)
+    }
+
+    /// True while check-in is allowed: from one hour before the start
+    /// through the event's effective end. Drives the check-in bar on
+    /// the event page (the "starting soon" early window + live window).
+    func isCheckInOpen(at now: Date = Date()) -> Bool {
+        now >= checkInOpensAt && now <= effectiveEnd
+    }
 }

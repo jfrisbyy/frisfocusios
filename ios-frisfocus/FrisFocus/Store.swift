@@ -85,6 +85,17 @@ final class Store {
     /// launches on today.
     var viewingDay: Date?
 
+    /// The current local calendar day (start-of-day), kept fresh by the
+    /// day rollover. OBSERVABLE — every "today" accessor below reads
+    /// this instead of `Date()` so the whole home re-renders the moment
+    /// midnight flips the day, even with the app sitting open.
+    var today: Date = Calendar.current.startOfDay(for: Date())
+
+    /// Event occurrences whose homescreen check-in glance the user
+    /// swiped away. Per-occurrence — the next event shows the card
+    /// again. Persisted under its own key (not part of the social sync).
+    var dismissedEventGlanceIds: Set<UUID> = []
+
     /// The network sync bridge. Wired at sign-in by `SocialSyncService`;
     /// social mutations below notify it so local changes write through
     /// to Supabase (and realtime keeps this Store mirrored back).
@@ -304,6 +315,7 @@ final class Store {
         static let cadenceSurfacePointsSocially = "cadenceSurfacePointsSocially"
         static let reminderValueThreshold = "reminderValueThreshold"
         static let noteTagsEnabled = "noteTagsEnabled"
+        static let dismissedEventGlances = "dismissedEventGlanceIds"
 
         // Legacy keys cleared by the DEBUG migration below.
         static let legacyOneShots = "oneShots"
@@ -384,6 +396,12 @@ final class Store {
             let minted = UUID()
             self.currentUserId = minted
             userDefaults.set(minted.uuidString, forKey: Keys.currentUserId)
+        }
+
+        // Swiped-away homescreen event glances survive relaunch so a
+        // dismissed reminder doesn't pop back every cold start.
+        if let raw = userDefaults.stringArray(forKey: Keys.dismissedEventGlances) {
+            self.dismissedEventGlanceIds = Set(raw.compactMap(UUID.init))
         }
 
         let storedSeasonData = userDefaults.data(forKey: Keys.currentSeason)
@@ -959,7 +977,7 @@ extension Store {
     /// home-zone accessor below reads this so the REAL homescreen
     /// transforms in place instead of swapping to a separate snapshot.
     var displayedDay: Date {
-        viewingDay ?? Date()
+        viewingDay ?? today
     }
 
     /// True while the home is travelled to a past day.
@@ -1065,7 +1083,9 @@ extension Store {
     /// are included even if they weren't pinned.
     var planTasksToday: [FFTask] {
         guard isViewingPast else {
-            return tasks.filter { $0.isPinnedToday }
+            // Reads the observable `today` so the plan re-derives the
+            // instant the day rolls over at midnight.
+            return tasks.filter { $0.isPinnedFor(today) }
         }
         let cal = Calendar.current
         let day = displayedDay
@@ -1090,7 +1110,7 @@ extension Store {
                 return false
             }
         }
-        let today = cal.startOfDay(for: Date())
+        let today = self.today
         return todos.filter { todo in
             guard let due = todo.dueDate, todo.pointValue != nil else { return false }
             return cal.isDate(due, inSameDayAs: today) || due < today
@@ -1133,7 +1153,7 @@ extension Store {
     /// for now as a transitional read.)
     var looseEnds: [Todo] {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
+        let today = self.today
         return todos.filter { todo in
             if let due = todo.dueDate, todo.pointValue != nil,
                cal.isDate(due, inSameDayAs: today) || due < today {
@@ -2731,6 +2751,12 @@ extension Store {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
 
+        // Refresh the observable day first — even when the sweep below
+        // already ran, every "today" accessor must agree with the clock.
+        if self.today != today {
+            self.today = today
+        }
+
         let lastRollover = userDefaults.object(forKey: Keys.lastRollover) as? Date
         if let lastRollover, cal.isDate(lastRollover, inSameDayAs: today) {
             return // Already ran today
@@ -2822,6 +2848,22 @@ extension Store {
 
         userDefaults.set(today, forKey: Keys.lastRollover)
         persistAll()
+    }
+
+    // MARK: - Homescreen event glance
+
+    /// Swipe-away on the homescreen event reminder. Per-occurrence —
+    /// dismissing one event never hides the next.
+    func dismissEventGlance(_ eventId: UUID) {
+        dismissedEventGlanceIds.insert(eventId)
+        userDefaults.set(
+            dismissedEventGlanceIds.map(\.uuidString),
+            forKey: Keys.dismissedEventGlances
+        )
+    }
+
+    func isEventGlanceDismissed(_ eventId: UUID) -> Bool {
+        dismissedEventGlanceIds.contains(eventId)
     }
 
     /// Seven daily scores, oldest first, ending with today. Future days
