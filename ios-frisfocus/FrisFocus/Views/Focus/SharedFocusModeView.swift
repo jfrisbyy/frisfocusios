@@ -231,16 +231,17 @@ struct SharedFocusModeView: View {
                 isSteppedAway: false,
                 depth: 0,
                 xUnit: 0.50,
-                leafSeed: 17,
+                leafSeed: treeSeed(for: store.currentUserId),
                 fallenLeafIDs: fallenLeafIDs
             )
         )
 
-        // Friend slots — limited to 3.
-        let slots: [(depth: Int, x: CGFloat, seed: UInt64)] = [
-            (1, 0.18, 41),
-            (1, 0.82, 73),
-            (2, 0.50, 109)
+        // Friend slots — limited to 3. Each friend's tree grows from
+        // their own identity seed so it's recognizably theirs.
+        let slots: [(depth: Int, x: CGFloat)] = [
+            (1, 0.18),
+            (1, 0.82),
+            (2, 0.50)
         ]
         for (i, fid) in currentFriendIds.prefix(3).enumerated() {
             guard let friend = store.friends.first(where: { $0.id == fid }) else { continue }
@@ -268,7 +269,7 @@ struct SharedFocusModeView: View {
                     isWaiting: isWaiting,
                     depth: slot.depth,
                     xUnit: slot.x,
-                    leafSeed: slot.seed,
+                    leafSeed: treeSeed(for: fid),
                     fallenLeafIDs: []
                 )
             )
@@ -281,6 +282,9 @@ struct SharedFocusModeView: View {
     private func beginIfNeeded() {
         guard !didStart else { return }
         didStart = true
+
+        // Grow my own recognizable tree — same seed every session.
+        leaves = buildCanopyLeaves(seed: treeSeed(for: store.currentUserId))
 
         // Local F1 session for my tree's exact leaf record.
         if let active = store.activeFocusSession,

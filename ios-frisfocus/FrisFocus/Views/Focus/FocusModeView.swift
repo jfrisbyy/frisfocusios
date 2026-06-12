@@ -98,7 +98,8 @@ struct FocusModeView: View {
                     fallenLeafIDs: fallenLeafIDs,
                     thinningTier: .full,
                     scale: 1.0,
-                    animatesSway: true
+                    animatesSway: true,
+                    seed: treeSeed(for: store.currentUserId)
                 )
                 .frame(width: treeWidth, height: treeHeight)
                 .position(x: size.width / 2, y: size.height * 0.50)
@@ -412,6 +413,8 @@ struct FocusModeView: View {
     // MARK: - Lifecycle
 
     private func beginIfNeeded() {
+        // Grow my own recognizable tree — same seed every session.
+        leaves = buildCanopyLeaves(seed: treeSeed(for: store.currentUserId))
         // Reuse an existing active session if one is already running
         // (e.g. the user re-entered the screen after a brief detour);
         // otherwise start a fresh one.

@@ -146,6 +146,9 @@ struct FocusGroveView: View {
         let yCenter = size.height * 0.55 + yOffset
 
         let leaves = buildCanopyLeaves(seed: p.leafSeed)
+        // Distant trees get a smaller foliage budget so the grove stays
+        // cheap to draw while still reading as full, distinct trees.
+        let detail: CGFloat = p.depth == 0 ? 1.0 : (p.depth == 1 ? 0.55 : 0.40)
 
         VStack(spacing: 6) {
             FocusTreeView(
@@ -153,7 +156,9 @@ struct FocusGroveView: View {
                 fallenLeafIDs: p.fallenLeafIDs,
                 thinningTier: p.tier,
                 scale: 1.0,
-                animatesSway: p.depth == 0
+                animatesSway: p.depth == 0,
+                seed: p.leafSeed,
+                detail: detail
             )
             .frame(width: treeW, height: treeH)
             .saturation(saturation)
