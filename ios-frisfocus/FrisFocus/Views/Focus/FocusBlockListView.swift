@@ -20,6 +20,7 @@ struct FocusBlockListView: View {
     @Environment(FocusBlockingService.self) private var blocking
 
     @State private var showPicker = false
+    @State private var showAuthFailure = false
 
     var body: some View {
         NavigationStack {
@@ -47,6 +48,11 @@ struct FocusBlockListView: View {
             #if canImport(FamilyControls)
             .familyActivityPicker(isPresented: $showPicker, selection: bindingSelection)
             #endif
+            .alert("Screen Time approval failed", isPresented: $showAuthFailure) {
+                authFailureActions
+            } message: {
+                Text(failureText)
+            }
         }
     }
 
@@ -147,15 +153,51 @@ struct FocusBlockListView: View {
         }
     }
 
+    @ViewBuilder
+    private var authFailureActions: some View {
+        let failure: FocusBlockingService.AuthFailure? = blocking.lastFailure
+        if failure?.canRetry ?? true {
+            Button("Try Again") { choose() }
+        }
+        if failure?.suggestsSettings ?? false {
+            Button("Open Settings") { openSettings() }
+        }
+        Button("Not Now", role: .cancel) {}
+    }
+
+    private var failureText: String {
+        guard let failure = blocking.lastFailure else {
+            return "Apple refused the Screen Time request. Please try again."
+        }
+        return "\(failure.message)\n\nApple's error: \(failure.rawCode)"
+    }
+
     // MARK: - Actions
 
+    /// The picker tap is the permission trigger: ask Apple first, and
+    /// only open the real app picker once approval is held. A refusal
+    /// raises a clear alert instead of failing silently.
     private func choose() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         Task {
-            if blocking.authStatus == .notDetermined {
-                await blocking.requestAuthorization()
+            switch blocking.authStatus {
+            case .approved, .unavailable:
+                // Approved — or the simulator preview, where the flow
+                // stays testable even though Apple can't truly shield.
+                showPicker = true
+            case .notDetermined, .denied:
+                let granted = await blocking.requestAuthorization()
+                if granted || blocking.authStatus == .unavailable {
+                    showPicker = true
+                } else {
+                    showAuthFailure = true
+                }
             }
-            showPicker = true
         }
+    }
+
+    private func openSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 }

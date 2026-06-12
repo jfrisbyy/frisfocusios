@@ -37,6 +37,7 @@ struct FocusStartSheet: View {
     @State private var showBlockList = false
     @State private var showSchedule = false
     @State private var showHistory = false
+    @State private var showAuthFailure = false
 
     private let presets: [Int] = [25, 45, 60]
     private let friendCap: Int = 3
@@ -142,7 +143,31 @@ struct FocusStartSheet: View {
                 }
             }
             .onAppear { blocking.refreshAuthStatus() }
+            .alert("Screen Time approval failed", isPresented: $showAuthFailure) {
+                authFailureActions
+            } message: {
+                Text(authFailureText)
+            }
         }
+    }
+
+    @ViewBuilder
+    private var authFailureActions: some View {
+        let failure: FocusBlockingService.AuthFailure? = blocking.lastFailure
+        if failure?.canRetry ?? true {
+            Button("Try Again") { allowBlocking() }
+        }
+        if failure?.suggestsSettings ?? false {
+            Button("Open Settings") { openSettings() }
+        }
+        Button("Not Now", role: .cancel) {}
+    }
+
+    private var authFailureText: String {
+        guard let failure = blocking.lastFailure else {
+            return "Apple refused the Screen Time request. Please try again."
+        }
+        return "\(failure.message)\n\nApple's error: \(failure.rawCode)"
     }
 
     // MARK: - Attachable items
@@ -296,7 +321,14 @@ struct FocusStartSheet: View {
 
     private func allowBlocking() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        Task { await blocking.requestAuthorization() }
+        Task {
+            let granted = await blocking.requestAuthorization()
+            // On a real iPhone a refusal raises a clear, retryable alert
+            // instead of silently hiding the card.
+            if !granted && blocking.lastFailure != nil {
+                showAuthFailure = true
+            }
+        }
     }
 
     private func openSettings() {

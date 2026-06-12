@@ -46,7 +46,24 @@ final class FocusBlockingService {
         case unavailable
     }
 
+    /// Why the last authorization request failed — in plain words plus
+    /// Apple's raw error code, so the true cause is always visible
+    /// instead of the app silently giving up.
+    struct AuthFailure: Equatable {
+        /// Plain-language explanation shown to the user.
+        let message: String
+        /// Apple's raw error code, for the small diagnostic line.
+        let rawCode: String
+        /// Whether retrying in-app can plausibly succeed.
+        let canRetry: Bool
+        /// Whether the fix lives in the Settings app (iCloud / Screen Time).
+        let suggestsSettings: Bool
+    }
+
     private(set) var authStatus: AuthStatus = .notDetermined
+    /// Set whenever the most recent authorization request failed on a
+    /// real device. Cleared on the next attempt or success.
+    private(set) var lastFailure: AuthFailure?
     /// True while a shield is actively applied to the chosen apps.
     private(set) var isShielding = false
     /// Whether the user wants blocking on for their sessions. Persisted.
@@ -120,7 +137,12 @@ final class FocusBlockingService {
     // MARK: - Authorization
 
     func refreshAuthStatus() {
-        #if canImport(FamilyControls)
+        #if targetEnvironment(simulator)
+        // Apple physically never shows the Screen Time prompt in the
+        // simulator / browser preview — detected here properly instead
+        // of inferred from a thrown error.
+        authStatus = .unavailable
+        #elseif canImport(FamilyControls)
         switch AuthorizationCenter.shared.authorizationStatus {
         case .approved: authStatus = .approved
         case .denied: authStatus = .denied
@@ -132,22 +154,103 @@ final class FocusBlockingService {
         #endif
     }
 
-    /// Ask for Screen Time access. Safe to call repeatedly.
-    func requestAuthorization() async {
-        #if canImport(FamilyControls)
+    /// Asks for Screen Time access. Safe to call repeatedly: on a real
+    /// iPhone a failure never permanently disables blocking; it records
+    /// a plain-language `lastFailure` and stays retryable.
+    /// - Returns: `true` when approval is held after the request.
+    @discardableResult
+    func requestAuthorization() async -> Bool {
+        #if targetEnvironment(simulator)
+        authStatus = .unavailable
+        return false
+        #elseif canImport(FamilyControls)
+        lastFailure = nil
         do {
             try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
             refreshAuthStatus()
+            return authStatus == .approved
         } catch {
-            // On the simulator (and when the entitlement isn't present)
-            // this throws — mark it unavailable so the flow keeps working
-            // (real shielding takes effect on a physical iPhone).
             print("[FocusBlocking] authorization failed: \(error)")
-            authStatus = .unavailable
+            lastFailure = Self.classify(error)
+            // Re-read the system status (it may now be .denied), but
+            // never write .unavailable on a real device — the user can
+            // always try again.
+            refreshAuthStatus()
+            return false
         }
         #else
         authStatus = .unavailable
+        return false
         #endif
+    }
+
+    /// Translates Apple's Family Controls errors into plain words that
+    /// the user can act on, keeping the raw code visible for diagnosis.
+    private static func classify(_ error: Error) -> AuthFailure {
+        #if canImport(FamilyControls)
+        if let fcError = error as? FamilyControlsError {
+            switch fcError {
+            case .invalidAccountType:
+                return AuthFailure(
+                    message: "This iPhone isn't signed into iCloud (or the signed-in account can't use Screen Time). Sign into iCloud in Settings, then try again.",
+                    rawCode: "invalidAccountType",
+                    canRetry: true,
+                    suggestsSettings: true
+                )
+            case .authorizationCanceled:
+                return AuthFailure(
+                    message: "The approval was dismissed before it finished. Tap Try Again and choose Allow when Apple asks.",
+                    rawCode: "authorizationCanceled",
+                    canRetry: true,
+                    suggestsSettings: false
+                )
+            case .authenticationMethodUnavailable:
+                return AuthFailure(
+                    message: "This iPhone has no passcode set. Apple requires a device passcode (or Face ID) before Screen Time access can be granted — set one in Settings, then try again.",
+                    rawCode: "authenticationMethodUnavailable",
+                    canRetry: true,
+                    suggestsSettings: true
+                )
+            case .networkError:
+                return AuthFailure(
+                    message: "Apple couldn't be reached to confirm Screen Time access. Check your connection and try again.",
+                    rawCode: "networkError",
+                    canRetry: true,
+                    suggestsSettings: false
+                )
+            case .restricted:
+                return AuthFailure(
+                    message: "Screen Time restrictions on this iPhone prevent FrisFocus from blocking apps. Check Settings › Screen Time.",
+                    rawCode: "restricted",
+                    canRetry: false,
+                    suggestsSettings: true
+                )
+            case .authorizationConflict:
+                return AuthFailure(
+                    message: "Another app or profile already controls Screen Time on this iPhone, so FrisFocus can't take it over.",
+                    rawCode: "authorizationConflict",
+                    canRetry: false,
+                    suggestsSettings: true
+                )
+            case .invalidArgument, .unavailable:
+                return AuthFailure(
+                    message: "This build of FrisFocus doesn't carry Apple's Family Controls approval in its signing, so iOS refuses the request. That's a one-time approval on the developer account — not a bug in the app.",
+                    rawCode: String(describing: fcError),
+                    canRetry: true,
+                    suggestsSettings: false
+                )
+            @unknown default:
+                break
+            }
+        }
+        #endif
+        let ns = error as NSError
+        return AuthFailure(
+            message: "Apple refused the Screen Time request. If this keeps happening, the installed build may be missing Apple's Family Controls signing approval.",
+            rawCode: "\(ns.domain) \(ns.code)",
+            canRetry: true,
+            suggestsSettings: false
+        )
     }
 
     // MARK: - Shielding

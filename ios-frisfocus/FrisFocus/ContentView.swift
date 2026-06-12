@@ -122,6 +122,10 @@ struct ContentView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     store.performDayRolloverIfNeeded()
+                    // Re-check Screen Time approval on every return — the
+                    // user may have granted access in Settings or signed
+                    // into iCloud while away; the UI updates immediately.
+                    FocusBlockingService.shared.refreshAuthStatus()
                     // The user is looking at the app — the icon badge
                     // shouldn't keep nagging about things they can now see.
                     NotificationManager.clearBadge()
