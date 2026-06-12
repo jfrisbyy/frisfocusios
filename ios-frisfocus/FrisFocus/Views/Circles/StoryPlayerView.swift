@@ -304,6 +304,10 @@ struct StoryPlayerView: View {
 
                     Spacer(minLength: 0)
 
+                    eventTagOverlay
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.bottom, 6)
+
                     earnedBadgeOverlay
                         .padding(.horizontal, Theme.pageHorizontalPadding)
                         .padding(.bottom, 8)
@@ -600,6 +604,30 @@ struct StoryPlayerView: View {
                 Capsule(style: .continuous)
                     .strokeBorder(Theme.alertGreen.opacity(0.5), lineWidth: 0.6)
             )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// A small "From <event>" tag shown on a clip that documents a
+    /// circle event, so people can tell it came from an event.
+    @ViewBuilder
+    private var eventTagOverlay: some View {
+        if let post = currentPost,
+           let eventId = post.eventId,
+           let event = store.event(by: eventId) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar")
+                    .font(.sans(11, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+                Text(event.title)
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(Capsule(style: .continuous).fill(Color.black.opacity(0.35)))
+            .overlay(Capsule(style: .continuous).strokeBorder(Color(hex: 0xD87D44).opacity(0.6), lineWidth: 0.8))
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }

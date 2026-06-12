@@ -608,6 +608,11 @@ struct CaptureReviewView: View {
             if case .circleClip(let circle, _) = mode, audience == .initial {
                 audience = ShareAudience(everyone: false, friendIds: [], circleIds: [circle.id])
             }
+            // An event proof starts pre-ticked to its circle too, so it
+            // lands in the circle story while carrying the event tag.
+            if case .eventProof(let circle, _, _) = mode, audience == .initial {
+                audience = ShareAudience(everyone: false, friendIds: [], circleIds: [circle.id])
+            }
         }
     }
 
@@ -2211,12 +2216,19 @@ struct CaptureReviewView: View {
             // circle keeps the earned-task badge on its clip.
             let originatingCircleId: UUID?
             let earnedTaskId: UUID?
+            let originatingEventId: UUID?
             if case .circleClip(let circle, let task) = mode {
                 originatingCircleId = circle.id
                 earnedTaskId = task?.id
+                originatingEventId = nil
+            } else if case .eventProof(let circle, let event, let task) = mode {
+                originatingCircleId = circle.id
+                earnedTaskId = task?.id
+                originatingEventId = event.id
             } else {
                 originatingCircleId = nil
                 earnedTaskId = nil
+                originatingEventId = nil
             }
 
             // A public story post (when `everyone` is on), one circle
@@ -2239,6 +2251,7 @@ struct CaptureReviewView: View {
                     caption: captionToSend,
                     circleId: circleId,
                     attachedCircleTaskId: circleId == originatingCircleId ? earnedTaskId : nil,
+                    eventId: circleId == originatingCircleId ? originatingEventId : nil,
                     durationSeconds: duration
                 )
             }

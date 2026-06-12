@@ -43,6 +43,8 @@ struct HomeView: View {
     @State private var goldenTarget: GoldenHourTarget?
     /// A tapped friend-request banner opens the Friends page here.
     @State private var showFriendsFromBanner: Bool = false
+    /// The circle event opened from the homescreen "Upcoming" glance.
+    @State private var homeEventTarget: HomeEventTarget?
 
     private let scrollSpace = "frisFocusScroll"
 
@@ -96,6 +98,11 @@ struct HomeView: View {
                     }
             }
         }
+        .sheet(item: $homeEventTarget) { target in
+            CircleEventDetailView(eventId: target.eventId)
+                .environment(store)
+        }
+        .onAppear { store.refreshRecurringEvents() }
     }
 
     /// Unread direct messages — live from the app-wide messaging
@@ -242,6 +249,12 @@ struct HomeView: View {
                         showFriendsFromBanner = true
                     }
 
+                    // The next circle event you're in on — one glance away.
+                    UpcomingEventsGlance { event in
+                        homeEventTarget = HomeEventTarget(eventId: event.id)
+                    }
+                    .padding(.horizontal, Theme.pageHorizontalPadding)
+
                     // Golden Hour orb — exists only while a moment is live
                     // (pulsing banner) or its wall is still open (draining
                     // chip). Gone the rest of the day.
@@ -331,6 +344,15 @@ struct HomeView: View {
             proxy.scrollTo(zone.anchorID, anchor: .top)
         }
     }
+}
+
+// MARK: - Preference key
+
+/// Identifiable wrapper so the homescreen glance can drive an event
+/// detail sheet without a global UUID-Identifiable extension.
+private struct HomeEventTarget: Identifiable {
+    let eventId: UUID
+    var id: UUID { eventId }
 }
 
 // MARK: - Preference key

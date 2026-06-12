@@ -39,6 +39,8 @@ struct CircleDetailView: View {
     /// daily clips player above).
     @State private var showOurStory: Bool = false
     @State private var storyCaptureTarget: CircleStoryCaptureTarget?
+    @State private var showCreateEvent: Bool = false
+    @State private var openEventTarget: EventTarget?
 
     /// Which time slice the parallel body renders. Drives both "The
     /// work" (the user's own progress) and "The circle today" (every
@@ -116,6 +118,17 @@ struct CircleDetailView: View {
             CircleStoryView(circleId: circle.id)
                 .environment(store)
         }
+        .sheet(isPresented: $showCreateEvent) {
+            CreateCircleEventView(circle: circle, onCreated: { event in
+                openEventTarget = EventTarget(eventId: event.id)
+            })
+            .environment(store)
+        }
+        .sheet(item: $openEventTarget) { target in
+            CircleEventDetailView(eventId: target.eventId)
+                .environment(store)
+        }
+        .onAppear { store.refreshRecurringEvents() }
     }
 
     // MARK: - Layered body
@@ -176,6 +189,20 @@ struct CircleDetailView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 8)
         }
+
+        // Events — anyone can plan a gathering, RSVP, check in, and post
+        // proofs that land in the circle story with an event tag.
+        CircleEventsSection(
+            circle: circle,
+            onCreate: {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showCreateEvent = true
+            },
+            onOpenEvent: { event in openEventTarget = EventTarget(eventId: event.id) }
+        )
+        .padding(.horizontal, Theme.pageHorizontalPadding)
+        .padding(.top, 24)
+        .padding(.bottom, 8)
 
         // Tail so content scrolls clear of the sundial.
         Color.clear.frame(height: 160)
@@ -575,6 +602,15 @@ private struct LinkPickerTarget: Identifiable, Equatable {
 private struct CircleStoryCaptureTarget: Identifiable {
     let id = UUID()
     let task: CircleTask?
+}
+
+// MARK: - Event target
+
+/// Identifiable wrapper around an event id so `sheet(item:)` can drive
+/// the event detail without a global UUID-Identifiable extension.
+private struct EventTarget: Identifiable {
+    let eventId: UUID
+    var id: UUID { eventId }
 }
 
 // MARK: - Hero gradient (shared by C4 / C4b)

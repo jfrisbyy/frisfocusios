@@ -46,6 +46,13 @@ final class Store {
     var circles: [FFCircle] = [] { didSet { markDirty(.circles) } }
     var circleTaskCompletions: [CircleTaskCompletion] = [] { didSet { markDirty(.circleTaskCompletions) } }
     var circleContributions: [CircleContribution] = [] { didSet { markDirty(.circleContributions) } }
+
+    /// Member-created gatherings inside circles, with RSVPs and live
+    /// check-ins. Recurring events spawn the next concrete occurrence
+    /// lazily (see `Store+Events`).
+    var circleEvents: [CircleEvent] = [] { didSet { markDirty(.circleEvents) } }
+    var eventRSVPs: [EventRSVP] = [] { didSet { markDirty(.eventRSVPs) } }
+    var eventCheckIns: [EventCheckIn] = [] { didSet { markDirty(.eventCheckIns) } }
     var signalFacts: [SignalFact] = [] { didSet { markDirty(.signalFacts) } }
     var cheers: [Cheer] = [] { didSet { markDirty(.cheers) } }
     var storyPosts: [StoryPost] = [] { didSet { markDirty(.storyPosts) } }
@@ -257,6 +264,9 @@ final class Store {
         static let circles = "circles"
         static let circleTaskCompletions = "circleTaskCompletions"
         static let circleContributions = "circleContributions"
+        static let circleEvents = "circleEvents"
+        static let eventRSVPs = "eventRSVPs"
+        static let eventCheckIns = "eventCheckIns"
         static let signalFacts = "signalFacts"
         static let cheers = "cheers"
         static let storyPosts = "storyPosts"
@@ -395,6 +405,9 @@ final class Store {
             self.circles = Store.loadArray(Keys.circles) ?? []
             self.circleTaskCompletions = Store.loadArray(Keys.circleTaskCompletions) ?? []
             self.circleContributions = Store.loadArray(Keys.circleContributions) ?? []
+            self.circleEvents = Store.loadArray(Keys.circleEvents) ?? []
+            self.eventRSVPs = Store.loadArray(Keys.eventRSVPs) ?? []
+            self.eventCheckIns = Store.loadArray(Keys.eventCheckIns) ?? []
             self.signalFacts = Store.loadArray(Keys.signalFacts) ?? []
             self.cheers = Store.loadArray(Keys.cheers) ?? []
             self.storyPosts = Store.loadArray(Keys.storyPosts) ?? []
@@ -527,6 +540,9 @@ final class Store {
         circles = []
         circleTaskCompletions = []
         circleContributions = []
+        circleEvents = []
+        eventRSVPs = []
+        eventCheckIns = []
         signalFacts = []
         cheers = []
         likes = []
@@ -557,6 +573,7 @@ final class Store {
     enum DataKey: CaseIterable {
         case season, tasks, todos, logEntries, notes, folders, proofPins, proofLibrary
         case friends, circles, circleTaskCompletions, circleContributions
+        case circleEvents, eventRSVPs, eventCheckIns
         case signalFacts, cheers, storyPosts, directShares, likes, comments, mediaAssets
         case avoidanceItems, avoidanceOccurrences, habitTrains, boosters
         case viewedStoryPostIds, pacts, pactCompletions, circleTaskRequests
@@ -649,6 +666,9 @@ final class Store {
         case .circles: setJSON(circles, forKey: Keys.circles, encoder: encoder)
         case .circleTaskCompletions: setJSON(circleTaskCompletions, forKey: Keys.circleTaskCompletions, encoder: encoder)
         case .circleContributions: setJSON(circleContributions, forKey: Keys.circleContributions, encoder: encoder)
+        case .circleEvents: setJSON(circleEvents, forKey: Keys.circleEvents, encoder: encoder)
+        case .eventRSVPs: setJSON(eventRSVPs, forKey: Keys.eventRSVPs, encoder: encoder)
+        case .eventCheckIns: setJSON(eventCheckIns, forKey: Keys.eventCheckIns, encoder: encoder)
         case .signalFacts: setJSON(signalFacts, forKey: Keys.signalFacts, encoder: encoder)
         case .cheers: setJSON(cheers, forKey: Keys.cheers, encoder: encoder)
         case .storyPosts: setJSON(storyPosts, forKey: Keys.storyPosts, encoder: encoder)
@@ -3070,6 +3090,7 @@ extension Store {
         caption: String?,
         circleId: UUID?,
         attachedCircleTaskId: UUID?,
+        eventId: UUID? = nil,
         durationSeconds: Double? = nil
     ) -> StoryPost {
         let trimmed = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3088,7 +3109,8 @@ extension Store {
             caption: captionOrNil,
             mediaId: asset.id,
             circleId: circleId,
-            attachedCircleTaskId: attachedCircleTaskId
+            attachedCircleTaskId: attachedCircleTaskId,
+            eventId: eventId
         )
         storyPosts.insert(post, at: 0)
         persistAll()

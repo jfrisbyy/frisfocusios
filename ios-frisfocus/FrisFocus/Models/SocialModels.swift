@@ -613,8 +613,16 @@ struct StoryPost: Codable, Identifiable {
     var mediaId: UUID?
     var circleId: UUID?
     var attachedCircleTaskId: UUID?
+    /// Set when this clip was posted to a circle event — it still lives
+    /// in the circle story, but carries an event tag and is filed in
+    /// the event's own archive. Optional so posts persisted before
+    /// events landed decode cleanly (missing key → nil).
+    var eventId: UUID?
 
     var isCircleClip: Bool { circleId != nil }
+
+    /// True when this clip documents a circle event.
+    var isEventProof: Bool { eventId != nil }
 
     /// Returns true for general posts older than 24h. Circle clips
     /// never expire — they're archived for the circle's life.

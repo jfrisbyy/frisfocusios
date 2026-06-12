@@ -32,6 +32,10 @@ enum CaptureMode {
     /// held task), `nil` for a general circle moment opened from the
     /// always-available "Add to story" button.
     case circleClip(circle: FFCircle, task: CircleTask?)
+    /// A proof posted to a circle event. Behaves like a circle clip
+    /// (posts into the circle's story) but also files under the event
+    /// and carries the event tag.
+    case eventProof(circle: FFCircle, event: CircleEvent, task: CircleTask?)
 
     var contextChip: (task: String?, circle: String)? {
         switch self {
@@ -39,6 +43,8 @@ enum CaptureMode {
             return nil
         case .circleClip(let circle, let task):
             return (task?.title, circle.name)
+        case .eventProof(let circle, let event, _):
+            return (event.title, circle.name)
         }
     }
 }
