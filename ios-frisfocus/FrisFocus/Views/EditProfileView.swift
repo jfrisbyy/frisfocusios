@@ -57,6 +57,7 @@ struct EditProfileView: View {
     @State private var headerCropTarget: HeaderCropTarget?
     @State private var croppedHeader: UIImage?
     @State private var headerRemoved: Bool = false
+    @State private var showHeaderStudio: Bool = false
 
     @State private var usernameStatus: UsernameStatus = .idle
     @State private var checkTask: Task<Void, Never>?
@@ -157,6 +158,16 @@ struct EditProfileView: View {
                 croppedHeader = baked
                 headerRemoved = false
             }
+        }
+        .fullScreenCover(isPresented: $showHeaderStudio) {
+            // The studio saves the cover choice itself; mirror it into
+            // local state so a later Save here doesn't revert it.
+            HeaderStudioView(onSaved: { savedCoverId in
+                seasonCoverId = savedCoverId
+            })
+            .environment(store)
+            .environment(profileStore)
+            .environment(auth)
         }
         .fullScreenCover(item: $avatarCropTarget) { target in
             AvatarCropView(image: target.image) { baked in
@@ -286,21 +297,48 @@ struct EditProfileView: View {
                 .tracking(1.5)
                 .foregroundStyle(Theme.textPrimary.opacity(0.5))
 
-            Text("The scene, color, and line friends see behind “\(store.currentSeason.name.replacingOccurrences(of: " Season", with: ""))” on your profile.")
+            Text("The header, color, and line friends see behind “\(store.currentSeason.name.replacingOccurrences(of: " Season", with: ""))” on your profile.")
                 .font(.sans(12, weight: .regular))
                 .foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // Cover rail — photo/color first, then the curated scenes.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    photoCoverOption
-                    ForEach(SeasonCoverKind.allCases) { kind in
-                        coverOption(kind)
+            // Header design moved to the full-screen studio — a live
+            // preview of skies and photos exactly as friends see them.
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showHeaderStudio = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "paintbrush.fill")
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Theme.textPrimary))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Design your header")
+                            .font(.sans(15, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("Skies & photos, previewed live")
+                            .font(.sans(12, weight: .regular))
+                            .foregroundStyle(Theme.textSecondary)
                     }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.sans(12, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
                 }
-                .padding(.vertical, 2)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(Theme.paperCream)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Theme.textPrimary.opacity(0.1), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open the header studio")
 
             // Accent swatches.
             VStack(alignment: .leading, spacing: 8) {
@@ -776,10 +814,10 @@ struct EditProfileView: View {
             guard phoneOk else { return }
         }
 
-        // The season look writes through the season slice, which also
-        // republishes the public season card for friends.
-        store.setSeasonLook(
-            coverId: seasonCoverId,
+        // Accent + intention write through the season slice, which
+        // republishes the public season card for friends. The header
+        // cover is owned by the studio, so it's never touched here.
+        store.setSeasonAccentAndIntention(
             accentHex: seasonAccentHex,
             intention: seasonIntention
         )

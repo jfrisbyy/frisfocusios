@@ -3,10 +3,12 @@
 //  FrisFocus
 //
 //  A small profile preview for someone you haven't added yet — opened
-//  by tapping a discover suggestion. Shows their avatar, name, handle,
-//  bio, when they joined, and the mutual count, with the same one-tap
-//  Add (flipping to Pending) as the row. Bio and join date are fetched
-//  lazily since the suggestion list doesn't carry them.
+//  by tapping a discover suggestion. Wears the same editorial design
+//  as the full profiles: their designed header with "CURRENTLY IN"
+//  and the season carved in, then the floating identity card with
+//  name, lifetime days, intention, mood line, and the dark Add pill.
+//  Bio and join date are fetched lazily since the suggestion list
+//  doesn't carry them.
 //
 
 import SwiftUI
@@ -41,8 +43,21 @@ struct DiscoverProfileSheet: View {
     private var profile: RemoteProfile { suggestion.profile }
     private var myId: String? { auth.user?.id }
 
+    private var card: SeasonCard? { profile.card }
+
     private var relationship: FriendRelationship {
         myId.map { graph.relationship(to: profile.id, myUserId: $0) } ?? .none
+    }
+
+    private var accent: Color {
+        if let hex = card?.accentHex { return Color(hex: hex) }
+        return profile.signatureColor
+    }
+
+    private var shortSeasonName: String? {
+        guard let full = card?.seasonName else { return nil }
+        let trimmed = full.replacingOccurrences(of: " Season", with: "")
+        return trimmed.isEmpty ? full : trimmed
     }
 
     var body: some View {
@@ -53,15 +68,12 @@ struct DiscoverProfileSheet: View {
                 VStack(spacing: 0) {
                     headerBanner
 
-                    avatar
-                        .padding(4)
-                        .background(Circle().fill(Theme.warmWheat))
-                        .offset(y: -44)
-                        .padding(.bottom, -44)
+                    identityCard
+                        .padding(.horizontal, 16)
+                        .offset(y: -46)
+                        .padding(.bottom, -46)
 
                     VStack(spacing: 14) {
-                        identity
-                        seasonLine
                         if let bio, !bio.isEmpty {
                             Text(bio)
                                 .font(.sans(14, weight: .regular))
@@ -69,12 +81,9 @@ struct DiscoverProfileSheet: View {
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 28)
                         }
-                        metaRow
-                        actionButton
-                            .padding(.top, 6)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 12)
+                    .padding(.top, 16)
                     .padding(.bottom, 36)
                 }
             }
@@ -83,7 +92,7 @@ struct DiscoverProfileSheet: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(28)
         .task { await loadDetail() }
@@ -98,58 +107,86 @@ struct DiscoverProfileSheet: View {
         } label: {
             Image(systemName: "xmark")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary.opacity(0.8))
+                .foregroundStyle(Theme.textCream)
                 .frame(width: 34, height: 34)
-                .background(Circle().fill(Theme.warmWheat.opacity(0.92)))
+                .background(Circle().fill(Color.black.opacity(0.30)))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Close")
     }
 
-    /// The same poster hero every profile wears — their chosen season
-    /// cover, else their header photo, else the signature-color band.
+    /// Their designed header — season cover, header photo, or accent
+    /// band — with the season carved in like the full profile.
     private var headerBanner: some View {
-        ProfilePosterBackground(
-            coverId: profile.card?.coverId,
-            headerURL: profile.headerURL,
-            accent: profile.signatureColor,
-            animated: false
-        )
-        .frame(height: 118)
+        ZStack(alignment: .bottomLeading) {
+            ProfilePosterBackground(
+                coverId: card?.coverId,
+                headerURL: profile.headerURL,
+                accent: profile.signatureColor,
+                animated: false
+            )
+
+            if let seasonName = shortSeasonName {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("CURRENTLY IN")
+                        .font(.sans(9, weight: .semibold))
+                        .tracking(2)
+                        .foregroundStyle(Theme.textCream.opacity(0.75))
+                    Text(seasonName)
+                        .font(.serif(24, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
+                    if let dayNumber = card?.currentDay {
+                        Text(card?.seasonLengthDays.map { "DAY \(dayNumber) OF \($0)" } ?? "DAY \(dayNumber)")
+                            .font(.sans(9, weight: .semibold))
+                            .tracking(1.8)
+                            .foregroundStyle(Theme.textCream.opacity(0.85))
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 58)
+            }
+        }
+        .frame(height: 196)
         .clipped()
     }
 
-    /// Their published season, when one exists — "In Foundation · day
-    /// 12" with the intention line underneath.
-    @ViewBuilder
-    private var seasonLine: some View {
-        if let card = profile.card, let seasonName = card.seasonName {
-            VStack(spacing: 4) {
-                HStack(spacing: 7) {
-                    Circle()
-                        .fill(card.accentHex.map { Color(hex: $0) } ?? profile.signatureColor)
-                        .frame(width: 6, height: 6)
-                    Text(seasonMetaText(seasonName: seasonName, day: card.currentDay))
-                        .font(.sans(12, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                if let intention = card.intention, !intention.isEmpty {
-                    Text("“\(intention)”")
-                        .font(.serifItalic(13, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.65))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .padding(.horizontal, 28)
+    /// The same floating identity card every profile wears.
+    private var identityCard: some View {
+        ProfileIdentityCard(
+            name: profile.displayName,
+            lifetimeDays: card?.lifetimeDays,
+            metaLine: metaLine,
+            intention: card?.intention,
+            moodLine: card?.moodLine
+        ) {
+            avatar
+        } extra: {
+            if suggestion.mutualCount > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                    Text("\(suggestion.mutualCount) in common")
+                        .font(.sans(13, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 }
             }
+        } pills: {
+            actionPill
         }
     }
 
-    private func seasonMetaText(seasonName: String, day: Int?) -> String {
-        let short = seasonName.replacingOccurrences(of: " Season", with: "")
-        if let day { return "In \(short) · day \(day)" }
-        return "In \(short)"
+    private var metaLine: String {
+        var parts: [String] = []
+        if let handle = profile.handle { parts.append(handle) }
+        if let joinedDate {
+            parts.append("since \(joinedDate.formatted(.dateTime.month(.abbreviated).year()))")
+        }
+        return parts.isEmpty ? "On FrisFocus" : parts.joined(separator: " · ")
     }
 
     private var avatar: some View {
@@ -164,127 +201,42 @@ struct DiscoverProfileSheet: View {
                 initialsDisc
             }
         }
-        .frame(width: 88, height: 88)
+        .frame(width: 64, height: 64)
         .clipShape(Circle())
-        .overlay(Circle().stroke(Theme.sunWarm, lineWidth: 2))
+        .padding(5)
+        .background(Circle().fill(Color(hex: 0xFFFBF1)))
+        .overlay(Circle().strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 1))
     }
 
     private var initialsDisc: some View {
         ZStack {
-            Theme.textPrimary
+            Circle().fill(accent)
             Text(profile.initials)
-                .font(.serif(30, weight: .medium))
+                .font(.serif(23, weight: .medium))
                 .foregroundStyle(Theme.textCream)
         }
     }
 
-    private var identity: some View {
-        VStack(spacing: 3) {
-            Text(profile.displayName)
-                .font(.serif(24, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-            if let handle = profile.handle {
-                Text(handle)
-                    .font(.sans(14, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-            }
-        }
-        .padding(.horizontal, 24)
-    }
-
-    private var metaRow: some View {
-        HStack(spacing: 14) {
-            if suggestion.mutualCount > 0 {
-                metaChip(
-                    icon: "person.2.fill",
-                    text: "\(suggestion.mutualCount) mutual friend\(suggestion.mutualCount == 1 ? "" : "s")"
-                )
-            }
-            if let joinedDate {
-                metaChip(
-                    icon: "sparkles",
-                    text: "Joined \(joinedDate.formatted(.dateTime.month(.wide).year()))"
-                )
-            }
-        }
-    }
-
-    private func metaChip(icon: String, text: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.textTertiary)
-            Text(text)
-                .font(.sans(12, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 30)
-        .background(Theme.paperCream)
-        .clipShape(Capsule())
-    }
-
     @ViewBuilder
-    private var actionButton: some View {
+    private var actionPill: some View {
         switch relationship {
         case .none:
-            Button {
+            IdentityPill(title: "Add friend", icon: "person.badge.plus", filled: true, isWorking: isSending) {
                 guard let myId, !isSending else { return }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 isSending = true
                 Task {
                     await graph.sendRequest(to: profile, myUserId: myId)
                     socialSync.pokeEngine(trigger: "friend")
                     isSending = false
                 }
-            } label: {
-                HStack(spacing: 8) {
-                    if isSending {
-                        ProgressView().tint(Theme.textCream)
-                    } else {
-                        Image(systemName: "person.badge.plus")
-                            .font(.system(size: 14, weight: .semibold))
-                    }
-                    Text("Add friend")
-                        .font(.sans(15, weight: .semibold))
-                }
-                .foregroundStyle(Theme.textCream)
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .background(Theme.textPrimary)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .padding(.horizontal, 24)
             }
-            .buttonStyle(.plain)
         case .requestSent:
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 13, weight: .bold))
-                Text("Request sent")
-                    .font(.sans(15, weight: .semibold))
-            }
-            .foregroundStyle(Theme.textSecondary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 50)
-            .background(Theme.paperCream)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .padding(.horizontal, 24)
-            .transition(.scale(scale: 0.96).combined(with: .opacity))
+            IdentityPill(title: "Request sent", icon: "checkmark", filled: false) { }
+                .allowsHitTesting(false)
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
         case .friends:
-            HStack(spacing: 8) {
-                Image(systemName: "person.2.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("Friends")
-                    .font(.sans(15, weight: .semibold))
-            }
-            .foregroundStyle(Theme.textSecondary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 50)
-            .background(Theme.paperCream)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .padding(.horizontal, 24)
+            IdentityPill(title: "Friends", icon: "person.2.fill", filled: false) { }
+                .allowsHitTesting(false)
         case .requestReceived, .isMe:
             EmptyView()
         }

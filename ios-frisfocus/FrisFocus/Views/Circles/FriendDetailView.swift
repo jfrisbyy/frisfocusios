@@ -2,19 +2,20 @@
 //  FriendDetailView.swift
 //  FrisFocus
 //
-//  The friend profile, restructured into a relationship **hub** that
-//  flows from *them* → *us*. It is the single home for everything
-//  between you and one person.
+//  The friend profile — a quiet editorial page, not a stat sheet.
 //
-//   • Header (their signature color): avatar carries a story ring —
-//     tapping it opens their stories. Name, season, "connected N months."
-//   • Action row: Send a proof · Message (link-out) · Cheer.
-//   • THEM — the witnessing layer, gated by THEIR visibility tier
-//     (quiet / open / full). Full shows the real day: routines, a task
-//     checklist (open items grey, never red), focus, milestone, react row.
-//   • US — Together (shared circles + pacts), Privately (a link-out to
-//     the proof/message thread, never inline), Since you connected
-//     (relationship texture), and Sharing & connection settings.
+//   • Hero: the friend's own header (photo or crafted sky) that
+//     breathes with their actual day, with "CURRENTLY IN" and the big
+//     serif season name carved in. Back and "…" float as soft discs.
+//   • Identity card: a warm white card over the seam — story-ringed
+//     avatar, name beside the one number that matters (days shown up,
+//     ever), handle + joined + connected, intention quote, their mood
+//     line, mutual friends, and the dark Friends/Add pill with a round
+//     message button.
+//   • Body: hairline sections — TODAY (ring + headline + task chips,
+//     tier-gated), points privacy as a feature, one italic witness
+//     line, the season's destinations as a timeline, seasons before,
+//     then Together and Since-you-connected.
 //
 //  Visibility is always the friend's dial; the page never exposes more
 //  than they chose. Calm, witness-model, never a surveillance sheet.
@@ -41,6 +42,7 @@ struct FriendDetailView: View {
     @State private var showSendProof: Bool = false
     @State private var showProposePact: Bool = false
     @State private var showThread: Bool = false
+    @State private var showWeekSheet: Bool = false
     @State private var detailCircle: FFCircle?
     @State private var detailPact: Pact?
     @State private var ringPulse: Bool = false
@@ -83,13 +85,10 @@ struct FriendDetailView: View {
     private var remoteProfile: RemoteProfile? { socialSync.profile(forLocal: friend.id) }
 
     /// The friend's published season card — cover, accent, intention,
-    /// season info, past chapters. Prefers the synced Friend record;
-    /// falls back to the cached remote profile.
+    /// season info, lifetime days, mood, milestones, past chapters.
     private var publishedCard: SeasonCard? { liveFriend.seasonCard ?? remoteProfile?.card }
 
-    /// The live connection state — drives the hero pill. People on
-    /// this page are friends in practice, but the pill stays honest if
-    /// the graph changed underneath (an unfriend elsewhere).
+    /// The live connection state — drives the identity pill.
     private var relationship: FriendRelationship {
         guard let remote = remoteProfile, let myId = myUserId else { return .friends }
         return friendGraph.relationship(to: remote.id, myUserId: myId)
@@ -109,9 +108,29 @@ struct FriendDetailView: View {
         }.count
     }
 
-    private var moodText: String {
-        tier == .full ? day.moodLine : store.headlineFromFriend(friend)
+    /// The header's living-light strength — their actual day. Quiet
+    /// tier reveals nothing, so it rests neutral.
+    private var headerStrength: Double {
+        switch tier {
+        case .full: return 0.15 + 0.85 * day.completionFraction
+        case .open: return 0.15 + 0.85 * day.momentum
+        case .quiet: return 0.5
+        }
     }
+
+    /// The friend's custom header background, when they've set one.
+    private var headerPhotoURL: URL? {
+        liveFriend.headerURL ?? remoteProfile?.headerURL
+    }
+
+    private var shortSeasonName: String? {
+        let raw = publishedCard?.seasonName ?? friend.currentSeasonName
+        guard let full = raw else { return nil }
+        let trimmed = full.replacingOccurrences(of: " Season", with: "")
+        return trimmed.isEmpty ? full : trimmed
+    }
+
+    // MARK: - Body
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -119,16 +138,16 @@ struct FriendDetailView: View {
                 VStack(spacing: 0) {
                     hero
 
-                    VStack(alignment: .leading, spacing: 20) {
-                        seasonProgressStrip
-                        themLayer
-                        chaptersBlock
-                        Divider().overlay(Theme.textPrimary.opacity(0.08))
-                        usLayer
-                    }
-                    .padding(.horizontal, Theme.pageHorizontalPadding)
-                    .padding(.top, 18)
-                    .padding(.bottom, 24)
+                    identityCard
+                        .padding(.horizontal, Theme.pageHorizontalPadding - 6)
+                        .offset(y: -52)
+                        .padding(.bottom, -52)
+                        .zIndex(1)
+
+                    journalBody
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.top, 26)
+                        .padding(.bottom, 24)
 
                     Color.clear.frame(height: 130)
                 }
@@ -164,6 +183,9 @@ struct FriendDetailView: View {
         }
         .sheet(isPresented: $showMutualsList) {
             MutualFriendsListSheet(name: friend.displayName, mutuals: mutuals)
+        }
+        .sheet(isPresented: $showWeekSheet) {
+            WeekRhythmSheet(name: friend.displayName, bars: day.rhythmBars, accent: accent)
         }
         .alert("Block \(friend.displayName)?", isPresented: $showBlockConfirm) {
             Button("Block", role: .destructive) {
@@ -266,7 +288,7 @@ struct FriendDetailView: View {
 
     // MARK: - Friend-control actions
 
-    /// Mutual friends + join date — the hero's relationship texture.
+    /// Mutual friends + join date — the identity card's quiet facts.
     private func loadProfileTexture() async {
         guard let remote = remoteProfile, let myId = myUserId else { return }
         async let mutualsFetch = friendGraph.mutualFriends(with: remote.id, myUserId: myId)
@@ -298,286 +320,71 @@ struct FriendDetailView: View {
 
     // MARK: - Hero
 
-    /// The poster hero: the friend's season cover (or header photo /
-    /// accent band) with their identity, season title, intention, and
-    /// the friend pill carved into it.
-    @ViewBuilder
+    /// The owner-designed header with the season carved into its lower
+    /// left, breathing with their real day.
     private var hero: some View {
-        VStack(spacing: 0) {
-            topBar
-                .padding(.top, 54)
-                .padding(.horizontal, Theme.pageHorizontalPadding)
-
-            VStack(spacing: 6) {
-                storyRingAvatar
-
-                if hasUnviewedStories {
-                    Text("● \(unviewedStoryCount) NEW \(unviewedStoryCount == 1 ? "STORY" : "STORIES") · TAP TO VIEW")
-                        .font(.sans(10, weight: .semibold))
-                        .tracking(1.5)
-                        .foregroundStyle(Theme.sunCore)
-                } else if hasAnyStories {
-                    Text("TAP TO VIEW STORY")
-                        .font(.sans(10, weight: .medium))
-                        .tracking(1.5)
-                        .foregroundStyle(Theme.textCream.opacity(0.7))
-                }
-
-                Text(friend.displayName)
-                    .font(.serif(27, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-
-                Text(metaLine)
-                    .font(.sans(12, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.82))
-
-                seasonTitleBlock
-                    .padding(.top, 10)
-
-                friendPillRow
-                    .padding(.top, 12)
-            }
-            .padding(.top, 8)
-            .padding(.horizontal, Theme.pageHorizontalPadding)
-
-            actionRow
-                .padding(.horizontal, Theme.pageHorizontalPadding)
-                .padding(.top, 16)
-                .padding(.bottom, 18)
-        }
-        .frame(maxWidth: .infinity)
-        .background(
+        ZStack(alignment: .bottomLeading) {
             ProfilePosterBackground(
                 coverId: publishedCard?.coverId,
                 headerURL: headerPhotoURL,
-                accent: accent
+                accent: accent,
+                strength: headerStrength
             )
-        )
-    }
 
-    /// The friend's custom header background, when they've set one.
-    /// Prefers the synced Friend record; falls back to the cached
-    /// remote profile for people resolved outside the friend list.
-    private var headerPhotoURL: URL? {
-        liveFriend.headerURL ?? remoteProfile?.headerURL
-    }
-
-    /// Handle · joined · connected — the quiet identity facts.
-    private var metaLine: String {
-        var parts: [String] = []
-        if let handle = remoteProfile?.handle { parts.append(handle) }
-        if let joinedDate {
-            parts.append("Joined \(joinedDate.formatted(.dateTime.month(.abbreviated).year()))")
-        }
-        parts.append(store.connectedDescription(friend))
-        return parts.joined(separator: " · ")
-    }
-
-    /// The season title carved into the poster — big serif name,
-    /// "DAY N", and the owner's intention line.
-    @ViewBuilder
-    private var seasonTitleBlock: some View {
-        if let seasonName = shortSeasonName {
-            VStack(spacing: 5) {
-                Text(seasonName)
-                    .font(.serif(32, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.7)
-                    .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 2)
-
-                if let day = publishedCard?.currentDay ?? friend.currentSeasonDay {
-                    Text(seasonDayLine(day))
+            VStack(alignment: .leading, spacing: 4) {
+                if shortSeasonName != nil {
+                    Text("CURRENTLY IN")
+                        .font(.sans(10, weight: .semibold))
+                        .tracking(2.2)
+                        .foregroundStyle(Theme.textCream.opacity(0.75))
+                }
+                if let seasonName = shortSeasonName {
+                    Text(seasonName)
+                        .font(.serif(32, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.65)
+                        .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
+                }
+                if let dayNumber = publishedCard?.currentDay ?? friend.currentSeasonDay {
+                    Text(seasonDayLine(dayNumber))
                         .font(.sans(10, weight: .semibold))
                         .tracking(2)
                         .foregroundStyle(Theme.textCream.opacity(0.85))
                 }
-
-                if let intention = publishedCard?.intention, !intention.isEmpty {
-                    Text("“\(intention)”")
-                        .font(.serifItalic(14, weight: .regular))
-                        .foregroundStyle(Theme.textCream.opacity(0.9))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .padding(.horizontal, 12)
-                }
             }
+            .padding(.horizontal, Theme.pageHorizontalPadding)
+            .padding(.bottom, 74)
+        }
+        .frame(height: 330)
+        .clipped()
+        .overlay(alignment: .top) {
+            topBar
+                .padding(.top, 54)
+                .padding(.horizontal, Theme.pageHorizontalPadding)
         }
     }
 
-    private func seasonDayLine(_ day: Int) -> String {
+    private func seasonDayLine(_ dayNumber: Int) -> String {
         if let length = publishedCard?.seasonLengthDays, length > 0 {
-            return "DAY \(day) OF \(length)"
+            return "DAY \(dayNumber) OF \(length)"
         }
-        return "DAY \(day)"
+        return "DAY \(dayNumber)"
     }
 
-    // MARK: Friend pill + mutuals
-
-    private var friendPillRow: some View {
-        VStack(spacing: 8) {
-            friendPill
-            if !mutuals.isEmpty {
-                mutualsButton
-            }
-        }
-    }
-
-    /// The honest relationship pill — Friends ✓ (tap to unfriend),
-    /// Add friend, Requested, or Accept request.
-    @ViewBuilder
-    private var friendPill: some View {
-        switch relationship {
-        case .friends, .isMe:
-            heroPillButton(icon: "checkmark", title: "Friends", filled: false) {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showUnfriendConfirm = true
-            }
-            .accessibilityLabel("Friends with \(friend.displayName). Tap for options.")
-        case .none:
-            heroPillButton(icon: "person.badge.plus", title: "Add friend", filled: true) {
-                guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                isRelationshipWorking = true
-                Task {
-                    await friendGraph.sendRequest(to: remote, myUserId: myId)
-                    isRelationshipWorking = false
-                }
-            }
-        case .requestSent:
-            heroPillLabel(icon: "hourglass", title: "Requested")
-        case .requestReceived:
-            heroPillButton(icon: "checkmark.circle", title: "Accept request", filled: true) {
-                guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
-                guard let request = friendGraph.incoming.first(where: { $0.profile.id == remote.id }) else { return }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                isRelationshipWorking = true
-                Task {
-                    await friendGraph.accept(request, myUserId: myId)
-                    await socialSync.refreshFriends()
-                    isRelationshipWorking = false
-                }
-            }
-        }
-    }
-
-    private func heroPillButton(icon: String, title: String, filled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                if isRelationshipWorking {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(filled ? Theme.textPrimary : Theme.textCream)
-                } else {
-                    Image(systemName: icon)
-                        .font(.sans(12, weight: .bold))
-                }
-                Text(title)
-                    .font(.sans(14, weight: .semibold))
-            }
-            .foregroundStyle(filled ? Theme.textPrimary : Theme.textCream)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 9)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(filled ? Theme.textCream : Color.white.opacity(0.16))
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(Theme.textCream.opacity(filled ? 0 : 0.45), lineWidth: 1)
-            )
-            .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(isRelationshipWorking)
-    }
-
-    private func heroPillLabel(icon: String, title: String) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: icon)
-                .font(.sans(12, weight: .semibold))
-            Text(title)
-                .font(.sans(14, weight: .semibold))
-        }
-        .foregroundStyle(Theme.textCream.opacity(0.8))
-        .padding(.horizontal, 22)
-        .padding(.vertical, 9)
-        .background(Capsule(style: .continuous).fill(Color.white.opacity(0.10)))
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(Theme.textCream.opacity(0.3), lineWidth: 1)
-        )
-    }
-
-    /// Overlapping mutual avatars + "N friends in common" — taps open
-    /// the full list.
-    private var mutualsButton: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showMutualsList = true
-        } label: {
-            HStack(spacing: 8) {
-                HStack(spacing: -8) {
-                    ForEach(Array(mutuals.prefix(3).enumerated()), id: \.element.id) { _, profile in
-                        mutualDisc(profile)
-                    }
-                }
-                Text("\(mutuals.count) friend\(mutuals.count == 1 ? "" : "s") in common")
-                    .font(.sans(12, weight: .medium))
-                    .foregroundStyle(Theme.textCream.opacity(0.9))
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(mutuals.count) mutual friends. Tap to view.")
-    }
-
-    private func mutualDisc(_ profile: RemoteProfile) -> some View {
-        ZStack {
-            if let url = profile.photoURL {
-                CachedImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    mutualInitials(profile)
-                }
-            } else {
-                mutualInitials(profile)
-            }
-        }
-        .frame(width: 24, height: 24)
-        .clipShape(Circle())
-        .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.8), lineWidth: 1.2))
-    }
-
-    private func mutualInitials(_ profile: RemoteProfile) -> some View {
-        ZStack {
-            Color(hex: RemoteIDMapper.accentHex(forRemoteId: profile.id))
-            Text(profile.initials)
-                .font(.sans(9, weight: .semibold))
-                .foregroundStyle(Theme.textCream)
-        }
-    }
-
-    private var shortSeasonName: String? {
-        guard let full = friend.currentSeasonName else { return nil }
-        let trimmed = full.replacingOccurrences(of: " Season", with: "")
-        return trimmed.isEmpty ? full : trimmed
-    }
-
+    /// Back + "…" as soft dark floating discs.
     private var topBar: some View {
         HStack {
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismiss()
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left").font(.sans(15, weight: .medium))
-                    Text("Friends").font(.sans(14, weight: .regular))
-                }
-                .foregroundStyle(Theme.textCream)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
+                Image(systemName: "chevron.left")
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(Color.black.opacity(0.28)))
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back to Friends")
@@ -612,19 +419,146 @@ struct FriendDetailView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.sans(17, weight: .semibold))
+                    .font(.sans(16, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 6)
-                    .contentShape(Rectangle())
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(Color.black.opacity(0.28)))
+                    .contentShape(Circle())
             }
             .accessibilityLabel("More options")
         }
     }
 
+    // MARK: - Identity card
+
+    private var identityCard: some View {
+        ProfileIdentityCard(
+            name: friend.displayName,
+            lifetimeDays: publishedCard?.lifetimeDays,
+            metaLine: metaLine,
+            intention: publishedCard?.intention,
+            moodLine: publishedCard?.moodLine
+        ) {
+            storyRingAvatar
+        } extra: {
+            if !mutuals.isEmpty {
+                mutualsButton
+            }
+        } pills: {
+            HStack(spacing: 10) {
+                friendPill
+                IdentityRoundButton(
+                    icon: "bubble.left.and.bubble.right.fill",
+                    badge: unreadFromFriend > 0,
+                    label: unreadFromFriend > 0
+                        ? "Message \(friend.displayName), \(unreadFromFriend) unread"
+                        : "Message \(friend.displayName)"
+                ) {
+                    showThread = true
+                }
+            }
+        }
+    }
+
+    /// Handle · joined · connected — the quiet identity facts.
+    private var metaLine: String {
+        var parts: [String] = []
+        if let handle = remoteProfile?.handle { parts.append(handle) }
+        if let joinedDate {
+            parts.append("since \(joinedDate.formatted(.dateTime.month(.abbreviated).year()))")
+        } else {
+            parts.append(store.connectedDescription(friend))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The honest relationship pill — Friends ✓ (tap to unfriend),
+    /// Add friend, Requested, or Accept request.
+    @ViewBuilder
+    private var friendPill: some View {
+        switch relationship {
+        case .friends, .isMe:
+            IdentityPill(title: "Friends", icon: "checkmark", filled: true, isWorking: isRelationshipWorking) {
+                showUnfriendConfirm = true
+            }
+            .accessibilityLabel("Friends with \(friend.displayName). Tap for options.")
+        case .none:
+            IdentityPill(title: "Add friend", icon: "person.badge.plus", filled: true, isWorking: isRelationshipWorking) {
+                guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
+                isRelationshipWorking = true
+                Task {
+                    await friendGraph.sendRequest(to: remote, myUserId: myId)
+                    isRelationshipWorking = false
+                }
+            }
+        case .requestSent:
+            IdentityPill(title: "Requested", icon: "hourglass", filled: false, isWorking: false) { }
+                .allowsHitTesting(false)
+        case .requestReceived:
+            IdentityPill(title: "Accept request", icon: "checkmark.circle", filled: true, isWorking: isRelationshipWorking) {
+                guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
+                guard let request = friendGraph.incoming.first(where: { $0.profile.id == remote.id }) else { return }
+                isRelationshipWorking = true
+                Task {
+                    await friendGraph.accept(request, myUserId: myId)
+                    await socialSync.refreshFriends()
+                    isRelationshipWorking = false
+                }
+            }
+        }
+    }
+
+    /// Overlapping mutual avatars + "N in common" — taps open the list.
+    private var mutualsButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showMutualsList = true
+        } label: {
+            HStack(spacing: 8) {
+                HStack(spacing: -8) {
+                    ForEach(Array(mutuals.prefix(3).enumerated()), id: \.element.id) { _, profile in
+                        mutualDisc(profile)
+                    }
+                }
+                Text("\(mutuals.count) in common")
+                    .font(.sans(13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(mutuals.count) mutual friends. Tap to view.")
+    }
+
+    private func mutualDisc(_ profile: RemoteProfile) -> some View {
+        ZStack {
+            if let url = profile.photoURL {
+                CachedImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    mutualInitials(profile)
+                }
+            } else {
+                mutualInitials(profile)
+            }
+        }
+        .frame(width: 24, height: 24)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Color(hex: 0xFFFBF1), lineWidth: 1.5))
+    }
+
+    private func mutualInitials(_ profile: RemoteProfile) -> some View {
+        ZStack {
+            Color(hex: RemoteIDMapper.accentHex(forRemoteId: profile.id))
+            Text(profile.initials)
+                .font(.sans(9, weight: .semibold))
+                .foregroundStyle(Theme.textCream)
+        }
+    }
+
     /// Avatar + story ring. Lit gold (with a slow shimmer) when there
-    /// are unviewed stories; muted when all seen; a quiet cream ring
-    /// when they have no active story. Tapping opens their stories.
+    /// are unviewed stories; muted when all seen; a quiet ring when
+    /// they have no active story. Tapping opens their stories.
     private var storyRingAvatar: some View {
         Button {
             guard hasAnyStories else { return }
@@ -643,9 +577,10 @@ struct FriendDetailView: View {
                         initialsAvatar
                     }
                 }
-                .frame(width: 76, height: 76)
+                .frame(width: 64, height: 64)
                 .clipShape(Circle())
                 .padding(5)
+                .background(Circle().fill(Color(hex: 0xFFFBF1)))
                 .overlay { ringOverlay }
             }
             .contentShape(Circle())
@@ -653,7 +588,11 @@ struct FriendDetailView: View {
         .buttonStyle(.plain)
         .disabled(!hasAnyStories)
         .matchedTransitionSource(id: "frienddetail-story", in: storyZoom)
-        .accessibilityLabel(hasUnviewedStories ? "\(friend.displayName), \(unviewedStoryCount) new stories" : friend.displayName)
+        .accessibilityLabel(
+            hasUnviewedStories
+                ? "\(friend.displayName), \(unviewedStoryCount) new stories"
+                : friend.displayName
+        )
     }
 
     /// Initials on the signature color — the fallback when this person
@@ -662,7 +601,7 @@ struct FriendDetailView: View {
         ZStack {
             Circle().fill(accent)
             Text(friend.initials)
-                .font(.sans(26, weight: .medium))
+                .font(.sans(23, weight: .medium))
                 .foregroundStyle(Theme.textCream)
         }
     }
@@ -680,374 +619,147 @@ struct FriendDetailView: View {
                 )
                 .opacity(reduceMotion ? 1 : (ringPulse ? 1 : 0.6))
         } else if hasAnyStories {
-            Circle().strokeBorder(Theme.textCream.opacity(0.4), lineWidth: 2)
+            Circle().strokeBorder(Theme.sunOuter.opacity(0.5), lineWidth: 2)
         } else {
-            Circle().strokeBorder(Theme.textCream.opacity(0.55), lineWidth: 1)
+            Circle().strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 1)
         }
     }
 
-    // MARK: - Action row (inside the hero)
+    // MARK: - Journal body
 
-    /// Compact icon-only circles — camera, chat bubble, clapping hands
-    /// — so the hero reads calm. The proof button stays solid cream as
-    /// the primary action; each keeps its spoken label.
-    private var actionRow: some View {
-        HStack(spacing: 18) {
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showSendProof = true
-            } label: {
-                actionIcon("camera.fill", filled: true)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Send a proof to \(friend.displayName)")
-
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showThread = true
-            } label: {
-                actionIcon("bubble.left.and.bubble.right.fill", filled: false, dot: unreadFromFriend > 0)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(unreadFromFriend > 0 ? "Message \(friend.displayName), \(unreadFromFriend) unread" : "Message \(friend.displayName)")
-
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showCheerComposer = true
-            } label: {
-                actionIcon("hands.clap.fill", filled: false)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Cheer \(friend.displayName)")
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    /// One glassy icon circle on the accent band. The filled (cream)
-    /// variant marks the primary action.
-    private func actionIcon(_ icon: String, filled: Bool, dot: Bool = false) -> some View {
-        ZStack(alignment: .topTrailing) {
-            Image(systemName: icon)
-                .font(.sans(16, weight: .semibold))
-                .foregroundStyle(filled ? Theme.textPrimary : Theme.textCream)
-                .frame(width: 46, height: 46)
-                .background(
-                    Circle()
-                        .fill(filled ? Theme.textCream : Color.white.opacity(0.14))
-                )
-                .overlay(
-                    Circle()
-                        .strokeBorder(Theme.textCream.opacity(filled ? 0 : 0.35), lineWidth: 0.8)
-                )
-
-            if dot {
-                Circle()
-                    .fill(Theme.alertRed)
-                    .frame(width: 9, height: 9)
-                    .overlay(Circle().strokeBorder(Color.black.opacity(0.25), lineWidth: 0.8))
-                    .offset(x: -1, y: 1)
-            }
-        }
-        .contentShape(Circle())
-    }
-
-    // MARK: - THEM layer
-
-    @ViewBuilder
-    private var themLayer: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("\(friend.displayName.uppercased()) TODAY · \(tierShareLabel.uppercased())")
-                .font(.sans(10, weight: .medium))
-                .tracking(1.5)
-                .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                .fixedSize(horizontal: false, vertical: true)
-
-            if tier == .quiet {
-                quietGlance
-            } else {
-                dayGlanceCard
-            }
-
-            if tier == .open {
-                effortBreakdownCard
-            }
-
-            if tier == .full {
-                fullChecklistCard
-                routinesCard
-                focusMilestoneRow
-            }
+    private var journalBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            todaySection
 
             if tier != .quiet {
+                JournalHairline()
+                    .padding(.vertical, 18)
                 exactPointsRow
-                rhythmFooter
             }
+
+            if let witness = witnessLine {
+                JournalHairline()
+                    .padding(.vertical, 18)
+                WitnessLineView(text: witness, accent: accent)
+            }
+
+            if tier != .quiet, let milestones = publishedCard?.milestones, !milestones.isEmpty {
+                JournalHairline()
+                    .padding(.vertical, 18)
+                destinationsSection(milestones)
+            }
+
+            if let past = publishedCard?.pastSeasons, !past.isEmpty {
+                JournalHairline()
+                    .padding(.vertical, 18)
+                seasonsBeforeSection(past)
+            }
+
+            JournalHairline()
+                .padding(.vertical, 18)
+            togetherSection
+
+            JournalHairline()
+                .padding(.vertical, 18)
+            sinceConnectedSection
         }
     }
 
-    /// Milestone progress for the current season — the "this season"
-    /// strip under the hero. Only when their tier shares goal status
-    /// and a card with milestones was published.
-    @ViewBuilder
-    private var seasonProgressStrip: some View {
-        if tier != .quiet,
-           let published = publishedCard,
-           let total = published.milestonesTotal, total > 0 {
-            let done = published.milestonesDone ?? 0
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    sectionLabel("THIS SEASON")
-                    Spacer()
-                    Text("\(done) of \(total) milestones")
-                        .font(.sans(12, weight: .semibold))
-                        .foregroundStyle(done == total && total > 0 ? Theme.alertGreen : Theme.textPrimary.opacity(0.65))
-                }
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.textPrimary.opacity(0.08))
-                        Capsule()
-                            .fill(accent)
-                            .frame(width: proxy.size.width * CGFloat(min(1, Double(done) / Double(max(1, total)))))
-                    }
-                }
-                .frame(height: 8)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(glanceBackground)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(done) of \(total) milestones reached this season")
-        }
+    /// One true sentence about their recent story, when there is one.
+    private var witnessLine: String? {
+        guard tier != .quiet else { return nil }
+        return makeWitnessLine(day: day, card: publishedCard)
     }
 
-    private var tierShareLabel: String {
-        switch tier {
-        case .quiet: return "shares a little with you"
-        case .open:  return "shares the shape with you"
-        case .full:  return "shares their full day with you"
-        }
-    }
+    // MARK: TODAY
 
-    // MARK: - Day at a glance (the lead)
-
-    /// The warm, task-focused lead for Open / Full: a signature-color
-    /// progress ring beside the mood line. At Full the complete grouped
-    /// checklist lives in its own card right below, so the glance stays
-    /// a glance.
-    private var dayGlanceCard: some View {
-        HStack(alignment: .center, spacing: 16) {
-            dayRing
-            VStack(alignment: .leading, spacing: 6) {
-                Text(moodText)
-                    .font(.serifItalic(18, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.88))
-                    .fixedSize(horizontal: false, vertical: true)
-                if tier == .open {
-                    Text("The shape of their day")
-                        .font(.sans(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                } else if day.openCount > 0 {
-                    Text("\(day.openCount) still open — the day’s not over.")
-                        .font(.sans(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(glanceBackground)
-    }
-
-    // MARK: Full — the complete checklist, grouped by category
-
-    /// The friend's whole day, the way their own Work zone reads it:
-    /// grouped by life category with the category's color dot and a
-    /// per-category "done of total". Done items tick green; open items
-    /// stay gentle grey — never red, never "failed."
-    private var fullChecklistCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("THEIR LIST · \(day.doneCount) OF \(day.totalCount) DONE")
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(day.categoryBreakdown.enumerated()), id: \.element.category) { idx, group in
-                    if idx > 0 {
-                        Rectangle().fill(Theme.textPrimary.opacity(0.06)).frame(height: 0.5)
-                            .padding(.horizontal, 14)
-                    }
-                    categoryGroup(group.category, done: group.done, total: group.total)
-                }
-            }
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(card)
-        }
-    }
-
-    private func categoryGroup(_ category: Category, done: Int, total: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 7) {
-                Circle().fill(category.color).frame(width: 7, height: 7)
-                Text(category.displayName.uppercased())
-                    .font(.sans(10, weight: .semibold))
-                    .tracking(1.3)
-                    .foregroundStyle(category.darkColor)
-                Spacer()
-                Text("\(done) of \(total)")
-                    .font(.sans(11, weight: .medium))
-                    .foregroundStyle(done == total ? Theme.alertGreen : Theme.textPrimary.opacity(0.45))
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 11)
-            .padding(.bottom, 4)
-
-            ForEach(tasksInCategory(category)) { task in
-                checklistRow(task)
-            }
-        }
-        .padding(.bottom, 9)
-    }
-
-    /// Tasks for one category, done items first so the wins lead.
-    private func tasksInCategory(_ category: Category) -> [FriendDayTask] {
-        day.tasks
-            .filter { $0.category == category }
-            .sorted { $0.isDone && !$1.isDone }
-    }
-
-    private func checklistRow(_ task: FriendDayTask) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: task.isDone ? "checkmark.circle.fill" : "circle")
-                .font(.sans(15, weight: task.isDone ? .semibold : .regular))
-                .foregroundStyle(task.isDone ? Theme.alertGreen : Theme.textPrimary.opacity(0.25))
-            Text(task.title)
-                .font(.sans(14, weight: task.isDone ? .medium : .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(task.isDone ? 0.9 : 0.55))
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 5)
-        .accessibilityLabel("\(task.title), \(task.isDone ? "done" : "still open")")
-    }
-
-    // MARK: Open — effort by category, no task names
-
-    /// The Open-tier breakdown: where their completed effort went today,
-    /// as colored category segments — the shape of the day without a
-    /// single task name leaking through.
-    @ViewBuilder
-    private var effortBreakdownCard: some View {
-        let groups = day.categoryBreakdown.filter { $0.done > 0 }
-        if !groups.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                sectionLabel("WHERE THEIR EFFORT WENT")
-                VStack(alignment: .leading, spacing: 12) {
-                    effortSegmentBar(groups)
-                    FlowLayout(spacing: 12, lineSpacing: 8) {
-                        ForEach(groups, id: \.category) { group in
-                            HStack(spacing: 5) {
-                                Circle().fill(group.category.color).frame(width: 7, height: 7)
-                                Text("\(group.category.displayName) · \(group.done)")
-                                    .font(.sans(12, weight: .medium))
-                                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                            }
-                        }
-                    }
-                    Text("Counts only — \(friend.displayName) keeps the specifics private.")
-                        .font(.serifItalic(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.45))
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(card)
-            }
-        }
-    }
-
-    private func effortSegmentBar(_ groups: [(category: Category, done: Int, total: Int)]) -> some View {
-        let totalDone = max(1, groups.reduce(0) { $0 + $1.done })
-        return GeometryReader { proxy in
-            HStack(spacing: 3) {
-                ForEach(groups, id: \.category) { group in
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(group.category.color.opacity(0.85))
-                        .frame(width: max(8, (proxy.size.width - CGFloat(groups.count - 1) * 3) * CGFloat(group.done) / CGFloat(totalDone)))
-                }
-            }
-        }
-        .frame(height: 10)
-        .accessibilityElement()
-        .accessibilityLabel("Effort by category")
-    }
-
-    /// Quiet tier: just a warm mood line and their season — calm and
-    /// minimal, matching exactly what they chose to reveal.
-    private var quietGlance: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "moon.stars")
-                    .font(.sans(16, weight: .regular))
-                    .foregroundStyle(accent)
-                    .padding(.top, 2)
-                Text(moodText)
-                    .font(.serifItalic(17, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let season = shortSeasonName {
-                HStack(spacing: 7) {
-                    Circle().fill(accent).frame(width: 6, height: 6)
-                    Text(friend.currentSeasonDay.map { "\(season) · day \($0)" } ?? season)
-                        .font(.sans(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(glanceBackground)
-    }
-
-    /// The signature-color progress ring. Full reads the real completion
-    /// with a "done / total" center; Open shows momentum behind a soft
-    /// sun so no specific tasks leak.
-    private var dayRing: some View {
-        DayProgressRing(fraction: ringFill, tint: accent, lineWidth: 9) {
-            Group {
-                if tier == .full {
-                    VStack(spacing: 0) {
-                        Text("\(day.doneCount)")
-                            .font(.serif(28, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                        Text("of \(day.totalCount)")
-                            .font(.sans(10, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                    }
-                } else {
-                    Image(systemName: "sun.max.fill")
-                        .font(.system(size: 22, weight: .regular))
-                        .foregroundStyle(accent)
-                }
-            }
-        }
-        .frame(width: 92, height: 92)
-        .accessibilityElement()
-        .accessibilityLabel(tier == .full ? "\(day.doneCount) of \(day.totalCount) done today" : "Showing up")
-    }
-
-    /// The warm wash behind the glance card — the person's signature
-    /// color at low opacity so the lead feels theirs.
-    private var glanceBackground: some View {
-        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-            .fill(accent.opacity(0.10))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                    .strokeBorder(accent.opacity(0.20), lineWidth: 0.5)
+    private var todaySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            JournalSectionHeader(
+                label: "TODAY",
+                trailingTitle: tier != .quiet ? Date().formatted(.dateTime.weekday(.abbreviated)) : nil,
+                trailingAction: tier != .quiet ? { showWeekSheet = true } : nil
             )
+
+            TodayHeadlineRow(
+                fraction: ringFill,
+                tint: accent,
+                headline: todayHeadline,
+                subline: todaySubline
+            )
+
+            todayChips
+
+            // Quiet contextual actions — proof + cheer live here now,
+            // so the identity card stays calm.
+            HStack(spacing: 22) {
+                QuietActionLink(icon: "camera.fill", title: "Send a proof") {
+                    showSendProof = true
+                }
+                QuietActionLink(icon: "hands.clap.fill", title: "Cheer") {
+                    showCheerComposer = true
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
     }
 
-    /// Target fill for the day ring — completion at Full, momentum at
-    /// Open, empty at Quiet.
+    private var todayHeadline: String {
+        switch tier {
+        case .full:
+            return dayHeadline(fraction: day.completionFraction, hasAnything: day.totalCount > 0)
+        case .open:
+            return dayHeadline(fraction: day.momentum, hasAnything: !day.rhythmBars.isEmpty)
+        case .quiet:
+            return store.headlineFromFriend(friend)
+        }
+    }
+
+    private var todaySubline: String? {
+        switch tier {
+        case .full:
+            return daySubline(done: day.doneCount, total: day.totalCount)
+        case .open:
+            return "the shape of their day — no task names"
+        case .quiet:
+            if let season = shortSeasonName {
+                return friend.currentSeasonDay.map { "\(season) · day \($0)" } ?? season
+            }
+            return "shares a little with you"
+        }
+    }
+
+    @ViewBuilder
+    private var todayChips: some View {
+        switch tier {
+        case .full:
+            if !day.tasks.isEmpty {
+                TaskChipsFlow(
+                    items: day.tasks
+                        .sorted { $0.isDone && !$1.isDone }
+                        .map { (title: $0.title, isDone: $0.isDone) },
+                    accent: accent
+                )
+            }
+        case .open:
+            let groups = day.categoryBreakdown
+            if !groups.isEmpty {
+                TaskChipsFlow(
+                    items: groups.map {
+                        (title: "\($0.category.displayName) · \($0.done) of \($0.total)", isDone: $0.done > 0)
+                    },
+                    accent: accent,
+                    maxVisible: 8
+                )
+            }
+        case .quiet:
+            EmptyView()
+        }
+    }
+
+    /// Target fill for the today ring — completion at Full, momentum
+    /// at Open, empty at Quiet.
     private var glanceRingFraction: Double {
         switch tier {
         case .full: return day.completionFraction
@@ -1056,46 +768,7 @@ struct FriendDetailView: View {
         }
     }
 
-    // MARK: Full — routines
-
-    private var routinesCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("ROUTINES TODAY")
-            VStack(spacing: 0) {
-                ForEach(Array(day.routines.enumerated()), id: \.element.id) { idx, routine in
-                    if idx > 0 {
-                        Rectangle().fill(Theme.textPrimary.opacity(0.07)).frame(height: 0.5)
-                    }
-                    routineRow(routine)
-                }
-            }
-            .background(card)
-        }
-    }
-
-    private func routineRow(_ routine: FriendRoutine) -> some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(routine.isComplete ? Theme.alertGreen : Theme.sunWarm.opacity(0.28))
-                    .frame(width: 26, height: 26)
-                Image(systemName: routine.isComplete ? "checkmark" : "square.fill")
-                    .font(.sans(routine.isComplete ? 12 : 9, weight: .bold))
-                    .foregroundStyle(routine.isComplete ? Theme.textCream : Theme.sunShadow)
-            }
-            Text(routine.title)
-                .font(.sans(15, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-            Spacer()
-            Text(routine.detail)
-                .font(.sans(12, weight: routine.isComplete ? .medium : .regular))
-                .foregroundStyle(routine.isComplete ? Theme.alertGreen : Theme.textPrimary.opacity(0.55))
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-    }
-
-    // MARK: - Exact points (behind explicit permission)
+    // MARK: Points — privacy as a feature
 
     /// Point values are private calibration — they encode what's
     /// personally hard for someone — so they never surface by default.
@@ -1104,50 +777,40 @@ struct FriendDetailView: View {
     private var exactPointsRow: some View {
         switch liveFriend.pointsAccess {
         case .granted:
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: "lock.open")
-                    .font(.sans(14, weight: .medium))
+                    .font(.sans(13, weight: .medium))
                     .foregroundStyle(Theme.alertGreen)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(day.todayLogged) points today")
-                        .font(.serif(17, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("\(friend.displayName) shares exact points with you")
-                        .font(.sans(11.5, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                }
+                Text("\(day.todayLogged) points today")
+                    .font(.sans(14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                Text("· shared with you")
+                    .font(.sans(12.5, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(card)
-            .transition(.opacity)
             .accessibilityLabel("\(friend.displayName) logged \(day.todayLogged) points today")
 
         case .requested:
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: "hourglass")
-                    .font(.sans(14, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                    .font(.sans(13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
                 Text("Asked to see exact points · waiting on \(friend.displayName)")
-                    .font(.sans(12.5, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    .font(.sans(13, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(card)
-            .transition(.opacity)
             .accessibilityLabel("Waiting on \(friend.displayName) to share exact points")
 
         case nil:
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: "lock")
-                    .font(.sans(14, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
-                Text("Exact points are private")
-                    .font(.sans(13, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                    .font(.sans(13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                Text("Points are private")
+                    .font(.sans(13.5, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 Spacer(minLength: 8)
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1155,163 +818,61 @@ struct FriendDetailView: View {
                         store.requestExactPoints(friendId: friend.id)
                     }
                 } label: {
-                    Text("Ask to see")
-                        .font(.sans(12.5, weight: .semibold))
-                        .foregroundStyle(accent)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule(style: .continuous)
-                                .strokeBorder(accent.opacity(0.45), lineWidth: 1)
-                        )
-                        .contentShape(Capsule(style: .continuous))
+                    HStack(spacing: 2) {
+                        Text("Ask to see")
+                            .font(.sans(13, weight: .semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.sans(9, weight: .bold))
+                    }
+                    .foregroundStyle(accent)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Ask \(friend.displayName) to see exact points")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(card)
         }
     }
 
-    // MARK: - Reframed rhythm footer
+    // MARK: Destinations
 
-    /// The old three big stat cards, collapsed into one quiet line about
-    /// showing up with a small sparkline beside it. Present for anyone
-    /// who wants it, but it no longer leads or dominates the page.
-    private var rhythmFooter: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text("Showing up \(day.rhythmDays) days · \(day.rhythmSummary)")
-                .font(.sans(12, weight: .medium))
-                .foregroundStyle(Theme.textPrimary.opacity(0.6))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 4) {
-                miniSparkline
-                Text("LAST 10 DAYS")
-                    .font(.sans(8, weight: .medium))
-                    .tracking(1)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.35))
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(card)
-    }
-
-    private var miniSparkline: some View {
-        HStack(alignment: .bottom, spacing: 3) {
-            ForEach(Array(day.rhythmBars.enumerated()), id: \.offset) { _, v in
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(v < 0.18 ? Theme.textPrimary.opacity(0.14) : accent.opacity(0.5))
-                    .frame(width: 5, height: max(5, 26 * v))
-            }
-        }
-        .frame(height: 26)
-    }
-
-    // MARK: Full — focus + milestone
-
-    /// Focus + milestone merged into a single card split by a hairline
-    /// — two stats, one quiet row, half the chrome.
-    private var focusMilestoneRow: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("FOCUS")
-                    .font(.sans(9, weight: .medium)).tracking(1.5)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                Text(day.focusText)
-                    .font(.serif(21, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("\(day.focusSessions) session\(day.focusSessions == 1 ? "" : "s")")
-                    .font(.sans(10, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-
-            Rectangle()
-                .fill(Theme.textPrimary.opacity(0.08))
-                .frame(width: 0.5)
-                .padding(.vertical, 10)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(day.milestoneTitle.uppercased())
-                    .font(.sans(9, weight: .medium)).tracking(1.5)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                    .lineLimit(1)
-                Text(day.milestoneProgress)
-                    .font(.serif(21, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(day.milestoneAddedToday ? "+ today" : "no change")
-                    .font(.sans(10, weight: .medium))
-                    .foregroundStyle(day.milestoneAddedToday ? Theme.alertGreen : Theme.textPrimary.opacity(0.5))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-        }
-        .background(card)
-    }
-
-    // MARK: - Past chapters
-
-    /// The friend's story season by season — a scrollable rail of
-    /// chapter posters built from their published season card. Quiet
-    /// friends see names + lengths only; Open / Full also see
-    /// milestones reached.
-    @ViewBuilder
-    private var chaptersBlock: some View {
-        let past = publishedCard?.pastSeasons ?? []
-        if !past.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                sectionLabel("PAST CHAPTERS · \(past.count)")
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(past) { chapter in
-                            PastSeasonChapterCard(
-                                chapter: chapter,
-                                showsMilestones: tier != .quiet
-                            )
-                        }
-                    }
-                }
-            }
+    private func destinationsSection(_ milestones: [SeasonCardMilestone]) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            JournalSectionHeader(label: "THE SEASON’S DESTINATIONS")
+            DestinationsTimeline(
+                milestones: milestones,
+                accent: accent,
+                seasonStart: publishedCard?.seasonStartDate
+            )
         }
     }
 
-    // MARK: - US layer
+    // MARK: Seasons before
 
-    @ViewBuilder
-    private var usLayer: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Between you & \(friend.displayName)")
-                .font(.serif(22, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-
-            togetherBlock
-            sinceConnectedBlock
+    private func seasonsBeforeSection(_ past: [PastSeasonSummary]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            JournalSectionHeader(label: "SEASONS BEFORE")
+            SeasonsBeforeRow(chapters: past, showsMilestones: tier != .quiet)
         }
     }
 
-    private var togetherBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel(togetherCount > 0 ? "TOGETHER · \(togetherCount) SHARED" : "TOGETHER")
+    // MARK: Together
+
+    private var togetherSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            JournalSectionHeader(label: togetherCount > 0 ? "TOGETHER · \(togetherCount) SHARED" : "TOGETHER")
             VStack(spacing: 10) {
                 ForEach(sharedCircles) { circle in
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         detailCircle = circle
-                    } label: { circleTogetherCard(circle) }
+                    } label: { circleTogetherRow(circle) }
                     .buttonStyle(.plain)
                 }
                 ForEach(sharedPacts) { pact in
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         detailPact = pact
-                    } label: { pactTogetherCard(pact) }
+                    } label: { pactTogetherRow(pact) }
                     .buttonStyle(.plain)
                 }
                 makePactRow
@@ -1319,9 +880,7 @@ struct FriendDetailView: View {
         }
     }
 
-    /// A calm dashed entry to start a two-person pact with this friend —
-    /// the relationship-hub sibling of the Circles page's start/join
-    /// row. Always available, even when nothing is shared yet.
+    /// A calm dashed entry to start a two-person pact with this friend.
     private var makePactRow: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1349,8 +908,8 @@ struct FriendDetailView: View {
         .accessibilityLabel("Make a pact with \(friend.displayName)")
     }
 
-    private func circleTogetherCard(_ circle: FFCircle) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func circleTogetherRow(_ circle: FFCircle) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text(circleEyebrow(circle))
                     .font(.sans(9, weight: .medium)).tracking(1.5)
@@ -1365,13 +924,14 @@ struct FriendDetailView: View {
                 .foregroundStyle(Theme.textPrimary)
             progressBar(fraction: circleFraction(circle), tint: Theme.alertGreen)
         }
-        .padding(14)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(card)
+        .contentShape(Rectangle())
     }
 
-    private func pactTogetherCard(_ pact: Pact) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func pactTogetherRow(_ pact: Pact) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text("PACT · JUST YOU TWO · DAY \(pactDayNumber(pact))")
                     .font(.sans(9, weight: .medium)).tracking(1.5)
@@ -1388,36 +948,35 @@ struct FriendDetailView: View {
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.6))
         }
-        .padding(14)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(card)
+        .contentShape(Rectangle())
     }
 
-    private var sinceConnectedBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("SINCE YOU CONNECTED · \(store.connectedDescription(friend).uppercased().replacingOccurrences(of: "CONNECTED ", with: ""))")
-            VStack(spacing: 14) {
-                HStack(spacing: 0) {
-                    textureStat("\(texture.proofsTraded)", "proofs\ntraded")
-                    textureStat("\(texture.cheersExchanged)", "cheers\nexchanged")
-                    textureStat("\(texture.milestonesWitnessed)", "milestones\nwitnessed")
-                }
-                Rectangle().fill(Theme.textPrimary.opacity(0.08)).frame(height: 0.5)
-                Text(texture.line)
-                    .font(.serifItalic(15, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.75))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
+    // MARK: Since you connected
+
+    private var sinceConnectedSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            JournalSectionHeader(
+                label: "SINCE YOU CONNECTED · \(store.connectedDescription(friend).uppercased().replacingOccurrences(of: "CONNECTED ", with: ""))"
+            )
+            HStack(spacing: 0) {
+                textureStat("\(texture.proofsTraded)", "proofs\ntraded")
+                textureStat("\(texture.cheersExchanged)", "cheers\nexchanged")
+                textureStat("\(texture.milestonesWitnessed)", "milestones\nwitnessed")
             }
-            .padding(16)
-            .background(card)
+            Text(texture.line)
+                .font(.serifItalic(15, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func textureStat(_ value: String, _ label: String) -> some View {
         VStack(spacing: 4) {
             Text(value)
-                .font(.serif(25, weight: .medium))
+                .font(.serif(24, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
             Text(label)
                 .font(.sans(11, weight: .regular))
@@ -1429,22 +988,6 @@ struct FriendDetailView: View {
     }
 
     // MARK: - Shared helpers
-
-    private var card: some View {
-        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-            .fill(Color.white.opacity(0.6))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-            )
-    }
-
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.sans(10, weight: .medium))
-            .tracking(1.5)
-            .foregroundStyle(Theme.textPrimary.opacity(0.55))
-    }
 
     private func progressBar(fraction: Double, tint: Color) -> some View {
         GeometryReader { proxy in
@@ -1466,9 +1009,7 @@ struct FriendDetailView: View {
         }
     }
 
-    /// A representative completion fraction for the circle today. Prefers
-    /// the shared list when present (also covers hybrids); falls back to
-    /// the shared number; a Witness circle has no goal, so it reads as 0.
+    /// A representative completion fraction for the circle today.
     private func circleFraction(_ circle: FFCircle) -> Double {
         if circle.hasSharedList {
             let cal = Calendar.current
@@ -1510,7 +1051,7 @@ struct FriendDetailView: View {
 // MARK: - Mutual friends sheet
 
 /// The full "friends in common" list — a calm sheet of avatar rows
-/// opened from the hero's mutuals button.
+/// opened from the identity card's mutuals button.
 struct MutualFriendsListSheet: View {
     let name: String
     let mutuals: [RemoteProfile]

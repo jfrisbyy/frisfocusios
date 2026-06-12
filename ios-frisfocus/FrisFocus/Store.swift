@@ -1074,11 +1074,48 @@ extension Store {
         persistAll()
     }
 
+    /// Accent + intention only — used by Edit profile now that the
+    /// header itself (cover or photo) is designed in the header studio.
+    func setSeasonAccentAndIntention(accentHex: String?, intention: String?) {
+        currentSeason.accentHex = accentHex
+        let trimmed = intention?.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentSeason.intention = (trimmed?.isEmpty == false) ? trimmed : nil
+        persistAll()
+    }
+
+    /// The header studio's save — just the cover choice. Nil means
+    /// "use my header photo / accent band".
+    func setSeasonCover(coverId: String?) {
+        currentSeason.coverId = coverId
+        persistAll()
+    }
+
+    /// Set the small owner status shown under the intention on the
+    /// profile card. Empty → cleared. Republishes via the season slice.
+    func setMoodLine(_ line: String?) {
+        let trimmed = line?.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentSeason.moodLine = (trimmed?.isEmpty == false) ? trimmed : nil
+        persistAll()
+    }
+
+    /// Total distinct local days that ever earned points — the one
+    /// lifetime number on the identity card. Computed from the full
+    /// log, so it survives season changes.
+    var lifetimeDaysShownUp: Int {
+        let cal = Calendar.current
+        var days = Set<Date>()
+        for entry in logEntries where entry.pointsEarned > 0 {
+            days.insert(cal.startOfDay(for: entry.date))
+        }
+        return days.count
+    }
+
     /// The friend-readable summary of my season life, built fresh from
     /// the live season + archived chapters. Published to
     /// `profiles.season_card` by the season sync bridge.
     var mySeasonCard: SeasonCard {
-        SeasonCard(
+        let ordered = currentSeason.milestones.sorted { $0.weekNumber < $1.weekNumber }
+        return SeasonCard(
             coverId: currentSeason.coverId,
             accentHex: currentSeason.accentHex,
             intention: currentSeason.intention,
@@ -1087,7 +1124,20 @@ extension Store {
             seasonLengthDays: currentSeason.lengthDays,
             milestonesDone: currentSeason.milestones.filter { $0.status == .cleared }.count,
             milestonesTotal: currentSeason.milestones.count,
-            pastSeasons: pastSeasons
+            pastSeasons: pastSeasons,
+            lifetimeDays: lifetimeDaysShownUp,
+            moodLine: currentSeason.moodLine,
+            milestones: ordered.map { milestone in
+                SeasonCardMilestone(
+                    id: milestone.id,
+                    title: milestone.title,
+                    weekNumber: milestone.weekNumber,
+                    isDone: milestone.isCompleted,
+                    completedDate: milestone.completedDate,
+                    stepsDone: milestone.steps.isEmpty ? nil : milestone.steps.filter(\.isCompleted).count,
+                    stepsTotal: milestone.steps.isEmpty ? nil : milestone.steps.count
+                )
+            }
         )
     }
 

@@ -725,6 +725,10 @@ struct Season: Codable, Identifiable {
     var accentHex: String?
     /// A short "why this season" line shown under the season title.
     var intention: String?
+    /// A small owner-set status under the intention on the profile
+    /// card ("resting this week", "locked in"). Optional so persisted
+    /// seasons decode cleanly; published to friends via the season card.
+    var moodLine: String?
 }
 
 // MARK: - Tasks / To-dos / Log / Notes

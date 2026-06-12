@@ -104,6 +104,55 @@ nonisolated struct PastSeasonSummary: Codable, Identifiable, Equatable, Sendable
     }
 }
 
+// MARK: - Card milestone
+
+/// One of the season's destinations, as friends may see it: its name,
+/// whether it landed (and when), and live step progress for the one
+/// in flight. Shared only at tiers that already see goal progress —
+/// the viewer side gates rendering.
+nonisolated struct SeasonCardMilestone: Codable, Identifiable, Equatable, Sendable {
+    var id: UUID = UUID()
+    var title: String
+    var weekNumber: Int = 1
+    var isDone: Bool = false
+    var completedDate: Date?
+    var stepsDone: Int?
+    var stepsTotal: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, weekNumber, isDone, completedDate, stepsDone, stepsTotal
+    }
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        weekNumber: Int = 1,
+        isDone: Bool = false,
+        completedDate: Date? = nil,
+        stepsDone: Int? = nil,
+        stepsTotal: Int? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.weekNumber = weekNumber
+        self.isDone = isDone
+        self.completedDate = completedDate
+        self.stepsDone = stepsDone
+        self.stepsTotal = stepsTotal
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+        self.title = (try c.decodeIfPresent(String.self, forKey: .title)) ?? "A destination"
+        self.weekNumber = (try c.decodeIfPresent(Int.self, forKey: .weekNumber)) ?? 1
+        self.isDone = (try c.decodeIfPresent(Bool.self, forKey: .isDone)) ?? false
+        self.completedDate = try c.decodeIfPresent(Date.self, forKey: .completedDate)
+        self.stepsDone = try c.decodeIfPresent(Int.self, forKey: .stepsDone)
+        self.stepsTotal = try c.decodeIfPresent(Int.self, forKey: .stepsTotal)
+    }
+}
+
 // MARK: - Season card
 
 /// The friend-readable summary of a person's season life. Published as
@@ -120,10 +169,21 @@ nonisolated struct SeasonCard: Codable, Equatable, Sendable {
     var milestonesTotal: Int?
     var pastSeasons: [PastSeasonSummary] = []
 
+    /// Total distinct days this person has ever shown up — the one
+    /// number that matters on the identity card.
+    var lifetimeDays: Int?
+    /// A small owner-set status under the intention ("resting this
+    /// week", "locked in"). Visible to friends until changed.
+    var moodLine: String?
+    /// The season's destinations with names + status, for the vertical
+    /// timeline. Viewer-gated to tiers that see goal progress.
+    var milestones: [SeasonCardMilestone] = []
+
     private enum CodingKeys: String, CodingKey {
         case coverId, accentHex, intention, seasonName
         case seasonStartDate, seasonLengthDays
         case milestonesDone, milestonesTotal, pastSeasons
+        case lifetimeDays, moodLine, milestones
     }
 
     init(
@@ -135,7 +195,10 @@ nonisolated struct SeasonCard: Codable, Equatable, Sendable {
         seasonLengthDays: Int? = nil,
         milestonesDone: Int? = nil,
         milestonesTotal: Int? = nil,
-        pastSeasons: [PastSeasonSummary] = []
+        pastSeasons: [PastSeasonSummary] = [],
+        lifetimeDays: Int? = nil,
+        moodLine: String? = nil,
+        milestones: [SeasonCardMilestone] = []
     ) {
         self.coverId = coverId
         self.accentHex = accentHex
@@ -146,6 +209,9 @@ nonisolated struct SeasonCard: Codable, Equatable, Sendable {
         self.milestonesDone = milestonesDone
         self.milestonesTotal = milestonesTotal
         self.pastSeasons = pastSeasons
+        self.lifetimeDays = lifetimeDays
+        self.moodLine = moodLine
+        self.milestones = milestones
     }
 
     init(from decoder: Decoder) throws {
@@ -159,6 +225,9 @@ nonisolated struct SeasonCard: Codable, Equatable, Sendable {
         self.milestonesDone = try c.decodeIfPresent(Int.self, forKey: .milestonesDone)
         self.milestonesTotal = try c.decodeIfPresent(Int.self, forKey: .milestonesTotal)
         self.pastSeasons = (try c.decodeIfPresent([PastSeasonSummary].self, forKey: .pastSeasons)) ?? []
+        self.lifetimeDays = try c.decodeIfPresent(Int.self, forKey: .lifetimeDays)
+        self.moodLine = try c.decodeIfPresent(String.self, forKey: .moodLine)
+        self.milestones = (try c.decodeIfPresent([SeasonCardMilestone].self, forKey: .milestones)) ?? []
     }
 
     /// The chosen cover, when the raw id resolves to a known kind.

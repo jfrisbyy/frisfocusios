@@ -2,21 +2,17 @@
 //  MyProfileView.swift
 //  FrisFocus
 //
-//  The user's own profile page — a faithful mirror of what friends see
-//  when they visit: the custom header (or signature-color band), the
-//  story-ringed avatar, name, handle, season line, and the day below,
-//  built from the user's *real* tasks, routines, focus, and milestones
-//  via `Store.myDay`.
+//  The user's own profile — a faithful mirror of the editorial page
+//  friends see: the living header they designed (photo or crafted
+//  sky, breathing with today's real effort), "CURRENTLY IN" + the
+//  serif season name carved in, the floating identity card with the
+//  one number that matters, and the hairline journal body.
 //
-//  A three-way Quiet / Open / Full switcher previews exactly what each
-//  sharing tier reveals, crossfading the day section between levels.
-//  The action pills (Proof, Message, Cheer) render where friends see
-//  them but are clearly marked preview-only.
-//
-//  Edit affordances live right on the page: small camera discs on the
-//  header and avatar, an "Edit profile" pill under the name (all
-//  routing into the existing edit screen), and a gear up top for the
-//  full Account & settings hub.
+//  Edit affordances live right on the page: a quiet "Edit header"
+//  chip on the hero opens the full-screen header studio, the camera
+//  disc on the avatar and the Edit profile pill open the edit screen,
+//  and the mood line is settable in a tap. The Quiet / Open / Full
+//  switcher previews exactly what each sharing tier reveals.
 //
 
 import SwiftUI
@@ -31,9 +27,13 @@ struct MyProfileView: View {
 
     @State private var previewTier: VisibilityTier = .full
     @State private var showEditProfile: Bool = false
+    @State private var showHeaderStudio: Bool = false
     @State private var showAccount: Bool = false
     @State private var showMyStories: Bool = false
     @State private var showCheers: Bool = false
+    @State private var showWeekSheet: Bool = false
+    @State private var showMoodEditor: Bool = false
+    @State private var moodDraft: String = ""
     @State private var ringFill: Double = 0
     @State private var storyRingPulse: Bool = false
 
@@ -76,12 +76,21 @@ struct MyProfileView: View {
 
     private var hasStories: Bool { store.hasActiveMyStories }
 
+    /// The header's living light follows my real day.
+    private var headerStrength: Double {
+        0.15 + 0.85 * day.completionFraction
+    }
+
     private var ringTarget: Double {
         switch previewTier {
         case .full: return day.completionFraction
         case .open: return day.momentum
         case .quiet: return 0
         }
+    }
+
+    private var shortSeasonName: String {
+        store.currentSeason.name.replacingOccurrences(of: " Season", with: "")
     }
 
     // MARK: - Body
@@ -92,17 +101,15 @@ struct MyProfileView: View {
                 VStack(spacing: 0) {
                     hero
 
-                    daySection
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 18)
-                        .padding(.bottom, 18)
+                    identityCard
+                        .padding(.horizontal, Theme.pageHorizontalPadding - 6)
+                        .offset(y: -52)
+                        .padding(.bottom, -52)
+                        .zIndex(1)
 
-                    chaptersSection
+                    journalBody
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.bottom, 18)
-
-                    cheersRow
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.top, 26)
                         .padding(.bottom, 24)
 
                     Color.clear.frame(height: 130)
@@ -146,10 +153,31 @@ struct MyProfileView: View {
             CheerHistoryView()
                 .environment(store)
         }
+        .sheet(isPresented: $showWeekSheet) {
+            WeekRhythmSheet(name: "Your", bars: day.rhythmBars, accent: accent)
+        }
+        .fullScreenCover(isPresented: $showHeaderStudio) {
+            HeaderStudioView()
+                .environment(store)
+                .environment(profileStore)
+                .environment(auth)
+        }
         .fullScreenCover(isPresented: $showMyStories) {
             StoryPlayerView(mode: .mine)
                 .navigationTransition(.zoom(sourceID: "myprofile-story", in: storyZoom))
                 .environment(store)
+        }
+        .alert("Your mood line", isPresented: $showMoodEditor) {
+            TextField("e.g. resting this week", text: $moodDraft)
+            Button("Save") {
+                store.setMoodLine(moodDraft)
+            }
+            Button("Clear", role: .destructive) {
+                store.setMoodLine(nil)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("A small status under your intention, visible to friends until you change it.")
         }
         .onAppear {
             animateRing()
@@ -173,106 +201,72 @@ struct MyProfileView: View {
     // MARK: - Hero
 
     private var hero: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottomLeading) {
+            ProfilePosterBackground(
+                coverId: store.currentSeason.coverId,
+                headerURL: headerPhotoURL,
+                accent: accent,
+                strength: headerStrength
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("CURRENTLY IN")
+                    .font(.sans(10, weight: .semibold))
+                    .tracking(2.2)
+                    .foregroundStyle(Theme.textCream.opacity(0.75))
+                Text(shortSeasonName)
+                    .font(.serif(32, weight: .medium))
+                    .foregroundStyle(Theme.textCream)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.65)
+                    .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
+                Text("DAY \(store.currentSeasonDay) OF \(store.currentSeason.lengthDays)")
+                    .font(.sans(10, weight: .semibold))
+                    .tracking(2)
+                    .foregroundStyle(Theme.textCream.opacity(0.85))
+            }
+            .padding(.horizontal, Theme.pageHorizontalPadding)
+            .padding(.bottom, 74)
+        }
+        .frame(height: 330)
+        .clipped()
+        .overlay(alignment: .top) {
             topBar
                 .padding(.top, 54)
                 .padding(.horizontal, Theme.pageHorizontalPadding)
-
-            VStack(spacing: 6) {
-                avatarBlock
-
-                if hasStories {
-                    Text("YOUR STORY · TAP TO VIEW")
-                        .font(.sans(10, weight: .medium))
-                        .tracking(1.5)
-                        .foregroundStyle(Theme.textCream.opacity(0.7))
-                }
-
-                Text(displayName)
-                    .font(.serif(27, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-
-                Text(metaLine)
-                    .font(.sans(12, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.82))
-
-                seasonTitleBlock
-                    .padding(.top, 10)
-
-                editPill
-                    .padding(.top, 10)
-            }
-            .padding(.top, 8)
-            .padding(.horizontal, Theme.pageHorizontalPadding)
-
-            previewActionRow
-                .padding(.horizontal, Theme.pageHorizontalPadding)
-                .padding(.top, 16)
-
-            Text("PREVIEW — ONLY FRIENDS SEE THESE BUTTONS")
-                .font(.sans(9, weight: .medium))
-                .tracking(1.5)
-                .foregroundStyle(Theme.textCream.opacity(0.6))
-                .padding(.top, 8)
-                .padding(.bottom, 16)
         }
-        .frame(maxWidth: .infinity)
-        .background(heroBackground)
-    }
-
-    private var metaLine: String {
-        handle ?? "This is you"
-    }
-
-    /// The season title carved into the poster — the exact shape
-    /// friends see, built from my live season.
-    private var seasonTitleBlock: some View {
-        VStack(spacing: 5) {
-            Text(store.currentSeason.name.replacingOccurrences(of: " Season", with: ""))
-                .font(.serif(32, weight: .medium))
-                .foregroundStyle(Theme.textCream)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
-                .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 2)
-
-            Text("DAY \(store.currentSeasonDay) OF \(store.currentSeason.lengthDays)")
-                .font(.sans(10, weight: .semibold))
-                .tracking(2)
-                .foregroundStyle(Theme.textCream.opacity(0.85))
-
-            if let intention = store.currentSeason.intention, !intention.isEmpty {
-                Text("“\(intention)”")
-                    .font(.serifItalic(14, weight: .regular))
-                    .foregroundStyle(Theme.textCream.opacity(0.9))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .padding(.horizontal, 12)
-            } else {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showEditProfile = true
-                } label: {
-                    Text("Add an intention line…")
-                        .font(.serifItalic(13, weight: .regular))
-                        .foregroundStyle(Theme.textCream.opacity(0.6))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add an intention line for this season")
-            }
+        .overlay(alignment: .bottomTrailing) {
+            editHeaderChip
+                .padding(.trailing, Theme.pageHorizontalPadding)
+                .padding(.bottom, 74)
         }
     }
 
-    private var heroBackground: some View {
-        ProfilePosterBackground(
-            coverId: store.currentSeason.coverId,
-            headerURL: headerPhotoURL,
-            accent: accent
-        )
+    /// The quiet edit affordance on the hero — opens the studio.
+    private var editHeaderChip: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showHeaderStudio = true
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "paintbrush.fill")
+                    .font(.sans(10, weight: .semibold))
+                Text("Edit header")
+                    .font(.sans(12, weight: .semibold))
+            }
+            .foregroundStyle(Theme.textCream)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule(style: .continuous).fill(Color.black.opacity(0.30)))
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Theme.textCream.opacity(0.3), lineWidth: 0.8)
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Design your header")
     }
-
-    // MARK: Top bar
 
     private var topBar: some View {
         HStack(spacing: 10) {
@@ -283,8 +277,8 @@ struct MyProfileView: View {
                 Image(systemName: "xmark")
                     .font(.sans(15, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.black.opacity(0.18)))
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(Color.black.opacity(0.28)))
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -294,27 +288,13 @@ struct MyProfileView: View {
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showEditProfile = true
-            } label: {
-                Image(systemName: "camera.fill")
-                    .font(.sans(13, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.black.opacity(0.18)))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Change your header photo")
-
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 showAccount = true
             } label: {
                 Image(systemName: "gearshape.fill")
                     .font(.sans(14, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.black.opacity(0.18)))
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(Color.black.opacity(0.28)))
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -322,11 +302,41 @@ struct MyProfileView: View {
         }
     }
 
-    // MARK: Avatar
+    // MARK: - Identity card
 
-    /// Avatar with the story ring — lit gold (with a slow shimmer)
-    /// when there's an active story; a quiet cream ring otherwise.
-    /// Tapping plays the story; the small camera disc edits the photo.
+    private var identityCard: some View {
+        ProfileIdentityCard(
+            name: displayName,
+            lifetimeDays: store.lifetimeDaysShownUp,
+            metaLine: handle ?? "This is you",
+            intention: store.currentSeason.intention,
+            moodLine: store.currentSeason.moodLine,
+            onMoodTap: {
+                moodDraft = store.currentSeason.moodLine ?? ""
+                showMoodEditor = true
+            }
+        ) {
+            avatarBlock
+        } extra: {
+            if hasStories {
+                Text("YOUR STORY · TAP YOUR PHOTO TO VIEW")
+                    .font(.sans(9, weight: .medium))
+                    .tracking(1.4)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            }
+        } pills: {
+            HStack(spacing: 10) {
+                IdentityPill(title: "Edit profile", icon: "square.and.pencil", filled: true) {
+                    showEditProfile = true
+                }
+                IdentityRoundButton(icon: "paintbrush.fill", label: "Design your header") {
+                    showHeaderStudio = true
+                }
+            }
+        }
+    }
+
+    /// Avatar with the story ring and the small camera edit disc.
     private var avatarBlock: some View {
         Button {
             guard hasStories else { return }
@@ -335,9 +345,10 @@ struct MyProfileView: View {
         } label: {
             ZStack {
                 avatarImage
-                    .frame(width: 76, height: 76)
+                    .frame(width: 64, height: 64)
                     .clipShape(Circle())
                     .padding(5)
+                    .background(Circle().fill(Color(hex: 0xFFFBF1)))
                     .overlay { storyRingOverlay }
             }
             .contentShape(Circle())
@@ -368,7 +379,7 @@ struct MyProfileView: View {
         ZStack {
             Circle().fill(Theme.textPrimary)
             Text(initials)
-                .font(.serif(26, weight: .medium))
+                .font(.serif(23, weight: .medium))
                 .foregroundStyle(Theme.textCream)
         }
     }
@@ -386,12 +397,12 @@ struct MyProfileView: View {
                 )
                 .opacity(reduceMotion ? 1 : (storyRingPulse ? 1 : 0.6))
         } else {
-            Circle().strokeBorder(Theme.textCream.opacity(0.55), lineWidth: 1)
+            Circle().strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 1)
         }
     }
 
     /// The small charcoal camera disc on the avatar's corner — the
-    /// always-present edit affordance, quiet but discoverable.
+    /// always-present photo edit affordance.
     private var avatarCameraDisc: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -400,11 +411,11 @@ struct MyProfileView: View {
             ZStack {
                 Circle().fill(Theme.textPrimary)
                 Image(systemName: "camera.fill")
-                    .font(.sans(10, weight: .semibold))
+                    .font(.sans(9, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
             }
-            .frame(width: 26, height: 26)
-            .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.8), lineWidth: 1.5))
+            .frame(width: 24, height: 24)
+            .overlay(Circle().strokeBorder(Color(hex: 0xFFFBF1), lineWidth: 1.5))
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -412,194 +423,61 @@ struct MyProfileView: View {
         .accessibilityLabel("Change your profile photo")
     }
 
-    private var editPill: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showEditProfile = true
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "square.and.pencil")
-                    .font(.sans(12, weight: .semibold))
-                Text("Edit profile")
-                    .font(.sans(13, weight: .semibold))
+    // MARK: - Journal body
+
+    private var journalBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            tierPreviewBlock
+
+            todaySection
+                .padding(.top, 18)
+
+            if previewTier != .quiet {
+                JournalHairline()
+                    .padding(.vertical, 18)
+                pointsPrivacyRow
             }
-            .foregroundStyle(Theme.textCream)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(Capsule(style: .continuous).fill(Color.white.opacity(0.16)))
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(Theme.textCream.opacity(0.35), lineWidth: 0.8)
-            )
-            .contentShape(Capsule(style: .continuous))
+
+            if let witness = makeWitnessLine(day: day, card: store.mySeasonCard) {
+                JournalHairline()
+                    .padding(.vertical, 18)
+                WitnessLineView(text: witness, accent: accent)
+            }
+
+            if previewTier != .quiet, !store.mySeasonCard.milestones.isEmpty {
+                JournalHairline()
+                    .padding(.vertical, 18)
+                destinationsSection
+            }
+
+            if !store.pastSeasons.isEmpty {
+                JournalHairline()
+                    .padding(.vertical, 18)
+                seasonsBeforeSection
+            }
+
+            JournalHairline()
+                .padding(.vertical, 18)
+            cheersRow
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Edit your profile")
     }
 
-    // MARK: Preview action row
+    // MARK: Tier preview switcher
 
-    /// The Proof / Message / Cheer pills exactly where friends see
-    /// them — visually faithful, but inert: this is your own page.
-    private var previewActionRow: some View {
-        HStack(spacing: 8) {
-            previewActionLabel(icon: "camera.fill", title: "Proof", filled: true)
-            previewActionLabel(icon: "bubble.left.and.bubble.right.fill", title: "Message", filled: false)
-            previewActionLabel(icon: "hands.clap.fill", title: "Cheer", filled: false)
-        }
-        .opacity(0.55)
-        .allowsHitTesting(false)
-        .accessibilityElement()
-        .accessibilityLabel("Preview of the Proof, Message, and Cheer buttons friends see")
-    }
+    private var tierPreviewBlock: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            JournalSectionHeader(label: "AS A \(previewTier.tag) FRIEND SEES IT")
 
-    private func previewActionLabel(icon: String, title: String, filled: Bool) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.sans(13, weight: .semibold))
-            Text(title)
-                .font(.sans(13, weight: .semibold))
-                .lineLimit(1)
-        }
-        .foregroundStyle(filled ? Theme.textPrimary : Theme.textCream)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 11)
-        .background(
-            Capsule(style: .continuous)
-                .fill(filled ? Theme.textCream : Color.white.opacity(0.14))
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(Theme.textCream.opacity(filled ? 0 : 0.35), lineWidth: 0.8)
-        )
-    }
-
-    // MARK: - Past chapters
-
-    /// My own story season by season — the same chapter rail friends
-    /// see, built from the archived seasons.
-    @ViewBuilder
-    private var chaptersSection: some View {
-        if !store.pastSeasons.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                sectionLabel("PAST CHAPTERS · \(store.pastSeasons.count)")
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(store.pastSeasons) { chapter in
-                            PastSeasonChapterCard(chapter: chapter, showsMilestones: true)
-                        }
-                    }
+            HStack(spacing: 8) {
+                ForEach(VisibilityTier.allCases, id: \.self) { tier in
+                    tierPill(tier)
                 }
             }
-        }
-    }
-
-    // MARK: - Cheers row
-
-    /// Doorway to the full cheer ledger — every word that ever found
-    /// you (and the ones you sent), beyond the day they landed.
-    private var cheersRow: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showCheers = true
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle().fill(Theme.textPrimary.opacity(0.06))
-                    Image(systemName: "hands.clap.fill")
-                        .font(.sans(15, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.75))
-                }
-                .frame(width: 42, height: 42)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Cheers")
-                        .font(.sans(15, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("Every word that found you")
-                        .font(.serifItalic(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                }
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.sans(12, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(0.6))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("View all cheers you’ve received and sent")
-    }
-
-    // MARK: - Day section
-
-    private var daySection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("YOUR DAY · AS A \(previewTier.tag) FRIEND SEES IT")
-                .font(.sans(10, weight: .medium))
-                .tracking(1.5)
-                .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                .fixedSize(horizontal: false, vertical: true)
-
-            tierSwitcher
 
             Text(previewTier.detail)
-                .font(.serifItalic(13, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                .font(.serifItalic(12.5, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.55))
                 .fixedSize(horizontal: false, vertical: true)
-
-            Group {
-                if previewTier == .quiet {
-                    quietGlance
-                } else {
-                    dayGlanceCard
-                }
-
-                if previewTier == .open {
-                    effortBreakdownCard
-                }
-
-                if previewTier == .full {
-                    fullChecklistCard
-                    if !day.routines.isEmpty {
-                        routinesCard
-                    }
-                    focusMilestoneRow
-                }
-
-                if previewTier != .quiet {
-                    pointsPrivacyRow
-                    rhythmFooter
-                }
-            }
-            .transition(.opacity)
-
-            Text("You set a level per friend in Sharing & connection — this is just a preview.")
-                .font(.serifItalic(12, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .animation(.easeInOut(duration: 0.25), value: previewTier)
-    }
-
-    // MARK: Tier switcher
-
-    private var tierSwitcher: some View {
-        HStack(spacing: 8) {
-            ForEach(VisibilityTier.allCases, id: \.self) { tier in
-                tierPill(tier)
-            }
         }
     }
 
@@ -613,10 +491,10 @@ struct MyProfileView: View {
                 .font(.sans(13, weight: .semibold))
                 .foregroundStyle(isSelected ? Theme.textCream : Theme.textPrimary.opacity(0.7))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .padding(.vertical, 9)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(isSelected ? Theme.textPrimary : Color.white.opacity(0.6))
+                        .fill(isSelected ? Theme.textPrimary : Theme.textPrimary.opacity(0.05))
                 )
                 .overlay(
                     Capsule(style: .continuous)
@@ -637,369 +515,151 @@ struct MyProfileView: View {
         }
     }
 
-    // MARK: Quiet glance
+    // MARK: TODAY
 
-    private var quietGlance: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "moon.stars")
-                    .font(.sans(16, weight: .regular))
-                    .foregroundStyle(accent)
-                    .padding(.top, 2)
-                Text(day.moodLine)
-                    .font(.serifItalic(17, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            HStack(spacing: 7) {
-                Circle().fill(accent).frame(width: 6, height: 6)
-                Text("\(store.currentSeason.name.replacingOccurrences(of: " Season", with: "")) · day \(store.currentSeasonDay)")
-                    .font(.sans(12, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(glanceBackground)
-    }
+    private var todaySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            JournalSectionHeader(
+                label: "TODAY",
+                trailingTitle: previewTier != .quiet ? Date().formatted(.dateTime.weekday(.abbreviated)) : nil,
+                trailingAction: previewTier != .quiet ? { showWeekSheet = true } : nil
+            )
 
-    // MARK: Day at a glance
+            TodayHeadlineRow(
+                fraction: ringFill,
+                tint: accent,
+                headline: todayHeadline,
+                subline: todaySubline
+            )
+            .animation(.easeInOut(duration: 0.25), value: previewTier)
 
-    private var dayGlanceCard: some View {
-        HStack(alignment: .center, spacing: 16) {
-            dayRing
-            VStack(alignment: .leading, spacing: 6) {
-                Text(day.moodLine)
-                    .font(.serifItalic(18, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.88))
-                    .fixedSize(horizontal: false, vertical: true)
-                if previewTier == .open {
-                    Text("The shape of your day — no task names.")
-                        .font(.sans(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                } else if day.openCount > 0 {
-                    Text("\(day.openCount) still open — the day’s not over.")
-                        .font(.sans(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(glanceBackground)
-    }
-
-    private var dayRing: some View {
-        DayProgressRing(fraction: ringFill, tint: accent, lineWidth: 9) {
-            Group {
-                if previewTier == .full {
-                    VStack(spacing: 0) {
-                        Text("\(day.doneCount)")
-                            .font(.serif(28, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary)
-                        Text("of \(day.totalCount)")
-                            .font(.sans(10, weight: .medium))
-                            .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                    }
-                } else {
-                    Image(systemName: "sun.max.fill")
-                        .font(.system(size: 22, weight: .regular))
-                        .foregroundStyle(accent)
-                }
-            }
-        }
-        .frame(width: 92, height: 92)
-        .accessibilityElement()
-        .accessibilityLabel(previewTier == .full ? "\(day.doneCount) of \(day.totalCount) done today" : "Showing up")
-    }
-
-    // MARK: Full — checklist
-
-    private var fullChecklistCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("YOUR LIST · \(day.doneCount) OF \(day.totalCount) DONE")
-            if day.totalCount == 0 {
-                Text("Nothing planned today yet — friends would see an open day.")
-                    .font(.serifItalic(14, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(card)
-            } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(day.categoryBreakdown.enumerated()), id: \.element.category) { idx, group in
-                        if idx > 0 {
-                            Rectangle().fill(Theme.textPrimary.opacity(0.06)).frame(height: 0.5)
-                                .padding(.horizontal, 14)
-                        }
-                        categoryGroup(group.category, done: group.done, total: group.total)
-                    }
-                }
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(card)
-            }
+            todayChips
+                .animation(.easeInOut(duration: 0.25), value: previewTier)
         }
     }
 
-    private func categoryGroup(_ category: Category, done: Int, total: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 7) {
-                Circle().fill(category.color).frame(width: 7, height: 7)
-                Text(category.displayName.uppercased())
-                    .font(.sans(10, weight: .semibold))
-                    .tracking(1.3)
-                    .foregroundStyle(category.darkColor)
-                Spacer()
-                Text("\(done) of \(total)")
-                    .font(.sans(11, weight: .medium))
-                    .foregroundStyle(done == total ? Theme.alertGreen : Theme.textPrimary.opacity(0.45))
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 11)
-            .padding(.bottom, 4)
-
-            ForEach(tasksInCategory(category)) { task in
-                checklistRow(task)
-            }
+    private var todayHeadline: String {
+        switch previewTier {
+        case .full:
+            return dayHeadline(fraction: day.completionFraction, hasAnything: day.totalCount > 0)
+        case .open:
+            return dayHeadline(fraction: day.momentum, hasAnything: !day.rhythmBars.isEmpty)
+        case .quiet:
+            return day.moodLine
         }
-        .padding(.bottom, 9)
     }
 
-    private func tasksInCategory(_ category: Category) -> [FriendDayTask] {
-        day.tasks
-            .filter { $0.category == category }
-            .sorted { $0.isDone && !$1.isDone }
-    }
-
-    private func checklistRow(_ task: FriendDayTask) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: task.isDone ? "checkmark.circle.fill" : "circle")
-                .font(.sans(15, weight: task.isDone ? .semibold : .regular))
-                .foregroundStyle(task.isDone ? Theme.alertGreen : Theme.textPrimary.opacity(0.25))
-            Text(task.title)
-                .font(.sans(14, weight: task.isDone ? .medium : .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(task.isDone ? 0.9 : 0.55))
-                .lineLimit(1)
-            Spacer(minLength: 0)
+    private var todaySubline: String? {
+        switch previewTier {
+        case .full:
+            return daySubline(done: day.doneCount, total: day.totalCount)
+                ?? "nothing planned yet — friends would see an open day"
+        case .open:
+            return "the shape of your day — no task names"
+        case .quiet:
+            return "\(shortSeasonName) · day \(store.currentSeasonDay)"
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 5)
-        .accessibilityLabel("\(task.title), \(task.isDone ? "done" : "still open")")
     }
-
-    // MARK: Open — effort by category
 
     @ViewBuilder
-    private var effortBreakdownCard: some View {
-        let groups = day.categoryBreakdown.filter { $0.done > 0 }
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("WHERE YOUR EFFORT WENT")
-            if groups.isEmpty {
-                Text("Nothing logged yet — Open friends would see a quiet day so far.")
-                    .font(.serifItalic(14, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(card)
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    effortSegmentBar(groups)
-                    FlowLayout(spacing: 12, lineSpacing: 8) {
-                        ForEach(groups, id: \.category) { group in
-                            HStack(spacing: 5) {
-                                Circle().fill(group.category.color).frame(width: 7, height: 7)
-                                Text("\(group.category.displayName) · \(group.done)")
-                                    .font(.sans(12, weight: .medium))
-                                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                            }
-                        }
-                    }
-                    Text("Counts only — your task names stay private at this level.")
-                        .font(.serifItalic(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.45))
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(card)
+    private var todayChips: some View {
+        switch previewTier {
+        case .full:
+            if !day.tasks.isEmpty {
+                TaskChipsFlow(
+                    items: day.tasks
+                        .sorted { $0.isDone && !$1.isDone }
+                        .map { (title: $0.title, isDone: $0.isDone) },
+                    accent: accent
+                )
             }
+        case .open:
+            let groups = day.categoryBreakdown
+            if !groups.isEmpty {
+                TaskChipsFlow(
+                    items: groups.map {
+                        (title: "\($0.category.displayName) · \($0.done) of \($0.total)", isDone: $0.done > 0)
+                    },
+                    accent: accent,
+                    maxVisible: 8
+                )
+            }
+        case .quiet:
+            EmptyView()
         }
     }
 
-    private func effortSegmentBar(_ groups: [(category: Category, done: Int, total: Int)]) -> some View {
-        let totalDone = max(1, groups.reduce(0) { $0 + $1.done })
-        return GeometryReader { proxy in
-            HStack(spacing: 3) {
-                ForEach(groups, id: \.category) { group in
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(group.category.color.opacity(0.85))
-                        .frame(width: max(8, (proxy.size.width - CGFloat(groups.count - 1) * 3) * CGFloat(group.done) / CGFloat(totalDone)))
-                }
-            }
-        }
-        .frame(height: 10)
-        .accessibilityElement()
-        .accessibilityLabel("Effort by category")
-    }
-
-    // MARK: Full — routines
-
-    private var routinesCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionLabel("ROUTINES TODAY")
-            VStack(spacing: 0) {
-                ForEach(Array(day.routines.enumerated()), id: \.element.id) { idx, routine in
-                    if idx > 0 {
-                        Rectangle().fill(Theme.textPrimary.opacity(0.07)).frame(height: 0.5)
-                    }
-                    routineRow(routine)
-                }
-            }
-            .background(card)
-        }
-    }
-
-    private func routineRow(_ routine: FriendRoutine) -> some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(routine.isComplete ? Theme.alertGreen : Theme.sunWarm.opacity(0.28))
-                    .frame(width: 26, height: 26)
-                Image(systemName: routine.isComplete ? "checkmark" : "square.fill")
-                    .font(.sans(routine.isComplete ? 12 : 9, weight: .bold))
-                    .foregroundStyle(routine.isComplete ? Theme.textCream : Theme.sunShadow)
-            }
-            Text(routine.title)
-                .font(.sans(15, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-            Spacer()
-            Text(routine.detail)
-                .font(.sans(12, weight: routine.isComplete ? .medium : .regular))
-                .foregroundStyle(routine.isComplete ? Theme.alertGreen : Theme.textPrimary.opacity(0.55))
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-    }
-
-    // MARK: Full — focus + milestone
-
-    private var focusMilestoneRow: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("FOCUS")
-                    .font(.sans(9, weight: .medium)).tracking(1.5)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                Text(day.focusText)
-                    .font(.serif(21, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("\(day.focusSessions) session\(day.focusSessions == 1 ? "" : "s")")
-                    .font(.sans(10, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-
-            Rectangle()
-                .fill(Theme.textPrimary.opacity(0.08))
-                .frame(width: 0.5)
-                .padding(.vertical, 10)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(day.milestoneTitle.isEmpty ? "MILESTONE" : day.milestoneTitle.uppercased())
-                    .font(.sans(9, weight: .medium)).tracking(1.5)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                    .lineLimit(1)
-                Text(day.milestoneProgress)
-                    .font(.serif(21, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(day.milestoneAddedToday ? "+ today" : "no change")
-                    .font(.sans(10, weight: .medium))
-                    .foregroundStyle(day.milestoneAddedToday ? Theme.alertGreen : Theme.textPrimary.opacity(0.5))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-        }
-        .background(card)
-    }
-
-    // MARK: Points privacy + rhythm
+    // MARK: Points privacy
 
     /// Points are private calibration — friends must ask and you
     /// approve each one. Shown here so the preview reads honestly.
     private var pointsPrivacyRow: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
             Image(systemName: "lock")
-                .font(.sans(14, weight: .medium))
-                .foregroundStyle(Theme.textPrimary.opacity(0.45))
-            Text("Exact points stay private — friends ask, you approve each one.")
+                .font(.sans(13, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            Text("Points are private — friends ask, you approve each one.")
                 .font(.sans(13, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(card)
     }
 
-    private var rhythmFooter: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text("Showing up \(day.rhythmDays) days · \(day.rhythmSummary)")
-                .font(.sans(12, weight: .medium))
-                .foregroundStyle(Theme.textPrimary.opacity(0.6))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 4) {
-                miniSparkline
-                Text("LAST 10 DAYS")
-                    .font(.sans(8, weight: .medium))
-                    .tracking(1)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.35))
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(card)
-    }
+    // MARK: Destinations
 
-    private var miniSparkline: some View {
-        HStack(alignment: .bottom, spacing: 3) {
-            ForEach(Array(day.rhythmBars.enumerated()), id: \.offset) { _, v in
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(v < 0.18 ? Theme.textPrimary.opacity(0.14) : accent.opacity(0.5))
-                    .frame(width: 5, height: max(5, 26 * v))
-            }
-        }
-        .frame(height: 26)
-    }
-
-    // MARK: - Shared helpers
-
-    private var card: some View {
-        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-            .fill(Color.white.opacity(0.6))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                    .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
+    private var destinationsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            JournalSectionHeader(label: "THE SEASON’S DESTINATIONS")
+            DestinationsTimeline(
+                milestones: store.mySeasonCard.milestones,
+                accent: accent,
+                seasonStart: store.currentSeason.startDate
             )
+        }
     }
 
-    private var glanceBackground: some View {
-        RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-            .fill(accent.opacity(0.10))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-                    .strokeBorder(accent.opacity(0.20), lineWidth: 0.5)
-            )
+    // MARK: Seasons before
+
+    private var seasonsBeforeSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            JournalSectionHeader(label: "SEASONS BEFORE")
+            SeasonsBeforeRow(chapters: store.pastSeasons, showsMilestones: true)
+        }
     }
 
-    private func sectionLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.sans(10, weight: .medium))
-            .tracking(1.5)
-            .foregroundStyle(Theme.textPrimary.opacity(0.55))
+    // MARK: Cheers row
+
+    /// Doorway to the full cheer ledger — every word that ever found
+    /// you (and the ones you sent), beyond the day they landed.
+    private var cheersRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showCheers = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "hands.clap.fill")
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Cheers")
+                        .font(.sans(15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Every word that found you")
+                        .font(.serifItalic(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("View all cheers you’ve received and sent")
     }
 }

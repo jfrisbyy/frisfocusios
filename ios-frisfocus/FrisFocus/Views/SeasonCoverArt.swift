@@ -100,12 +100,17 @@ private struct CoverRandom {
 
 /// One atmospheric season scene. `animated` adds the slow drifting
 /// glow; thumbnails pass false for a perfectly static mini poster.
+/// `strength` (0…1) is the owner's day so far — a strong day glows
+/// brighter and warmer, a quiet day settles calmer and dimmer.
 struct SeasonCoverView: View {
     let kind: SeasonCoverKind
     var animated: Bool = true
+    var strength: Double = 0.5
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drift: Bool = false
+
+    private var clampedStrength: Double { min(1, max(0, strength)) }
 
     var body: some View {
         ZStack {
@@ -117,6 +122,21 @@ struct SeasonCoverView: View {
                 drawScene(in: context, size: size)
             }
             .allowsHitTesting(false)
+
+            // Day-strength wash: warm lift on strong days, a calm
+            // dusk settle on quiet ones.
+            if clampedStrength > 0.55 {
+                LinearGradient(
+                    colors: [kind.glowColor.opacity(0.16 * (clampedStrength - 0.55) / 0.45), .clear],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+                .blendMode(.screen)
+                .allowsHitTesting(false)
+            } else if clampedStrength < 0.45 {
+                Color.black.opacity(0.13 * (0.45 - clampedStrength) / 0.45)
+                    .allowsHitTesting(false)
+            }
         }
         .clipped()
         .onAppear {
@@ -130,15 +150,17 @@ struct SeasonCoverView: View {
 
     /// The slow-breathing light source — a radial wash that drifts a
     /// touch sideways and brightens, like light moving through the day.
+    /// A strong day breathes wider and brighter; a quiet day dims it.
     private var glow: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
+            let lift = 0.55 + 0.6 * clampedStrength
             RadialGradient(
-                colors: [kind.glowColor.opacity(drift ? 0.55 : 0.38), .clear],
+                colors: [kind.glowColor.opacity((drift ? 0.55 : 0.38) * lift), .clear],
                 center: .center,
                 startRadius: 0,
-                endRadius: max(w, h) * 0.55
+                endRadius: max(w, h) * (0.45 + 0.18 * clampedStrength)
             )
             .frame(width: w * 1.4, height: w * 1.4)
             .position(x: w * (drift ? 0.62 : 0.42), y: glowYFraction * h)
@@ -338,15 +360,20 @@ struct ProfilePosterBackground: View {
     let headerURL: URL?
     let accent: Color
     var animated: Bool = true
+    /// The owner's day so far (0…1) — drives the living-light
+    /// treatment on skies and photos alike.
+    var strength: Double = 0.5
 
     private var cover: SeasonCoverKind? {
         coverId.flatMap(SeasonCoverKind.init(rawValue:))
     }
 
+    private var clampedStrength: Double { min(1, max(0, strength)) }
+
     var body: some View {
         ZStack {
             if let cover {
-                SeasonCoverView(kind: cover, animated: animated)
+                SeasonCoverView(kind: cover, animated: animated, strength: clampedStrength)
             } else if let headerURL {
                 accent
                 Color.clear
@@ -359,12 +386,39 @@ struct ProfilePosterBackground: View {
                     }
                     .clipped()
                     .allowsHitTesting(false)
+
+                // The photo breathes with the day — a golden lift on
+                // strong days, a calm dim on quiet ones.
+                if clampedStrength > 0.55 {
+                    RadialGradient(
+                        colors: [Color(hex: 0xFFD27A).opacity(0.30 * (clampedStrength - 0.55) / 0.45), .clear],
+                        center: .init(x: 0.7, y: 0.25),
+                        startRadius: 0,
+                        endRadius: 360
+                    )
+                    .blendMode(.screen)
+                    .allowsHitTesting(false)
+                } else if clampedStrength < 0.45 {
+                    Color.black.opacity(0.14 * (0.45 - clampedStrength) / 0.45)
+                        .allowsHitTesting(false)
+                }
             } else {
                 LinearGradient(
                     colors: [accent.opacity(0.92), accent, accent.opacity(0.82)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
+
+                if clampedStrength > 0.55 {
+                    RadialGradient(
+                        colors: [Color(hex: 0xFFE2B8).opacity(0.24 * (clampedStrength - 0.55) / 0.45), .clear],
+                        center: .init(x: 0.7, y: 0.3),
+                        startRadius: 0,
+                        endRadius: 320
+                    )
+                    .blendMode(.screen)
+                    .allowsHitTesting(false)
+                }
             }
 
             // Readability scrims — slightly deeper over imagery.
