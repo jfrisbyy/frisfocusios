@@ -15,6 +15,7 @@ import UIKit
 struct FocusTogetherSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(Store.self) private var store
+    @Environment(FocusBlockingService.self) private var blocking
 
     /// Hand-off to the host: (selected friend ids, duration in seconds, optional label).
     let onStart: ([UUID], TimeInterval, String?) -> Void
@@ -24,6 +25,9 @@ struct FocusTogetherSheet: View {
     @State private var customMinutes: Int = 30
     @State private var useCustom: Bool = false
     @State private var label: String = ""
+    @State private var showBlockList = false
+    @State private var showSchedule = false
+    @State private var showHistory = false
 
     private let presets: [Int] = [25, 45, 60]
     private let friendCap: Int = 3
@@ -33,6 +37,7 @@ struct FocusTogetherSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     intro
+                    upcomingGlance
 
                     sectionHeader("Friends (up to \(friendCap))")
                     if store.sharedFocusInviteCandidates.isEmpty {
@@ -75,6 +80,32 @@ struct FocusTogetherSheet: View {
                                 .fill(Theme.warmWheat)
                         )
 
+                    sectionHeader("Silence apps")
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showBlockList = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: blocking.isEnabled && blocking.hasSelection ? "hand.raised.fill" : "hand.raised")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(blocking.isEnabled && blocking.hasSelection ? Theme.alertGreen : Theme.textPrimary.opacity(0.45))
+                            Text(blocking.isEnabled ? blocking.summaryLine : "Off")
+                                .font(.serif(15, weight: .regular))
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Theme.warmWheat)
+                        )
+                    }
+                    .buttonStyle(.plain)
+
                     Button(action: start) {
                         Text("Start the grove")
                             .font(.sans(15, weight: .semibold))
@@ -90,6 +121,42 @@ struct FocusTogetherSheet: View {
                     .disabled(!canStart)
                     .padding(.top, 4)
 
+                    HStack(spacing: 10) {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            showSchedule = true
+                        } label: {
+                            Label("Schedule for later", systemImage: "calendar")
+                                .font(.sans(13, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary.opacity(0.8))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(Theme.textPrimary.opacity(0.18), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+
+                        if !store.recentGroves.isEmpty {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                showHistory = true
+                            } label: {
+                                Label("Past groves", systemImage: "clock.arrow.circlepath")
+                                    .font(.sans(13, weight: .semibold))
+                                    .foregroundStyle(Theme.textPrimary.opacity(0.8))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(Theme.textPrimary.opacity(0.18), lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
                     Text("Each tree is one of you. Sleep doesn't cost a leaf — leaving the app does.")
                         .font(.serifItalic(12))
                         .foregroundStyle(Theme.textPrimary.opacity(0.55))
@@ -101,6 +168,15 @@ struct FocusTogetherSheet: View {
             }
             .navigationTitle("Focus together")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showBlockList) {
+                FocusBlockListView()
+            }
+            .sheet(isPresented: $showSchedule) {
+                ScheduleGroveSheet()
+            }
+            .sheet(isPresented: $showHistory) {
+                GroveHistoryView()
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Cancel") { dismiss() }
@@ -118,6 +194,32 @@ struct FocusTogetherSheet: View {
         Text("A small grove — you and a few friends in one shared focus window.")
             .font(.serifItalic(14))
             .foregroundStyle(Theme.textPrimary.opacity(0.65))
+    }
+
+    @ViewBuilder
+    private var upcomingGlance: some View {
+        if let next = store.nextScheduledGrove, let when = next.nextOccurrence() {
+            HStack(spacing: 12) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.alertGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(next.label ?? "Scheduled grove")
+                        .font(.serif(15, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(when.formatted(.relative(presentation: .named)) + " · " + when.formatted(date: .omitted, time: .shortened))
+                        .font(.sans(11))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                }
+                Spacer()
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Theme.alertGreen.opacity(0.10))
+            )
+        }
     }
 
     @ViewBuilder

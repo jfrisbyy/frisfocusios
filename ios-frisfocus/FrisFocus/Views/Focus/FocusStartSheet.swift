@@ -15,6 +15,7 @@ import UIKit
 struct FocusStartSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(Store.self) private var store
+    @Environment(FocusBlockingService.self) private var blocking
 
     let onStart: (TimeInterval, String?, UUID?) -> Void
 
@@ -23,6 +24,7 @@ struct FocusStartSheet: View {
     @State private var useCustom: Bool = false
     @State private var label: String = ""
     @State private var linkedTaskId: UUID? = nil
+    @State private var showBlockList = false
 
     private let presets: [Int] = [25, 45, 60]
 
@@ -62,6 +64,9 @@ struct FocusStartSheet: View {
                                 .fill(Theme.warmWheat)
                         )
 
+                    sectionHeader("Silence apps")
+                    silenceRow
+
                     if !store.tasks.isEmpty {
                         sectionHeader("Link a task (optional)")
                         Text("A clean block credits the task once for today.")
@@ -94,6 +99,9 @@ struct FocusStartSheet: View {
             }
             .navigationTitle("Focus")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showBlockList) {
+                FocusBlockListView()
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Cancel") { dismiss() }
@@ -179,6 +187,34 @@ struct FocusStartSheet: View {
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(isSelected ? Theme.alertGreen.opacity(0.10) : Theme.warmWheat)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var silenceRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showBlockList = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: blocking.isEnabled && blocking.hasSelection ? "hand.raised.fill" : "hand.raised")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(blocking.isEnabled && blocking.hasSelection ? Theme.alertGreen : Theme.textPrimary.opacity(0.45))
+                Text(blocking.isEnabled ? blocking.summaryLine : "Off")
+                    .font(.serif(15, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Theme.warmWheat)
             )
         }
         .buttonStyle(.plain)

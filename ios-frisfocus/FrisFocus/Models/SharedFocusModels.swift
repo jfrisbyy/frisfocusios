@@ -19,6 +19,9 @@ import Foundation
 /// the shared block, or has stepped away. Sleep / lock is *not*
 /// stepping away (carried over from F1).
 enum PresenceState: String, Codable, Hashable {
+    /// Invited but hasn't joined the grove yet — their tree shows a
+    /// gentle "waiting" state until they arrive.
+    case invited
     case inBlock
     case steppedAway
 }

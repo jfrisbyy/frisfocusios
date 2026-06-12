@@ -20,6 +20,7 @@ struct SharedFocusModeView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(Store.self) private var store
+    @Environment(FocusBlockingService.self) private var blocking
 
     let sessionLength: TimeInterval
     let label: String?
@@ -50,6 +51,9 @@ struct SharedFocusModeView: View {
     /// The friend the user tapped to nudge — drives the cheer composer
     /// sheet.
     @State private var nudgeTarget: Friend? = nil
+    /// Per-participant cheer counters; bumping one floats a reaction
+    /// over that friend's tree.
+    @State private var reactionPings: [UUID: Int] = [:]
     /// Tracks whether we've already started this view's local F1
     /// session so a re-render doesn't start a second one.
     @State private var didStart: Bool = false
@@ -59,6 +63,7 @@ struct SharedFocusModeView: View {
             FocusGroveView(
                 participants: groveParticipants,
                 sessionLabel: sessionLabelText,
+                reactionPings: reactionPings,
                 onNudge: handleNudge(_:)
             )
 
@@ -196,6 +201,10 @@ struct SharedFocusModeView: View {
                 case .sparse: return .sparse
                 }
             }()
+            // No presence row yet, or an explicit `.invited` row, means
+            // they haven't dropped into the grove — show the waiting tree
+            // until their device publishes `inBlock`.
+            let isWaiting = presence == nil || presence?.state == .invited
             let slot = slots[i]
             out.append(
                 GroveParticipant(
@@ -204,6 +213,7 @@ struct SharedFocusModeView: View {
                     isYou: false,
                     tier: mapped,
                     isSteppedAway: presence?.state == .steppedAway,
+                    isWaiting: isWaiting,
                     depth: slot.depth,
                     xUnit: slot.x,
                     leafSeed: slot.seed,
@@ -246,6 +256,7 @@ struct SharedFocusModeView: View {
             )
         }
         publishMyPresence()
+        blocking.beginShielding()
     }
 
     private func handleScenePhase(_ old: ScenePhase, _ new: ScenePhase) {
@@ -296,7 +307,20 @@ struct SharedFocusModeView: View {
 
     private func handleNudge(_ participant: GroveParticipant) {
         guard let friend = store.friends.first(where: { $0.id == participant.id }) else { return }
-        nudgeTarget = friend
+        // Stepped-away friends get the nudge composer ("come back in").
+        // Everyone else gets a quick, silent cheer that floats over
+        // their tree — keeping the grove alive without words.
+        if participant.isSteppedAway {
+            nudgeTarget = friend
+        } else {
+            sendQuickCheer(to: friend)
+        }
+    }
+
+    private func sendQuickCheer(to friend: Friend) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        reactionPings[friend.id, default: 0] += 1
+        store.sendQuickCheer(to: friend.id)
     }
 
     private func endEarly() {
@@ -309,6 +333,7 @@ struct SharedFocusModeView: View {
         sessionEnded = true
         store.endFocusSession()
         store.endSharedFocusBlock()
+        blocking.endShielding()
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         withAnimation(.easeOut(duration: 0.28)) {
             showReturnOverlay = false
@@ -437,6 +462,28 @@ struct SharedFocusModeView: View {
                     .font(.serifItalic(14))
                     .foregroundStyle(Theme.textPrimary.opacity(0.7))
 
+                if let streakLine {
+                    HStack(spacing: 8) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color(hex: 0xC97B4B))
+                        Text(streakLine)
+                            .font(.sans(13, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color(hex: 0xC97B4B).opacity(0.12))
+                    )
+                }
+
+                Text("\(store.totalGroveMinutes) minutes in the grove, all time")
+                    .font(.sans(11, weight: .medium))
+                    .tracking(0.4)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
+
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     dismiss()
@@ -462,6 +509,16 @@ struct SharedFocusModeView: View {
             )
             .padding(.horizontal, 22)
         }
+    }
+
+    /// "You and Maya — 4 days in a row" for the first invited friend who
+    /// has a live streak after this block.
+    private var streakLine: String? {
+        guard let fid = participantFriendIds.first,
+              let friend = store.friends.first(where: { $0.id == fid }) else { return nil }
+        let streak = store.coFocusStreak(with: fid)
+        guard streak >= 2 else { return nil }
+        return "You and \(friend.displayName) — \(streak) days in a row"
     }
 
     private var completionBody: String {

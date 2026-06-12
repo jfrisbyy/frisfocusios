@@ -1,0 +1,161 @@
+//
+//  FocusBlockListView.swift
+//  FrisFocus
+//
+//  Picks which apps / categories to silence during a focus block. Wraps
+//  Apple's official `FamilyActivityPicker` (the only way to choose real
+//  apps — their tokens are opaque and can't be built by hand) behind the
+//  app's warm paper aesthetic, with a first-run Screen Time explainer and
+//  an honest "demo only" note where OS-level blocking can't take effect.
+//
+
+import SwiftUI
+
+#if canImport(FamilyControls)
+import FamilyControls
+#endif
+
+struct FocusBlockListView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(FocusBlockingService.self) private var blocking
+
+    @State private var showPicker = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    intro
+                    statusCard
+                    chooseButton
+                    footnote
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 28)
+            }
+            .navigationTitle("Silence apps")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .font(.sans(13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                }
+            }
+            .onAppear { blocking.refreshAuthStatus() }
+            #if canImport(FamilyControls)
+            .familyActivityPicker(isPresented: $showPicker, selection: bindingSelection)
+            #endif
+        }
+    }
+
+    #if canImport(FamilyControls)
+    private var bindingSelection: Binding<FamilyActivitySelection> {
+        Bindable(blocking).selection
+    }
+    #endif
+
+    // MARK: - Sections
+
+    @ViewBuilder
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Pick the apps that pull you away. While a focus block runs, opening one shows a block screen instead — so the tree keeps its leaves.")
+                .font(.serifItalic(15))
+                .foregroundStyle(Theme.textPrimary.opacity(0.7))
+        }
+    }
+
+    @ViewBuilder
+    private var statusCard: some View {
+        @Bindable var b = blocking
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("BLOCKING")
+                    .font(.sans(10, weight: .semibold))
+                    .tracking(1.8)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                Spacer()
+                Toggle("", isOn: $b.isEnabled)
+                    .labelsHidden()
+                    .tint(Theme.alertGreen)
+            }
+            Divider().opacity(0.4)
+            HStack(spacing: 10) {
+                Image(systemName: blocking.hasSelection ? "hand.raised.fill" : "hand.raised")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(blocking.hasSelection ? Theme.alertGreen : Theme.textPrimary.opacity(0.4))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(blocking.summaryLine)
+                        .font(.serif(16, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary)
+                    if !blocking.canBlockForReal {
+                        Text(authNote)
+                            .font(.sans(11))
+                            .foregroundStyle(Color(hex: 0x9E7E40))
+                    }
+                }
+                Spacer()
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Theme.warmWheat)
+        )
+    }
+
+    @ViewBuilder
+    private var chooseButton: some View {
+        VStack(spacing: 10) {
+            Button(action: choose) {
+                Text(blocking.hasSelection ? "Edit silenced apps" : "Choose apps to silence")
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.warmWheat)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Theme.textPrimary)
+                    )
+            }
+            .buttonStyle(.plain)
+
+            if blocking.authStatus == .denied {
+                Text("Screen Time access is off. Enable it in Settings › Screen Time to silence other apps.")
+                    .font(.sans(12))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var footnote: some View {
+        Text("Locking or sleeping your phone never costs a leaf. Only opening a silenced app — or leaving FrisFocus — does.")
+            .font(.serifItalic(12))
+            .foregroundStyle(Theme.textPrimary.opacity(0.5))
+    }
+
+    private var authNote: String {
+        switch blocking.authStatus {
+        case .approved: return ""
+        case .denied: return "Screen Time access is off — demo only"
+        case .notDetermined: return "We'll ask for Screen Time access"
+        case .unavailable: return "Demo only here — real blocking runs on your iPhone"
+        }
+    }
+
+    // MARK: - Actions
+
+    private func choose() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task {
+            if blocking.authStatus == .notDetermined {
+                await blocking.requestAuthorization()
+            }
+            showPicker = true
+        }
+    }
+}

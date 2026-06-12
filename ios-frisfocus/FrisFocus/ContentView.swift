@@ -101,6 +101,11 @@ struct ContentView: View {
                 // Keep milestone target-week nudges aligned with the
                 // season's current milestones on every launch.
                 store.refreshMilestoneNudges()
+                // Safety net: if no focus block is running, make sure no
+                // app shield was left applied by a previous crash/kill.
+                if store.activeFocusSession == nil && store.activeSharedFocusBlock == nil {
+                    FocusBlockingService.shared.endShielding()
+                }
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {

@@ -26,6 +26,8 @@ struct GroveParticipant: Identifiable {
     /// In-block vs. stepped-away. Drives the calm "stepped away"
     /// label + the nudge affordance.
     let isSteppedAway: Bool
+    /// Invited but hasn't joined yet — a gentle "waiting" tree.
+    var isWaiting: Bool = false
     /// Distance band: 0 = front (yours), 1 = mid, 2 = back. Drives
     /// scale + saturation + position.
     let depth: Int
@@ -43,16 +45,21 @@ struct FocusGroveView: View {
     let sessionLabel: String
     /// Tapped a friend tree → host opens the nudge / cheer flow.
     let onNudge: ((GroveParticipant) -> Void)?
+    /// Monotonic per-participant counters; bumping one floats a cheer
+    /// burst over that participant's tree.
+    let reactionPings: [UUID: Int]
 
     @Environment(\.dismiss) private var dismiss
 
     init(
         participants: [GroveParticipant] = FocusGroveView.sampleParticipants,
         sessionLabel: String = "TOGETHER · 45 MIN",
+        reactionPings: [UUID: Int] = [:],
         onNudge: ((GroveParticipant) -> Void)? = nil
     ) {
         self.participants = participants
         self.sessionLabel = sessionLabel
+        self.reactionPings = reactionPings
         self.onNudge = onNudge
     }
 
@@ -129,8 +136,10 @@ struct FocusGroveView: View {
         let yOffset = dl.yOffset
         let saturation = dl.saturation
         // Stepped-away friends fade a touch further so the grove
-        // signals their absence without alarm.
-        let opacity = dl.opacity * (p.isSteppedAway && !p.isYou ? 0.78 : 1.0)
+        // signals their absence without alarm. Waiting (not-yet-joined)
+        // trees sit fainter still, like a sapling about to fill in.
+        let absentFade = (p.isSteppedAway || p.isWaiting) && !p.isYou ? 0.7 : 1.0
+        let opacity = dl.opacity * absentFade
 
         let treeW = min(size.width * 0.62, 320) * scale
         let treeH = baseHeight * scale
@@ -149,6 +158,10 @@ struct FocusGroveView: View {
             .frame(width: treeW, height: treeH)
             .saturation(saturation)
             .opacity(opacity)
+            .overlay(alignment: .top) {
+                GroveReactionBurst(ping: reactionPings[p.id] ?? 0)
+                    .allowsHitTesting(false)
+            }
 
             VStack(spacing: 2) {
                 Text(p.name)
@@ -179,17 +192,47 @@ struct FocusGroveView: View {
             case .sparse: return "STILL IN · WINDED"
             }
         }
+        if p.isWaiting { return "WAITING TO JOIN…" }
         if p.isSteppedAway { return "STEPPED AWAY · TAP TO NUDGE" }
-        switch p.tier {
-        case .full: return "STILL IN"
-        case .thinning: return "STILL IN"
-        case .sparse: return "STILL IN"
-        }
+        return "STILL IN"
     }
 
     private func stateColor(for p: GroveParticipant) -> Color {
+        if !p.isYou && p.isWaiting { return Color(hex: 0xB59A6A) }
         if !p.isYou && p.isSteppedAway { return Color(hex: 0x9E7E40) }
         return Theme.alertGreen
+    }
+}
+
+// MARK: - Reaction burst
+
+/// A small floating cheer that rises and fades over a tree whenever its
+/// `ping` counter changes. Used for live, silent grove reactions.
+private struct GroveReactionBurst: View {
+    let ping: Int
+
+    @State private var rise: CGFloat = 0
+    @State private var opacity: Double = 0
+    @State private var symbol = "leaf.fill"
+
+    private let symbols = ["leaf.fill", "hands.clap.fill", "sparkles", "heart.fill", "sun.max.fill"]
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 22, weight: .semibold))
+            .foregroundStyle(Theme.alertGreen)
+            .offset(y: rise)
+            .opacity(opacity)
+            .onChange(of: ping) { _, newValue in
+                guard newValue > 0 else { return }
+                symbol = symbols.randomElement() ?? "leaf.fill"
+                rise = 0
+                opacity = 1
+                withAnimation(.easeOut(duration: 1.4)) {
+                    rise = -70
+                    opacity = 0
+                }
+            }
     }
 }
 

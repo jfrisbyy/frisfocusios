@@ -89,10 +89,16 @@ extension SocialSyncService {
                 .value
             await ensureProfiles(remoteIds: rows.map { $0.userId })
             store.focusPresences = rows.map { row in
-                FocusPresence(
+                let state: PresenceState
+                switch row.state {
+                case "inBlock": state = .inBlock
+                case "steppedAway": state = .steppedAway
+                default: state = .invited
+                }
+                return FocusPresence(
                     blockId: row.blockId,
                     userId: localId(forRemote: row.userId),
-                    state: row.state == "inBlock" ? .inBlock : .steppedAway,
+                    state: state,
                     leafTier: LeafTier(rawValue: row.leafTier) ?? .full,
                     updatedAt: SyncDates.parse(row.updatedAt)
                 )

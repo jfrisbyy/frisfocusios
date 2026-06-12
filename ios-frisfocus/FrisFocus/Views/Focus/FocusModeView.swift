@@ -22,6 +22,7 @@ struct FocusModeView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(Store.self) private var store
+    @Environment(FocusBlockingService.self) private var blocking
 
     // MARK: - Inputs
 
@@ -401,6 +402,8 @@ struct FocusModeView: View {
                 canopyTotal: leaves.count
             )
         }
+        // Shield the chosen apps for the duration of the block.
+        blocking.beginShielding()
     }
 
     private func handleScenePhase(_ old: ScenePhase, _ new: ScenePhase) {
@@ -467,6 +470,7 @@ struct FocusModeView: View {
         let clean = leafCount == 0
         store.endFocusSession()
         FocusActivityManager.shared.end()
+        blocking.endShielding()
         completedLeafCount = leafCount
         completedClean = clean
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()

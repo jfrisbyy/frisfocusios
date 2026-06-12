@@ -214,6 +214,10 @@ final class Store {
     /// here are seeded / simulated locally.
     var focusPresences: [FocusPresence] = []
 
+    /// Groves planned for later (optionally recurring). Persisted
+    /// locally; each schedules a local reminder + invite pushes.
+    var scheduledGroves: [ScheduledGrove] = [] { didSet { markDirty(.scheduledGroves) } }
+
     /// Transient signal published when a train completion bonus is
     /// awarded. Views observe it for a one-shot toast.
     var pendingTrainAward: TrainAward? = nil
@@ -283,6 +287,7 @@ final class Store {
         static let circleTaskRequests = "circleTaskRequests"
         static let focusSessions = "focusSessions"
         static let sharedFocusBlocks = "sharedFocusBlocks"
+        static let scheduledGroves = "scheduledGroves"
         static let directShares = "directShares"
 
         // Cadence link (Esengo)
@@ -435,6 +440,7 @@ final class Store {
             self.circleTaskRequests = Store.loadArray(Keys.circleTaskRequests) ?? []
             self.focusSessions = Store.loadArray(Keys.focusSessions) ?? []
             self.sharedFocusBlocks = Store.loadArray(Keys.sharedFocusBlocks) ?? []
+            self.scheduledGroves = Store.loadArray(Keys.scheduledGroves) ?? []
             self.cadenceLinks = Store.loadArray(Keys.cadenceLinks) ?? []
             self.cadenceOutcomeFulfillments = Store.loadArray(Keys.cadenceOutcomeFulfillments) ?? []
             if let ids: [UUID] = Store.loadArray(Keys.consumedCadenceEventIds) {
@@ -577,7 +583,7 @@ final class Store {
         case signalFacts, cheers, storyPosts, directShares, likes, comments, mediaAssets
         case avoidanceItems, avoidanceOccurrences, habitTrains, boosters
         case viewedStoryPostIds, pacts, pactCompletions, circleTaskRequests
-        case focusSessions, sharedFocusBlocks
+        case focusSessions, sharedFocusBlocks, scheduledGroves
         case cadenceLinks, cadenceOutcomeFulfillments, consumedCadenceEventIds
         case settings
     }
@@ -686,6 +692,7 @@ final class Store {
         case .circleTaskRequests: setJSON(circleTaskRequests, forKey: Keys.circleTaskRequests, encoder: encoder)
         case .focusSessions: setJSON(focusSessions, forKey: Keys.focusSessions, encoder: encoder)
         case .sharedFocusBlocks: setJSON(sharedFocusBlocks, forKey: Keys.sharedFocusBlocks, encoder: encoder)
+        case .scheduledGroves: setJSON(scheduledGroves, forKey: Keys.scheduledGroves, encoder: encoder)
         case .cadenceLinks: setJSON(cadenceLinks, forKey: Keys.cadenceLinks, encoder: encoder)
         case .cadenceOutcomeFulfillments: setJSON(cadenceOutcomeFulfillments, forKey: Keys.cadenceOutcomeFulfillments, encoder: encoder)
         case .consumedCadenceEventIds: setJSON(Array(consumedCadenceEventIds), forKey: Keys.consumedCadenceEventIds, encoder: encoder)
@@ -719,6 +726,7 @@ final class Store {
         Keys.avoidanceOccurrences, Keys.habitTrains, Keys.boosters,
         Keys.viewedStoryPostIds, Keys.pacts, Keys.pactCompletions,
         Keys.circleTaskRequests, Keys.focusSessions, Keys.sharedFocusBlocks,
+        Keys.scheduledGroves,
         Keys.cadenceLinks, Keys.cadenceOutcomeFulfillments,
         Keys.consumedCadenceEventIds
     ]
