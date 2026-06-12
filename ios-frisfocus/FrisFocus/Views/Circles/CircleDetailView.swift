@@ -52,33 +52,17 @@ struct CircleDetailView: View {
                 VStack(spacing: 0) {
                     hero
 
-                    // The group story rides at the very top — the
-                    // first thing inside any circle (parallel or
-                    // collective) the moment a member has posted a
-                    // clip today. Hidden when there's nothing to watch.
-                    if hasStoryToday {
-                        CircleStoryStrip(
-                            memberCount: clipAuthorCountToday,
-                            isWatched: allClipsWatchedToday,
-                            onTap: {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                showGroupStory = true
-                            }
-                        )
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 18)
-                    }
-
-                    // The always-available "Add to story" entry sits
-                    // directly beneath the story module so adding a
-                    // moment is the first thing the user reaches — in
-                    // every circle, whether or not anyone has posted
-                    // yet. It auto-tags the user's latest finished task
-                    // when there is one, otherwise opens a general
+                    // The always-available "Add to story" entry sits at
+                    // the top of the body so adding a moment is the
+                    // first thing the user reaches — in every circle,
+                    // whether or not anyone has posted yet. Watching a
+                    // fresh story happens via the pulsing play badge on
+                    // the hero. It auto-tags the user's latest finished
+                    // task when there is one, otherwise opens a general
                     // circle moment.
                     addToStoryCTA
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, hasStoryToday ? 12 : 18)
+                        .padding(.top, 18)
 
                     // The body renders by whatever layers are active:
                     // a shared list, a shared number, both (hybrid), or
@@ -323,23 +307,6 @@ struct CircleDetailView: View {
         .accessibilityLabel(earned == nil ? "Add to story" : "Add your mile to the story")
     }
 
-    // MARK: - Story strip presence
-
-    private var clipAuthorsToday: [UUID] {
-        Array(Set(store.circleClipsToday(circleId: circle.id).map { $0.authorId }))
-    }
-
-    private var clipAuthorCountToday: Int { clipAuthorsToday.count }
-    private var hasStoryToday: Bool { clipAuthorCountToday > 0 }
-
-    /// Every clip today has been played — the strip mutes to its
-    /// "watched · replay" state.
-    private var allClipsWatchedToday: Bool {
-        let clips = store.circleClipsToday(circleId: circle.id)
-        guard !clips.isEmpty else { return false }
-        return clips.allSatisfy { store.viewedStoryPostIds.contains($0.id) }
-    }
-
     // MARK: - Hero
 
     @ViewBuilder
@@ -400,11 +367,17 @@ struct CircleDetailView: View {
         }
         .frame(height: 220)
         .clipped()
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .bottomTrailing) {
             if store.circleHasUnwatchedStory(circleId: circle.id) {
-                NewStoryBadge(diameter: 12)
-                    .padding(.top, 60)
-                    .padding(.trailing, Theme.pageHorizontalPadding + 44)
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showGroupStory = true
+                } label: {
+                    NewStoryBadge()
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, Theme.pageHorizontalPadding)
+                .padding(.bottom, 18)
             }
         }
     }

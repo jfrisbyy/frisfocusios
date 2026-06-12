@@ -129,8 +129,7 @@ struct CirclesGroupsSection: View {
                             ParallelCircleCard(
                                 circle: circle,
                                 zoomNamespace: zoomNamespace,
-                                onTap: { onCircleTap(circle) },
-                                onStoryStripTap: { onStoryStripTap(circle) }
+                                onTap: { onCircleTap(circle) }
                             )
                         case .collective:
                             CollectiveCircleCard(
@@ -144,7 +143,10 @@ struct CirclesGroupsSection: View {
                             )
                         }
                     }
-                    .newStoryGlow(store.circleHasUnwatchedStory(circleId: circle.id))
+                    .newStoryGlow(
+                        store.circleHasUnwatchedStory(circleId: circle.id),
+                        onTap: { onStoryStripTap(circle) }
+                    )
                 }
 
                 // Pacts — a circle of two, rendered alongside circles.
@@ -412,7 +414,6 @@ private struct ParallelCircleCard: View {
     let circle: FFCircle
     var zoomNamespace: Namespace.ID? = nil
     let onTap: () -> Void
-    let onStoryStripTap: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -430,10 +431,6 @@ private struct ParallelCircleCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-
-            if hasStoryToday {
-                storyStrip
-            }
         }
         .background(
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
@@ -495,86 +492,7 @@ private struct ParallelCircleCard: View {
         }
     }
 
-    private var storyStrip: some View {
-        Button(action: onStoryStripTap) {
-            HStack(spacing: 8) {
-                Image(systemName: allClipsWatchedToday ? "arrow.counterclockwise" : "play.fill")
-                    .font(.sans(10, weight: .bold))
-                    .foregroundStyle(allClipsWatchedToday ? Theme.textPrimary.opacity(0.45) : Theme.sunShadow)
-
-                Text(storyStripCopy)
-                    .font(.sans(12, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(allClipsWatchedToday ? 0.55 : 0.75))
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                allClipsWatchedToday
-                    ? Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255).opacity(0.0)
-                    : Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255).opacity(0.08)
-            )
-            .overlay(
-                Rectangle()
-                    .fill(Theme.textPrimary.opacity(0.06))
-                    .frame(height: 0.5),
-                alignment: .top
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .clipShape(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: Theme.cardCornerRadius,
-                bottomTrailingRadius: Theme.cardCornerRadius,
-                topTrailingRadius: 0,
-                style: .continuous
-            )
-        )
-        .zoomSource(id: "circlestory-\(circle.id.uuidString)", in: zoomNamespace)
-    }
-
     // MARK: - Derived
-
-    /// Today's clips for this circle — the source of truth for both the
-    /// strip's presence and its watched state.
-    private var clipsToday: [StoryPost] {
-        let cal = Calendar.current
-        let today = Date()
-        return store.storyPosts.filter { post in
-            post.circleId == circle.id && cal.isDate(post.createdAt, inSameDayAs: today)
-        }
-    }
-
-    /// Distinct members with at least one circle clip for this circle
-    /// today. The strip surfaces a count of how many people "ran
-    /// today" — the phrasing is generic but the source of truth is
-    /// whoever posted a clip.
-    private var clipMembersToday: [UUID] {
-        Array(Set(clipsToday.map { $0.authorId }))
-    }
-
-    private var hasStoryToday: Bool { !clipMembersToday.isEmpty }
-
-    /// Every clip today has been played — the strip downgrades to a
-    /// quiet "watched" replay state instead of looking like fresh news.
-    private var allClipsWatchedToday: Bool {
-        let clips = clipsToday
-        guard !clips.isEmpty else { return false }
-        return clips.allSatisfy { store.viewedStoryPostIds.contains($0.id) }
-    }
-
-    private var storyStripCopy: String {
-        if allClipsWatchedToday {
-            return "Watched · replay today's story"
-        }
-        let count = clipMembersToday.count
-        let verb = count == 1 ? "ran today" : "ran today"
-        return "\(count) \(verb) · watch the story"
-    }
 
     private var userCompletionsToday: Int {
         let cal = Calendar.current

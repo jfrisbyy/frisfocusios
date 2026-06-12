@@ -602,6 +602,12 @@ struct CaptureReviewView: View {
                store.friend(by: friendId) != nil {
                 audience = ShareAudience(everyone: false, friendIds: [friendId], circleIds: [])
             }
+            // A clip captured from inside a circle starts pre-ticked to
+            // that circle, but can fan out to the public story, other
+            // circles, and friends from the same chooser.
+            if case .circleClip(let circle, _) = mode, audience == .initial {
+                audience = ShareAudience(everyone: false, friendIds: [], circleIds: [circle.id])
+            }
         }
     }
 
@@ -1294,13 +1300,12 @@ struct CaptureReviewView: View {
     /// live Proofs thread) rather than the local store.
     private var isLiveProof: Bool { onSendLiveProof != nil }
 
-    /// Only general posts can pick a destination; a circle clip is
-    /// pinned to the circle it documents, and a live proof is pinned to
-    /// its one real recipient.
+    /// Both general posts and circle-originated clips can pick a
+    /// destination (a circle clip just starts pre-ticked to its circle).
+    /// Only a live proof is pinned to its one real recipient.
     private var canChooseAudience: Bool {
         if isLiveProof { return false }
-        if case .generalPost = mode { return true }
-        return false
+        return true
     }
 
     private func destinationPill(expandable: Bool) -> some View {
@@ -1340,53 +1345,38 @@ struct CaptureReviewView: View {
 
     private var audienceIcon: String {
         if isLiveProof { return "person.fill" }
-        switch mode {
-        case .circleClip:
-            return "circle.hexagongrid.fill"
-        case .generalPost:
-            if audience.isPristineEveryone { return "person.2.fill" }
-            let friendCount = audience.friendIds.count
-            let circleCount = audience.circleIds.count
-            // A single private target gets a precise glyph; anything
-            // mixed (or story + private) reads as a small group.
-            if !audience.everyone && friendCount == 1 && circleCount == 0 { return "person.fill" }
-            if !audience.everyone && friendCount == 0 && circleCount == 1 { return "circle.hexagongrid.fill" }
-            return "person.3.fill"
-        }
+        if audience.isPristineEveryone { return "person.2.fill" }
+        let friendCount = audience.friendIds.count
+        let circleCount = audience.circleIds.count
+        // A single private target gets a precise glyph; anything
+        // mixed (or story + private) reads as a small group.
+        if !audience.everyone && friendCount == 1 && circleCount == 0 { return "person.fill" }
+        if !audience.everyone && friendCount == 0 && circleCount == 1 { return "circle.hexagongrid.fill" }
+        return "person.3.fill"
     }
 
     private var destinationTint: Color {
         if isLiveProof { return Color(hex: 0x8FB339) }
-        switch mode {
-        case .circleClip:
-            return Color(hex: 0xC59A5C)
-        case .generalPost:
-            return audience.isPristineEveryone ? Color(hex: 0xD87D44) : Color(hex: 0x8FB339)
-        }
+        return audience.isPristineEveryone ? Color(hex: 0xD87D44) : Color(hex: 0x8FB339)
     }
 
     private var audienceTitle: String {
         if isLiveProof { return "To \(liveProofRecipientName ?? "your friend")" }
-        switch mode {
-        case .circleClip(let circle, _):
-            return circle.name
-        case .generalPost:
-            if audience.isPristineEveryone { return "Friends · 24h" }
-            return summaryLabel(tokens: audienceTokens, empty: "Select destination")
-        }
+        if audience.isPristineEveryone { return "Friends · 24h" }
+        return summaryLabel(tokens: audienceTokens, empty: "Select destination")
     }
 
     private var audienceSubtitle: String {
         if isLiveProof { return "A private proof \u{00B7} just them" }
-        switch mode {
-        case .circleClip:
-            return "Archived in the circle's story"
-        case .generalPost:
-            if audience.isPristineEveryone { return "Disappears in a day" }
-            if audience.everyone { return "Public story + a proof to each" }
-            let count = audience.friendIds.count + audience.circleIds.count
-            return count <= 1 ? "A proof · just them" : "A proof to each"
+        if audience.isPristineEveryone { return "Disappears in a day" }
+        if audience.everyone { return "Public story + more" }
+        let circleCount = audience.circleIds.count
+        let friendCount = audience.friendIds.count
+        if friendCount == 0 && circleCount > 0 {
+            return circleCount == 1 ? "Shared in the circle's story" : "Shared in \(circleCount) circles"
         }
+        let total = friendCount + circleCount
+        return total <= 1 ? "A proof · just them" : "A proof to each"
     }
 
     /// Selected circles, resolved and name-sorted for a stable label.
@@ -2214,67 +2204,63 @@ struct CaptureReviewView: View {
 
             var toast: String? = nil
 
-            switch mode {
-            case .circleClip(let circle, let task):
+            // Unified multi-send for both modes. A circle clip simply
+            // starts with its originating circle pre-ticked; from there
+            // it fans out to the public story, any circles, and any
+            // friends exactly like a general post. The originating
+            // circle keeps the earned-task badge on its clip.
+            let originatingCircleId: UUID?
+            let earnedTaskId: UUID?
+            if case .circleClip(let circle, let task) = mode {
+                originatingCircleId = circle.id
+                earnedTaskId = task?.id
+            } else {
+                originatingCircleId = nil
+                earnedTaskId = nil
+            }
+
+            // A public story post (when `everyone` is on), one circle
+            // CLIP per selected circle (so each circle's story + badge
+            // light up), and/or one private send per selected friend.
+            if audience.everyone {
                 _ = store.postMedia(
                     imageData: mediaData,
                     type: mediaType,
                     caption: captionToSend,
-                    circleId: circle.id,
-                    attachedCircleTaskId: task?.id,
+                    circleId: nil,
+                    attachedCircleTaskId: nil,
                     durationSeconds: duration
                 )
+            }
+            for circleId in audience.circleIds {
+                _ = store.postMedia(
+                    imageData: mediaData,
+                    type: mediaType,
+                    caption: captionToSend,
+                    circleId: circleId,
+                    attachedCircleTaskId: circleId == originatingCircleId ? earnedTaskId : nil,
+                    durationSeconds: duration
+                )
+            }
+            if !audience.friendIds.isEmpty {
+                store.sendDirectToFriends(
+                    imageData: mediaData,
+                    type: mediaType,
+                    caption: captionToSend,
+                    friendIds: Array(audience.friendIds),
+                    durationSeconds: duration
+                )
+            }
+            if audience.hasPrivateRecipients {
+                toast = "Proof sent to \(summaryLabel(tokens: privateTokens, empty: "your picks"))"
+            }
+            if audience.everyone || !audience.circleIds.isEmpty {
                 store.recordProofToLibrary(
                     imageData: mediaData,
                     type: mediaType,
                     duration: duration,
                     source: .posted
                 )
-            case .generalPost:
-                // Any combination: a public story post (when `everyone`
-                // is on), one circle CLIP per selected circle (so the
-                // circle's story + badge light up), and/or one private
-                // send per selected friend. Same composed media.
-                if audience.everyone {
-                    _ = store.postMedia(
-                        imageData: mediaData,
-                        type: mediaType,
-                        caption: captionToSend,
-                        circleId: nil,
-                        attachedCircleTaskId: nil,
-                        durationSeconds: duration
-                    )
-                }
-                for circleId in audience.circleIds {
-                    _ = store.postMedia(
-                        imageData: mediaData,
-                        type: mediaType,
-                        caption: captionToSend,
-                        circleId: circleId,
-                        attachedCircleTaskId: nil,
-                        durationSeconds: duration
-                    )
-                }
-                if !audience.friendIds.isEmpty {
-                    store.sendDirectToFriends(
-                        imageData: mediaData,
-                        type: mediaType,
-                        caption: captionToSend,
-                        friendIds: Array(audience.friendIds),
-                        durationSeconds: duration
-                    )
-                }
-                if audience.hasPrivateRecipients {
-                    toast = "Proof sent to \(summaryLabel(tokens: privateTokens, empty: "your picks"))"
-                }
-                if audience.everyone || !audience.circleIds.isEmpty {
-                    store.recordProofToLibrary(
-                        imageData: mediaData,
-                        type: mediaType,
-                        duration: duration,
-                        source: .posted
-                    )
-                }
             }
 
             // A posted draft is done — clear the stored copy.
