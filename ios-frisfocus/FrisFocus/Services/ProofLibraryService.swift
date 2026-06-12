@@ -61,7 +61,10 @@ extension Store {
             item = ProofLibraryItem(kind: .video, filename: filename, duration: duration, source: source)
         }
         proofLibrary.append(item)
+        // Archive entries write through immediately — a proof save must
+        // never be lost to the debounce window if the app exits.
         persistAll()
+        flushPendingSaves()
         return item.id
     }
 
@@ -75,6 +78,7 @@ extension Store {
             proofLibrary[idx].pinnedLabels.append(label)
         }
         persistAll()
+        flushPendingSaves()
     }
 
     /// Permanently remove an archived proof and its media file.
@@ -85,6 +89,123 @@ extension Store {
         }
         proofLibrary.remove(at: idx)
         persistAll()
+        flushPendingSaves()
+    }
+
+    // MARK: - One-time back-fill
+
+    private static let backfillFlagKey = "proofLibrary.backfilled.v1"
+
+    /// Import every proof that existed BEFORE the library shipped —
+    /// task/to-do pins, note and milestone proof media, and the user's
+    /// own posted story clips — so the archive isn't empty for early
+    /// savers. Runs exactly once; each import copies the bytes into the
+    /// library's own file so later pin/post deletion never breaks it.
+    /// Identical bytes reached from several pins collapse into one
+    /// entry with merged labels.
+    func backfillProofLibraryIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.backfillFlagKey) else { return }
+        defaults.set(true, forKey: Self.backfillFlagKey)
+
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        var imported: [ProofLibraryItem] = []
+        var indexByByteCountAndHash: [String: Int] = [:]
+
+        func importProof(
+            at url: URL?,
+            kind: NoteMediaKind,
+            duration: TimeInterval?,
+            source: ProofLibrarySource,
+            createdAt: Date,
+            labels: [String]
+        ) {
+            guard let url, let data = try? Data(contentsOf: url), !data.isEmpty else { return }
+            let dedupeKey = "\(data.count)-\(data.hashValue)"
+            if let existingIdx = indexByByteCountAndHash[dedupeKey] {
+                for label in labels where !imported[existingIdx].pinnedLabels.contains(label) {
+                    imported[existingIdx].pinnedLabels.append(label)
+                }
+                if source == .posted { imported[existingIdx].source = .posted }
+                return
+            }
+            let ext = kind == .video ? "mp4" : "jpg"
+            let filename = "proof-lib-\(UUID().uuidString.lowercased()).\(ext)"
+            do {
+                try data.write(to: docs.appendingPathComponent(filename), options: .atomic)
+            } catch {
+                print("[ProofLibrary] backfill write failed: \(error)")
+                return
+            }
+            var item = ProofLibraryItem(kind: kind, filename: filename, duration: duration, source: source)
+            item.createdAt = createdAt
+            item.pinnedLabels = labels
+            indexByByteCountAndHash[dedupeKey] = imported.count
+            imported.append(item)
+        }
+
+        // 1. Task / to-do pins.
+        for pin in proofPins {
+            var labels: [String] = []
+            if let taskId = pin.taskId, let title = tasks.first(where: { $0.id == taskId })?.title {
+                labels.append(title)
+            }
+            if let todoId = pin.todoId, let title = todos.first(where: { $0.id == todoId })?.title {
+                labels.append(title)
+            }
+            importProof(
+                at: pin.url, kind: pin.kind, duration: pin.duration,
+                source: .saved, createdAt: pin.createdAt, labels: labels
+            )
+        }
+
+        // 2. Proofs attached to notes.
+        for note in notes {
+            for photo in note.photos where photo.isProof {
+                importProof(
+                    at: photo.url, kind: photo.kind, duration: photo.duration,
+                    source: .saved, createdAt: photo.createdAt, labels: ["a note"]
+                )
+            }
+        }
+
+        // 3. Proofs on milestone journeys (voice memos aren't proofs).
+        for milestone in currentSeason.milestones {
+            for attachment in milestone.attachments where attachment.isProof && attachment.kind != .voiceMemo {
+                importProof(
+                    at: attachment.url,
+                    kind: attachment.kind == .video ? .video : .photo,
+                    duration: attachment.duration,
+                    source: .saved,
+                    createdAt: attachment.createdAt,
+                    labels: [milestone.title]
+                )
+            }
+        }
+
+        // 4. The user's own posted story / circle clips. Private sends
+        // live in `directShares`, never here — so they stay excluded.
+        for post in storyPosts where post.authorId == currentUserId {
+            guard let mediaId = post.mediaId, let asset = media(by: mediaId) else { continue }
+            var labels: [String] = []
+            if let circleId = post.circleId, let name = circle(by: circleId)?.name {
+                labels.append(name)
+            }
+            importProof(
+                at: asset.resolvedLocalURL,
+                kind: asset.type == .video ? .video : .photo,
+                duration: asset.durationSeconds,
+                source: .posted,
+                createdAt: post.createdAt,
+                labels: labels
+            )
+        }
+
+        guard !imported.isEmpty else { return }
+        proofLibrary.append(contentsOf: imported)
+        persistAll()
+        flushPendingSaves()
+        print("[ProofLibrary] back-filled \(imported.count) existing proofs")
     }
 
     /// A friendly title for an attach target — used to label library

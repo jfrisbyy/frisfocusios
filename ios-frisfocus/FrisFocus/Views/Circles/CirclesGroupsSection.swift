@@ -498,13 +498,13 @@ private struct ParallelCircleCard: View {
     private var storyStrip: some View {
         Button(action: onStoryStripTap) {
             HStack(spacing: 8) {
-                Image(systemName: "play.fill")
+                Image(systemName: allClipsWatchedToday ? "arrow.counterclockwise" : "play.fill")
                     .font(.sans(10, weight: .bold))
-                    .foregroundStyle(Theme.sunShadow)
+                    .foregroundStyle(allClipsWatchedToday ? Theme.textPrimary.opacity(0.45) : Theme.sunShadow)
 
                 Text(storyStripCopy)
                     .font(.sans(12, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                    .foregroundStyle(Theme.textPrimary.opacity(allClipsWatchedToday ? 0.55 : 0.75))
 
                 Spacer(minLength: 0)
             }
@@ -512,7 +512,9 @@ private struct ParallelCircleCard: View {
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255).opacity(0.08)
+                allClipsWatchedToday
+                    ? Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255).opacity(0.0)
+                    : Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255).opacity(0.08)
             )
             .overlay(
                 Rectangle()
@@ -537,25 +539,38 @@ private struct ParallelCircleCard: View {
 
     // MARK: - Derived
 
-    /// Distinct members (other than the user) with at least one circle
-    /// clip for this circle today. The strip surfaces a count of how
-    /// many people "ran today" — the phrasing is generic but the source
-    /// of truth is whoever posted a clip.
-    private var clipMembersToday: [UUID] {
+    /// Today's clips for this circle — the source of truth for both the
+    /// strip's presence and its watched state.
+    private var clipsToday: [StoryPost] {
         let cal = Calendar.current
         let today = Date()
-        let ids = store.storyPosts
-            .filter { post in
-                guard post.circleId == circle.id else { return false }
-                return cal.isDate(post.createdAt, inSameDayAs: today)
-            }
-            .map { $0.authorId }
-        return Array(Set(ids))
+        return store.storyPosts.filter { post in
+            post.circleId == circle.id && cal.isDate(post.createdAt, inSameDayAs: today)
+        }
+    }
+
+    /// Distinct members with at least one circle clip for this circle
+    /// today. The strip surfaces a count of how many people "ran
+    /// today" — the phrasing is generic but the source of truth is
+    /// whoever posted a clip.
+    private var clipMembersToday: [UUID] {
+        Array(Set(clipsToday.map { $0.authorId }))
     }
 
     private var hasStoryToday: Bool { !clipMembersToday.isEmpty }
 
+    /// Every clip today has been played — the strip downgrades to a
+    /// quiet "watched" replay state instead of looking like fresh news.
+    private var allClipsWatchedToday: Bool {
+        let clips = clipsToday
+        guard !clips.isEmpty else { return false }
+        return clips.allSatisfy { store.viewedStoryPostIds.contains($0.id) }
+    }
+
     private var storyStripCopy: String {
+        if allClipsWatchedToday {
+            return "Watched · replay today's story"
+        }
         let count = clipMembersToday.count
         let verb = count == 1 ? "ran today" : "ran today"
         return "\(count) \(verb) · watch the story"

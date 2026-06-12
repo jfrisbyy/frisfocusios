@@ -17,6 +17,9 @@ import SwiftUI
 
 struct CircleStoryStrip: View {
     let memberCount: Int
+    /// Every clip today has been played — the tile mutes into a
+    /// "watched · replay" state instead of looking like fresh news.
+    var isWatched: Bool = false
     let onTap: () -> Void
 
     var body: some View {
@@ -51,12 +54,21 @@ struct CircleStoryStrip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Watch today's circle story, \(memberCount) \(memberCount == 1 ? "person" : "people")")
+        .accessibilityLabel(
+            isWatched
+                ? "Replay today's circle story"
+                : "Watch today's circle story, \(memberCount) \(memberCount == 1 ? "person" : "people")"
+        )
     }
 
-    private var eyebrow: String { "TODAY \u{00B7} GROUP STORY" }
+    private var eyebrow: String {
+        isWatched ? "TODAY \u{00B7} WATCHED" : "TODAY \u{00B7} GROUP STORY"
+    }
 
     private var headline: String {
+        if isWatched {
+            return "Watched \u{00B7} replay today's story"
+        }
         let verb = memberCount == 1 ? "ran today" : "ran today"
         return "\(memberCount) \(verb) \u{00B7} watch the story"
     }
@@ -67,10 +79,10 @@ struct CircleStoryStrip: View {
                 .fill(Theme.textCream.opacity(0.16))
             Circle()
                 .strokeBorder(Theme.textCream.opacity(0.4), lineWidth: 0.6)
-            Image(systemName: "play.fill")
+            Image(systemName: isWatched ? "arrow.counterclockwise" : "play.fill")
                 .font(.sans(13, weight: .bold))
                 .foregroundStyle(Theme.textCream)
-                .offset(x: 1)
+                .offset(x: isWatched ? 0 : 1)
         }
         .frame(width: 36, height: 36)
     }
@@ -107,10 +119,15 @@ struct CircleStoryStrip: View {
 
     private var background: some View {
         LinearGradient(
-            colors: [
-                Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255),
-                Color(red: 178.0/255, green: 90.0/255, blue: 44.0/255)
-            ],
+            colors: isWatched
+                ? [
+                    Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255).opacity(0.45),
+                    Color(red: 178.0/255, green: 90.0/255, blue: 44.0/255).opacity(0.45)
+                ]
+                : [
+                    Color(red: 216.0/255, green: 125.0/255, blue: 68.0/255),
+                    Color(red: 178.0/255, green: 90.0/255, blue: 44.0/255)
+                ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )

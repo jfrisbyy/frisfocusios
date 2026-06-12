@@ -923,13 +923,21 @@ struct StoryPlayerView: View {
 
     // MARK: - Playback
 
-    /// Stamp the current friend-mode post as watched so the friends
-    /// rail ring downgrades from gold (new) to muted (seen). Only
-    /// `.friend` posts feed the rail; `.mine` and `.circle` skip.
+    /// Stamp the current post as watched. Friend-mode posts downgrade
+    /// the rail ring from gold (new) to muted (seen); circle-mode clips
+    /// — including the user's own — clear the circle card's new-story
+    /// glow. `.mine` (the personal tape) never needs a stamp.
     private func markCurrentViewed() {
-        guard case .friend = mode, let post = currentPost else { return }
-        guard post.authorId != store.currentUserId else { return }
-        store.markStoryViewed(post.id)
+        guard let post = currentPost else { return }
+        switch mode {
+        case .mine:
+            return
+        case .friend:
+            guard post.authorId != store.currentUserId else { return }
+            store.markStoryViewed(post.id)
+        case .circle:
+            store.markStoryViewed(post.id)
+        }
     }
 
     private func tickProgress() {

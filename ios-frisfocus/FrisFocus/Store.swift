@@ -491,6 +491,10 @@ final class Store {
         // user's own recent story posts keep their media and are queued
         // for upload to their real account on next sign-in.
         performSocialResetIfNeeded()
+
+        // One-time import of proofs that predate the proof library —
+        // existing pins, note/milestone proofs, and own posted clips.
+        backfillProofLibraryIfNeeded()
     }
 
     // MARK: - One-time social reset
@@ -3493,15 +3497,15 @@ extension Store {
     }
 
     /// True when a circle has at least one story clip today that the
-    /// current user hasn't watched yet and didn't post themselves —
-    /// the signal behind the "new story" glow on circle cards and the
-    /// circle page header.
+    /// current user hasn't watched yet — including the user's own
+    /// posts, so posting a clip lights the badge until the story is
+    /// played. The signal behind the "new story" glow on circle cards
+    /// and the circle page header.
     func circleHasUnwatchedStory(circleId: UUID) -> Bool {
         let cal = Calendar.current
         let today = Date()
         return storyPosts.contains { post in
             post.circleId == circleId
-                && post.authorId != currentUserId
                 && !viewedStoryPostIds.contains(post.id)
                 && cal.isDate(post.createdAt, inSameDayAs: today)
         }

@@ -59,6 +59,7 @@ struct CircleDetailView: View {
                     if hasStoryToday {
                         CircleStoryStrip(
                             memberCount: clipAuthorCountToday,
+                            isWatched: allClipsWatchedToday,
                             onTap: {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 showGroupStory = true
@@ -330,6 +331,14 @@ struct CircleDetailView: View {
 
     private var clipAuthorCountToday: Int { clipAuthorsToday.count }
     private var hasStoryToday: Bool { clipAuthorCountToday > 0 }
+
+    /// Every clip today has been played — the strip mutes to its
+    /// "watched · replay" state.
+    private var allClipsWatchedToday: Bool {
+        let clips = store.circleClipsToday(circleId: circle.id)
+        guard !clips.isEmpty else { return false }
+        return clips.allSatisfy { store.viewedStoryPostIds.contains($0.id) }
+    }
 
     // MARK: - Hero
 
