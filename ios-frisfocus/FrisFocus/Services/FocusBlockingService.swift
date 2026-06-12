@@ -245,6 +245,18 @@ final class FocusBlockingService {
         }
         #endif
         let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain && ns.code == 4099 {
+            // XPC connection to Apple's Family Controls agent was refused —
+            // the installed build's signature lacks the Family Controls
+            // entitlement. Fixed by signing with a profile that carries it
+            // and reinstalling; no in-app retry can succeed on this build.
+            return AuthFailure(
+                message: "This installed build was signed without Family Controls, so iOS refuses the request before Apple can even ask you. Install the latest build of FrisFocus (the signing has been fixed), then try again.",
+                rawCode: "\(ns.domain) \(ns.code)",
+                canRetry: false,
+                suggestsSettings: false
+            )
+        }
         return AuthFailure(
             message: "Apple refused the Screen Time request. If this keeps happening, the installed build may be missing Apple's Family Controls signing approval.",
             rawCode: "\(ns.domain) \(ns.code)",
