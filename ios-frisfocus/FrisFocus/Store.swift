@@ -940,8 +940,8 @@ final class Store {
               let session = activeFocusSession else { return }
         let shared = session.attachments.filter { $0.shared }
         let wire: [(taskId: UUID, title: String, done: Bool)] = shared.compactMap { att in
-            guard let task = personalTask(by: att.taskId) else { return nil }
-            return (att.taskId, task.title, hasLogEntryToday(forTaskId: att.taskId))
+            guard let title = focusAttachmentTitle(att) else { return nil }
+            return (att.taskId, title, focusAttachmentDone(att))
         }
         social?.groveSharedTasksChanged(blockId: block.id, tasks: wire)
     }
@@ -1771,6 +1771,38 @@ extension Store {
     /// the existing `completeTask` / `uncompleteTask` paths want.
     func personalTask(by id: UUID) -> FFTask? {
         tasks.first { $0.id == id }
+    }
+
+    // MARK: - Focus attachments (Task or To-do)
+
+    /// Resolve an attachment's display title whether it points at a
+    /// pinned Task or a dated To-do.
+    func focusAttachmentTitle(_ att: FocusTaskAttachment) -> String? {
+        switch att.kind {
+        case .task: return personalTask(by: att.taskId)?.title
+        case .todo: return todos.first(where: { $0.id == att.taskId })?.title
+        }
+    }
+
+    /// Whether an attached Task / To-do is completed for today.
+    func focusAttachmentDone(_ att: FocusTaskAttachment) -> Bool {
+        switch att.kind {
+        case .task: return hasLogEntryToday(forTaskId: att.taskId)
+        case .todo: return todos.first(where: { $0.id == att.taskId })?.isCompleted ?? false
+        }
+    }
+
+    /// Toggle an attached Task / To-do's completion for today. Routes
+    /// through the normal completion pipelines so points + mirroring
+    /// behave exactly like checking the item off anywhere else.
+    func toggleFocusAttachment(_ att: FocusTaskAttachment, to done: Bool) {
+        switch att.kind {
+        case .task:
+            setPersonalTaskCompleted(att.taskId, completed: done, mirror: true)
+        case .todo:
+            guard let todo = todos.first(where: { $0.id == att.taskId }) else { return }
+            if todo.isCompleted != done { toggleTodo(todo) }
+        }
     }
 
     /// Toggle the current user's completion of a circle task for today.

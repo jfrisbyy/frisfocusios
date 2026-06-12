@@ -32,15 +32,21 @@ struct FocusModeView: View {
     let label: String?
     /// Personal tasks attached to this session, checked off manually.
     let attachments: [FocusTaskAttachment]
+    /// Called when the user invites friends mid-session — the host swaps
+    /// this solo cover for the grove, reusing the live focus session so
+    /// the timer continues uninterrupted.
+    let onUpgradeToGrove: ([UUID]) -> Void
 
     init(
         sessionLength: TimeInterval = 45 * 60,
         label: String? = nil,
-        attachments: [FocusTaskAttachment] = []
+        attachments: [FocusTaskAttachment] = [],
+        onUpgradeToGrove: @escaping ([UUID]) -> Void = { _ in }
     ) {
         self.sessionLength = sessionLength
         self.label = label
         self.attachments = attachments
+        self.onUpgradeToGrove = onUpgradeToGrove
     }
 
     // MARK: - State
@@ -73,6 +79,9 @@ struct FocusModeView: View {
     /// observers don't keep recording leaves while the completion
     /// overlay is on screen.
     @State private var sessionEnded: Bool = false
+
+    /// Drives the mid-session invite sheet.
+    @State private var showInvite: Bool = false
 
     var body: some View {
         ZStack {
@@ -112,6 +121,9 @@ struct FocusModeView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("End focus")
                     Spacer()
+                    if !store.sharedFocusInviteCandidates.isEmpty {
+                        inviteButton
+                    }
                     stateChip
                 }
                 .padding(.horizontal, 18)
@@ -169,6 +181,11 @@ struct FocusModeView: View {
             }
         }
         .background(Color(hex: 0xFAF2E0).ignoresSafeArea())
+        .sheet(isPresented: $showInvite) {
+            SoloInviteSheet { friendIds in
+                upgradeToGrove(with: friendIds)
+            }
+        }
         .onAppear(perform: beginIfNeeded)
         .onChange(of: scenePhase, handleScenePhase)
         .onReceive(
@@ -200,6 +217,36 @@ struct FocusModeView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Capsule().fill(Color.white.opacity(0.55)))
+    }
+
+    @ViewBuilder
+    private var inviteButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showInvite = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "person.badge.plus")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Invite")
+                    .font(.sans(12, weight: .semibold))
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(0.7))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Color.white.opacity(0.45)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Invite a friend into the grove")
+    }
+
+    /// Hand control to the host so the solo cover becomes the grove. The
+    /// active focus session is left running (never `finish()`ed) so the
+    /// grove resumes the same wall-clock timer.
+    private func upgradeToGrove(with friendIds: [UUID]) {
+        guard !friendIds.isEmpty else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        onUpgradeToGrove(friendIds)
     }
 
     private func stateChipText(count: Int) -> String {

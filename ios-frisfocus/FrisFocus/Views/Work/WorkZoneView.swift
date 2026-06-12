@@ -22,7 +22,6 @@ struct WorkZoneView: View {
     @State private var showWeekSchedule: Bool = false
     @State private var showFocusStart: Bool = false
     @State private var showFocusMode: Bool = false
-    @State private var showFocusTogether: Bool = false
     @State private var showFocusGrove: Bool = false
     @State private var pendingFocusDuration: TimeInterval = 45 * 60
     @State private var pendingFocusLabel: String? = nil
@@ -96,15 +95,21 @@ struct WorkZoneView: View {
                 .environment(store)
         }
         .sheet(isPresented: $showFocusStart) {
-            FocusStartSheet { duration, label, attachments in
+            FocusStartSheet { duration, label, friendIds, attachments in
                 pendingFocusDuration = duration
                 pendingFocusLabel = label
                 pendingFocusAttachments = attachments
+                pendingGroveFriendIds = friendIds
                 // Defer the full-screen cover by a tick so the start
                 // sheet finishes dismissing before the focus scene
-                // pushes on top of it.
+                // pushes on top of it. An empty friend list starts a
+                // solo block; any friends route straight to the grove.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    showFocusMode = true
+                    if friendIds.isEmpty {
+                        showFocusMode = true
+                    } else {
+                        showFocusGrove = true
+                    }
                 }
             }
             .presentationDetents([.medium, .large])
@@ -114,21 +119,18 @@ struct WorkZoneView: View {
             FocusModeView(
                 sessionLength: pendingFocusDuration,
                 label: pendingFocusLabel,
-                attachments: pendingFocusAttachments
-            )
-        }
-        .sheet(isPresented: $showFocusTogether) {
-            FocusTogetherSheet { friendIds, duration, lbl, attachments in
-                pendingGroveFriendIds = friendIds
-                pendingFocusDuration = duration
-                pendingFocusLabel = lbl
-                pendingFocusAttachments = attachments
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    showFocusGrove = true
+                attachments: pendingFocusAttachments,
+                onUpgradeToGrove: { friendIds in
+                    // Mid-session: the solo tree blossoms into a grove.
+                    // The active focus session persists, so the grove
+                    // resumes the same wall-clock timer.
+                    pendingGroveFriendIds = friendIds
+                    showFocusMode = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        showFocusGrove = true
+                    }
                 }
-            }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            )
         }
         .fullScreenCover(isPresented: $showFocusGrove) {
             SharedFocusModeView(
@@ -168,9 +170,8 @@ struct WorkZoneView: View {
 
     // MARK: - Focus entry
 
-    /// Quiet leaf-glyph button that opens Focus Mode. Long-press opens
-    /// the grove (shared focus, F2 surface) so the visual design is
-    /// reachable for review without taking over the plan header.
+    /// Quiet leaf-glyph button that opens the unified Focus setup, where
+    /// the user can start solo or invite friends into a grove.
     @ViewBuilder
     private var focusEntryButton: some View {
         Button {
@@ -196,13 +197,7 @@ struct WorkZoneView: View {
             )
         }
         .buttonStyle(.plain)
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                showFocusTogether = true
-            }
-        )
-        .accessibilityLabel("Start focus session — long-press for focus together")
+        .accessibilityLabel("Start focus session")
     }
 
     // MARK: - Empty state

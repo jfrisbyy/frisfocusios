@@ -29,15 +29,21 @@ struct FocusTaskTrayView: View {
 
     @State private var expanded = false
 
-    private var myTasks: [(att: FocusTaskAttachment, task: FFTask)] {
+    private struct MyItem {
+        let att: FocusTaskAttachment
+        let title: String
+        let done: Bool
+    }
+
+    private var myTasks: [MyItem] {
         attachments.compactMap { att in
-            guard let task = store.personalTask(by: att.taskId) else { return nil }
-            return (att, task)
+            guard let title = store.focusAttachmentTitle(att) else { return nil }
+            return MyItem(att: att, title: title, done: store.focusAttachmentDone(att))
         }
     }
 
     private var remainingCount: Int {
-        myTasks.filter { !store.hasLogEntryToday(forTaskId: $0.task.id) }.count
+        myTasks.filter { !$0.done }.count
     }
 
     var body: some View {
@@ -113,8 +119,8 @@ struct FocusTaskTrayView: View {
             if !myTasks.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     panelHeader("YOURS")
-                    ForEach(myTasks, id: \.task.id) { pair in
-                        myTaskRow(pair.att, pair.task)
+                    ForEach(myTasks, id: \.att.id) { item in
+                        myTaskRow(item)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -157,23 +163,23 @@ struct FocusTaskTrayView: View {
     }
 
     @ViewBuilder
-    private func myTaskRow(_ att: FocusTaskAttachment, _ task: FFTask) -> some View {
-        let done = store.hasLogEntryToday(forTaskId: task.id)
+    private func myTaskRow(_ item: MyItem) -> some View {
+        let done = item.done
         Button {
-            toggle(task, currentlyDone: done)
+            toggle(item.att, currentlyDone: done)
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: done ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 18, weight: .regular))
                     .foregroundStyle(done ? Theme.alertGreen : Theme.textPrimary.opacity(0.35))
                     .contentTransition(.symbolEffect(.replace))
-                Text(task.title)
+                Text(item.title)
                     .font(.serif(15, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(done ? 0.45 : 0.95))
                     .strikethrough(done, color: Theme.textPrimary.opacity(0.35))
                     .lineLimit(1)
                 Spacer()
-                if att.shared {
+                if item.att.shared {
                     Image(systemName: "person.2.fill")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Theme.textPrimary.opacity(0.3))
@@ -221,10 +227,10 @@ struct FocusTaskTrayView: View {
 
     // MARK: - Actions
 
-    private func toggle(_ task: FFTask, currentlyDone: Bool) {
+    private func toggle(_ att: FocusTaskAttachment, currentlyDone: Bool) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
-            store.setPersonalTaskCompleted(task.id, completed: !currentlyDone, mirror: true)
+            store.toggleFocusAttachment(att, to: !currentlyDone)
         }
         onToggle?()
     }
