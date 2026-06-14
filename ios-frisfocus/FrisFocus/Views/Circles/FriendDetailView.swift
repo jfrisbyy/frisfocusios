@@ -331,16 +331,16 @@ struct FriendDetailView: View {
                 strength: headerStrength
             )
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 7) {
                 if shortSeasonName != nil {
                     Text("CURRENTLY IN")
-                        .font(.sans(10, weight: .semibold))
-                        .tracking(2.2)
-                        .foregroundStyle(Theme.textCream.opacity(0.75))
+                        .font(.sans(9.5, weight: .semibold))
+                        .tracking(2.6)
+                        .foregroundStyle(Theme.textCream.opacity(0.6))
                 }
                 if let seasonName = shortSeasonName {
                     Text(seasonName)
-                        .font(.serif(32, weight: .medium))
+                        .font(.serif(33, weight: .medium))
                         .foregroundStyle(Theme.textCream)
                         .lineLimit(2)
                         .minimumScaleFactor(0.65)
@@ -348,9 +348,9 @@ struct FriendDetailView: View {
                 }
                 if let dayNumber = publishedCard?.currentDay ?? friend.currentSeasonDay {
                     Text(seasonDayLine(dayNumber))
-                        .font(.sans(10, weight: .semibold))
-                        .tracking(2)
-                        .foregroundStyle(Theme.textCream.opacity(0.85))
+                        .font(.sans(10, weight: .medium))
+                        .tracking(1.8)
+                        .foregroundStyle(Theme.textCream.opacity(0.7))
                 }
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
@@ -681,11 +681,12 @@ struct FriendDetailView: View {
                 trailingAction: tier != .quiet ? { showWeekSheet = true } : nil
             )
 
-            TodayHeadlineRow(
-                fraction: ringFill,
-                tint: accent,
+            SunDayCard(
+                ratio: ringFill,
                 headline: todayHeadline,
-                subline: todaySubline
+                subline: todaySubline,
+                accent: accent,
+                recentRatios: tier != .quiet ? day.rhythmBars : []
             )
 
             todayChips

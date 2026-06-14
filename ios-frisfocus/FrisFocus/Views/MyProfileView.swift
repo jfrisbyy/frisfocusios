@@ -209,21 +209,21 @@ struct MyProfileView: View {
                 strength: headerStrength
             )
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 7) {
                 Text("CURRENTLY IN")
-                    .font(.sans(10, weight: .semibold))
-                    .tracking(2.2)
-                    .foregroundStyle(Theme.textCream.opacity(0.75))
+                    .font(.sans(9.5, weight: .semibold))
+                    .tracking(2.6)
+                    .foregroundStyle(Theme.textCream.opacity(0.6))
                 Text(shortSeasonName)
-                    .font(.serif(32, weight: .medium))
+                    .font(.serif(33, weight: .medium))
                     .foregroundStyle(Theme.textCream)
                     .lineLimit(2)
                     .minimumScaleFactor(0.65)
                     .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
                 Text("DAY \(store.currentSeasonDay) OF \(store.currentSeason.lengthDays)")
-                    .font(.sans(10, weight: .semibold))
-                    .tracking(2)
-                    .foregroundStyle(Theme.textCream.opacity(0.85))
+                    .font(.sans(10, weight: .medium))
+                    .tracking(1.8)
+                    .foregroundStyle(Theme.textCream.opacity(0.7))
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
             .padding(.bottom, 74)
@@ -525,11 +525,12 @@ struct MyProfileView: View {
                 trailingAction: previewTier != .quiet ? { showWeekSheet = true } : nil
             )
 
-            TodayHeadlineRow(
-                fraction: ringFill,
-                tint: accent,
+            SunDayCard(
+                ratio: ringFill,
                 headline: todayHeadline,
-                subline: todaySubline
+                subline: todaySubline,
+                accent: accent,
+                recentRatios: day.rhythmBars
             )
             .animation(.easeInOut(duration: 0.25), value: previewTier)
 
@@ -541,7 +542,7 @@ struct MyProfileView: View {
     private var todayHeadline: String {
         switch previewTier {
         case .full:
-            return dayHeadline(fraction: day.completionFraction, hasAnything: day.totalCount > 0)
+            return store.forwardSentence
         case .open:
             return dayHeadline(fraction: day.momentum, hasAnything: !day.rhythmBars.isEmpty)
         case .quiet:
