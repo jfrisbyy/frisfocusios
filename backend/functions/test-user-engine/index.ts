@@ -127,8 +127,34 @@ const PERSONAS: Record<string, Persona> = {
 };
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
+const dayKeyAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 const chance = (p: number) => Math.random() < p;
 const pick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
+// Small deterministic hash → 0..1, so the seeded history is identical on
+// every run (existing rows are skipped, never duplicated).
+function seededUnit(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+// The believable shared checklist every seeded circle carries.
+const SHARED_TASKS = [
+  "Morning run",
+  "Deep work block",
+  "Read 20 pages",
+  "Cook dinner",
+  "Evening reflection",
+];
+
+// Per-day strength shape for the last 10 days (index 0 = today). A mix of
+// strong, quiet and comeback days so the recent-days suns visibly differ.
+// Each sim is phase-shifted by its own offset so no two read identically.
+const STRENGTH_WAVE = [0.45, 0.8, 1.0, 0.2, 0.0, 0.6, 1.0, 0.4, 0.85, 0.6];
 
 // deno-lint-ignore no-explicit-any
 type Admin = any;
@@ -202,6 +228,119 @@ Deno.serve(async (req) => {
     const simFriends = (friendships ?? [])
       .map((f: { user_a: string; user_b: string }) => (f.user_a === callerId ? f.user_b : f.user_a))
       .filter((id: string) => simIds.includes(id));
+
+    // ── 1b. Seed a shared circle + a full 10 days of realistic history ─
+    // Gives each connected test friend a believable shared checklist and
+    // varied check-offs so their profile day-cards render populated data.
+    try {
+      if (simFriends.length > 0) {
+        const circleName = "Daily Rhythm";
+        let circleId: string | null = null;
+        const { data: existingCircle } = await admin
+          .from("circles")
+          .select("id")
+          .eq("owner_id", callerId)
+          .eq("name", circleName)
+          .maybeSingle();
+        if (existingCircle) {
+          circleId = existingCircle.id;
+        } else {
+          const { data: created } = await admin
+            .from("circles")
+            .insert({
+              owner_id: callerId,
+              name: circleName,
+              type: "parallel",
+              visibility: "private",
+              join_rule: "invite",
+              description: "A few of us keeping a steady daily rhythm together.",
+            })
+            .select("id")
+            .single();
+          circleId = created?.id ?? null;
+          bump("circlesSeeded");
+        }
+
+        if (circleId) {
+          // Ensure membership: caller (admin) + every connected sim.
+          await admin
+            .from("circle_members")
+            .upsert(
+              { circle_id: circleId, user_id: callerId, role: "admin" },
+              { onConflict: "circle_id,user_id", ignoreDuplicates: true },
+            );
+          for (const simId of simFriends) {
+            await admin
+              .from("circle_members")
+              .upsert(
+                { circle_id: circleId, user_id: simId, role: "member" },
+                { onConflict: "circle_id,user_id", ignoreDuplicates: true },
+              );
+          }
+
+          // Ensure the shared task list exists (idempotent by title).
+          const { data: existingTasks } = await admin
+            .from("circle_tasks")
+            .select("id, title")
+            .eq("circle_id", circleId);
+          const taskByTitle = new Map<string, string>(
+            (existingTasks ?? []).map((t: { id: string; title: string }) => [t.title, t.id]),
+          );
+          for (let i = 0; i < SHARED_TASKS.length; i++) {
+            const title = SHARED_TASKS[i];
+            if (!taskByTitle.has(title)) {
+              const { data: t } = await admin
+                .from("circle_tasks")
+                .insert({ circle_id: circleId, title, position: i, point_value: 10 })
+                .select("id")
+                .single();
+              if (t) taskByTitle.set(title, t.id);
+            }
+          }
+          const taskIds = SHARED_TASKS.map((t) => taskByTitle.get(t)).filter(
+            (id): id is string => !!id,
+          );
+
+          // Backfill 10 days of completions per sim, deterministic so
+          // re-runs only fill gaps. Today is intentionally partial.
+          for (let si = 0; si < simFriends.length; si++) {
+            const simId = simFriends[si];
+            const phase = si * 3;
+            for (let d = 0; d < 10; d++) {
+              const completedOn = dayKeyAgo(d);
+              let ratio = STRENGTH_WAVE[(d + phase) % STRENGTH_WAVE.length];
+              if (d === 0) ratio = Math.min(ratio, 0.5); // today still in progress
+              const doneCount = Math.round(ratio * taskIds.length);
+              for (let ti = 0; ti < taskIds.length; ti++) {
+                // Deterministically choose which tasks were done that day.
+                const rank = seededUnit(`${simId}:${completedOn}:${taskIds[ti]}`);
+                const isDone = rank < doneCount / taskIds.length;
+                if (!isDone) continue;
+                const { data: already } = await admin
+                  .from("circle_task_completions")
+                  .select("id")
+                  .eq("circle_id", circleId)
+                  .eq("task_id", taskIds[ti])
+                  .eq("user_id", simId)
+                  .eq("completed_on", completedOn)
+                  .maybeSingle();
+                if (!already) {
+                  await admin.from("circle_task_completions").insert({
+                    circle_id: circleId,
+                    task_id: taskIds[ti],
+                    user_id: simId,
+                    completed_on: completedOn,
+                  });
+                  bump("historyCheckoffs");
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("seedSharedHistory", e);
+    }
 
     // ── 2. Accept circle invitations sent to sims ──────────────────────
     try {

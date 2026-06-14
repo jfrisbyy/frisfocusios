@@ -60,21 +60,12 @@ struct SunDayCard: View {
     var body: some View {
         VStack(spacing: 0) {
             content
-            if expanded, canExpand {
-                Rectangle()
-                    .fill(Theme.textPrimary.opacity(0.08))
-                    .frame(height: 0.5)
-                    .padding(.horizontal, 18)
-                RecentSunsStrip(
-                    days: days,
-                    selectedId: selectedId,
-                    accent: accent,
-                    onSelect: select
-                )
-                .padding(.horizontal, 14)
-                .padding(.top, 16)
-                .padding(.bottom, 16)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            // The recent-days strip is always part of the layout; it
+            // simply has zero height when collapsed. Animating the
+            // height (rather than inserting/removing the view) keeps the
+            // card's growth contained and stops the page from jumping.
+            if canExpand {
+                expandTray
             }
         }
         .background(
@@ -87,44 +78,47 @@ struct SunDayCard: View {
                 .strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 0.8)
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: selectedId)
     }
 
-    // MARK: - Content (the selected day)
+    // MARK: - Content (the selected day) — slim horizontal band
 
     private var content: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if isViewingPast {
                 viewingPill
             }
 
-            CenteredSunView(ratio: selected.ratio)
-                .frame(height: 132)
+            HStack(alignment: .center, spacing: 16) {
+                CenteredSunView(ratio: selected.ratio, maxDiameter: 50)
+                    .frame(width: 96, height: 96)
 
-            VStack(spacing: 5) {
-                Text(selected.headline)
-                    .font(.serif(20, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.92))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let subline = selected.subline, !subline.isEmpty {
-                    Text(subline)
-                        .font(.sans(13, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                        .multilineTextAlignment(.center)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(selected.headline)
+                        .font(.serif(18, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.92))
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                }
 
-                if let scoreText = selected.scoreText, !scoreText.isEmpty {
-                    Text(scoreText)
-                        .font(.serif(15, weight: .medium))
-                        .foregroundStyle(accent.opacity(0.9))
-                        .padding(.top, 2)
+                    if let subline = selected.subline, !subline.isEmpty {
+                        Text(subline)
+                            .font(.sans(12.5, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let scoreText = selected.scoreText, !scoreText.isEmpty {
+                        Text(scoreText)
+                            .font(.serif(14, weight: .medium))
+                            .foregroundStyle(accent.opacity(0.9))
+                            .padding(.top, 1)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id(selected.id)
+                .transition(.opacity)
             }
-            .id(selected.id)
-            .transition(.opacity)
+            .frame(minHeight: 96)
 
             if !selected.chips.isEmpty {
                 TaskChipsFlow(
@@ -132,19 +126,42 @@ struct SunDayCard: View {
                     accent: accent,
                     maxVisible: chipsMaxVisible
                 )
-                .frame(maxWidth: .infinity, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .id("chips-\(selected.id)")
                 .transition(.opacity)
             }
 
             if canExpand {
                 expandToggle
-                    .padding(.top, 2)
             }
         }
         .padding(.horizontal, 18)
-        .padding(.top, 18)
-        .padding(.bottom, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 14)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: selectedId)
+    }
+
+    /// The recent-days tray. Always present so its presence never shifts
+    /// the page; only its height animates between zero and a fixed band.
+    private var expandTray: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Theme.textPrimary.opacity(0.08))
+                .frame(height: 0.5)
+                .padding(.horizontal, 18)
+            RecentSunsStrip(
+                days: days,
+                selectedId: selectedId,
+                accent: accent,
+                onSelect: select
+            )
+            .padding(.horizontal, 14)
+            .padding(.vertical, 16)
+        }
+        .frame(height: expanded ? nil : 0, alignment: .top)
+        .opacity(expanded ? 1 : 0)
+        .clipped()
+        .animation(.spring(response: 0.42, dampingFraction: 0.85), value: expanded)
     }
 
     private var viewingPill: some View {
@@ -170,9 +187,7 @@ struct SunDayCard: View {
     private var expandToggle: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
-                expanded.toggle()
-            }
+            expanded.toggle()
         } label: {
             HStack(spacing: 5) {
                 Text(expanded ? "Hide recent days" : "Recent days")
@@ -191,9 +206,7 @@ struct SunDayCard: View {
 
     private func select(_ id: Int) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-            selectedId = id
-        }
+        selectedId = id
     }
 
     private func longLabel(_ date: Date) -> String {
