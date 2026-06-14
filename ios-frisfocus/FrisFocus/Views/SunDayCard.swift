@@ -2,63 +2,79 @@
 //  SunDayCard.swift
 //  FrisFocus
 //
-//  The warm "today" card every profile shares — it replaces the small
-//  progress ring + headline strip. It shows the person's actual sun
-//  (the same living sun from the home screen), lit and sized to how
-//  far into their day's goal they are, beside a quiet "to a productive
-//  day" style line. Tapping the card springs it open to reveal a row
-//  of small suns — one per recent day — a glanceable history instead of
-//  a number grid.
+//  The warm "today" card every profile shares. The sun is the hero:
+//  centered and bare on the card (no sky box, no backdrop), simply
+//  growing in size and glowing brighter the closer the day is to its
+//  goal — a dim ember on a quiet day, a full warm glow on a strong one.
 //
-//  Privacy: the card only ever renders the *shape* of a day (how lit
-//  each sun is). Exact point numbers never appear here, so it is safe
-//  to show whatever the friend already shares — their points stay
-//  private behind the existing lock → ask → shared flow.
+//  Tapping the card reveals a row of recent days as bare suns. Tapping
+//  any past sun rewinds the whole card in place — the big center sun,
+//  the headline, the score, and the task chips all shift to show that
+//  exact day, with a gentle marker and a one-tap way back to today.
+//
+//  Privacy is the caller's job: each `SunDay` already carries only what
+//  the viewer is allowed to see (task names and score are omitted at
+//  sharing levels that don't reveal them).
 //
 
 import SwiftUI
 import UIKit
 
-struct SunDayCard: View {
-    /// Today's strength toward goal, 0…1 (already tier-resolved by the
-    /// caller). Drives the big sun's size and glow.
+/// One soft chip describing something done (or open) on a given day.
+struct SunDayChip: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let isDone: Bool
+}
+
+/// A single day on the card. `id` is days-ago (0 = today). The caller
+/// builds these tier-resolved, so the card just renders what it's given.
+struct SunDay: Identifiable, Equatable {
+    /// Days ago — 0 is today.
+    let id: Int
+    let date: Date
+    /// Strength toward goal, 0…1 (may exceed 1). Drives the sun.
     let ratio: Double
-    /// The "to a productive day" style line — e.g. "50 to a productive
-    /// day", "Strong day so far", or "Day complete".
     let headline: String
-    /// The quiet supporting note — e.g. "6 of 8 done · most of the way".
     let subline: String?
+    let chips: [SunDayChip]
+    /// The bold score line — e.g. "47 points". `nil` keeps it private.
+    let scoreText: String?
+}
+
+struct SunDayCard: View {
+    /// Recent days, oldest first, ending with today. Must be non-empty.
+    let days: [SunDay]
     let accent: Color
-    /// Recent days, oldest first, ending today (each 0…1). Empty hides
-    /// the expand affordance.
-    var recentRatios: [Double] = []
+    var chipsMaxVisible: Int = 6
 
+    /// Currently viewed day, as days-ago. 0 = today.
+    @State private var selectedId: Int = 0
     @State private var expanded: Bool = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var canExpand: Bool { recentRatios.count >= 2 }
-
-    /// A small sky for the sun to glow against, following the hour so it
-    /// feels like the home landscape rather than a flat swatch.
-    private var sky: SkyPalette {
-        let hour = Calendar.current.component(.hour, from: Date())
-        let progress = max(0, min(1, (Double(hour) - 6) / 14))
-        return SkyPalette.interpolated(progress: progress)
-    }
+    private var today: SunDay { days.last ?? days[0] }
+    private var selected: SunDay { days.first { $0.id == selectedId } ?? today }
+    private var isViewingPast: Bool { selectedId != 0 }
+    private var canExpand: Bool { days.count >= 2 }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            content
             if expanded, canExpand {
                 Rectangle()
                     .fill(Theme.textPrimary.opacity(0.08))
                     .frame(height: 0.5)
-                    .padding(.horizontal, 16)
-                RecentSunsStrip(ratios: recentRatios, sky: sky, accent: accent)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 16)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .padding(.horizontal, 18)
+                RecentSunsStrip(
+                    days: days,
+                    selectedId: selectedId,
+                    accent: accent,
+                    onSelect: select
+                )
+                .padding(.horizontal, 14)
+                .padding(.top, 16)
+                .padding(.bottom, 16)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .background(
@@ -71,137 +87,357 @@ struct SunDayCard: View {
                 .strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 0.8)
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: selectedId)
     }
 
-    private var header: some View {
+    // MARK: - Content (the selected day)
+
+    private var content: some View {
+        VStack(spacing: 12) {
+            if isViewingPast {
+                viewingPill
+            }
+
+            CenteredSunView(ratio: selected.ratio)
+                .frame(height: 132)
+
+            VStack(spacing: 5) {
+                Text(selected.headline)
+                    .font(.serif(20, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.92))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let subline = selected.subline, !subline.isEmpty {
+                    Text(subline)
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let scoreText = selected.scoreText, !scoreText.isEmpty {
+                    Text(scoreText)
+                        .font(.serif(15, weight: .medium))
+                        .foregroundStyle(accent.opacity(0.9))
+                        .padding(.top, 2)
+                }
+            }
+            .id(selected.id)
+            .transition(.opacity)
+
+            if !selected.chips.isEmpty {
+                TaskChipsFlow(
+                    items: selected.chips.map { (title: $0.title, isDone: $0.isDone) },
+                    accent: accent,
+                    maxVisible: chipsMaxVisible
+                )
+                .frame(maxWidth: .infinity, alignment: .center)
+                .id("chips-\(selected.id)")
+                .transition(.opacity)
+            }
+
+            if canExpand {
+                expandToggle
+                    .padding(.top, 2)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 16)
+    }
+
+    private var viewingPill: some View {
         Button {
-            guard canExpand else { return }
+            select(0)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.uturn.left")
+                    .font(.sans(10, weight: .bold))
+                Text("Viewing \(longLabel(selected.date)) · Back to today")
+                    .font(.sans(12, weight: .semibold))
+            }
+            .foregroundStyle(accent.darkenedForLabel)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule(style: .continuous).fill(accent.opacity(0.14)))
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Viewing \(longLabel(selected.date)). Tap to return to today.")
+    }
+
+    private var expandToggle: some View {
+        Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
                 expanded.toggle()
             }
         } label: {
-            HStack(spacing: 16) {
-                sunWell
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(headline)
-                        .font(.serif(19, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.92))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .lineLimit(2)
-                    if let subline, !subline.isEmpty {
-                        Text(subline)
-                            .font(.sans(13, weight: .regular))
-                            .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 4)
-                if canExpand {
-                    Image(systemName: "chevron.down")
-                        .font(.sans(12, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.35))
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
-                }
+            HStack(spacing: 5) {
+                Text(expanded ? "Hide recent days" : "Recent days")
+                    .font(.sans(12, weight: .semibold))
+                Image(systemName: "chevron.down")
+                    .font(.sans(10, weight: .bold))
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 16)
+            .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(headline). \(subline ?? "")")
-        .accessibilityHint(canExpand ? (expanded ? "Hide recent days" : "Show recent days") : "")
+        .accessibilityLabel(expanded ? "Hide recent days" : "Show recent days")
     }
 
-    /// The big sun, glowing against a small slice of sky.
-    private var sunWell: some View {
-        ZStack {
-            LinearGradient(colors: sky.skyStops, startPoint: .top, endPoint: .bottom)
-            SunStateMarkView(ratio: ratio, diameter: 44)
-                .offset(y: 4)
+    private func select(_ id: Int) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+            selectedId = id
         }
-        .frame(width: 78, height: 78)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8)
-        )
+    }
+
+    private func longLabel(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE"
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Centered sun
+
+/// The sun alone, centered and unboxed. It does not rise or set — it
+/// only grows in size and warms in glow with `ratio`. Quiet days read
+/// as a small dim ember; strong days bloom to a full warm sun with
+/// rays at goal.
+struct CenteredSunView: View {
+    /// Raw ratio — may exceed 1.0; visuals clamp, rays key off ≥ 1.
+    let ratio: Double
+    var maxDiameter: CGFloat = 86
+
+    private var clamped: Double { min(max(ratio, 0), 1) }
+    private var isFull: Bool { ratio >= 1.0 }
+    /// Size grows from a small ember (50%) to full (100%).
+    private var d: CGFloat { maxDiameter * (0.5 + 0.5 * clamped) }
+
+    private var coreColor: Color {
+        Color.lerpHSL(SkyPalette.dusk.sunCore, SkyPalette.afternoon.sunCore, t: clamped)
+    }
+    private var warmColor: Color {
+        Color.lerpHSL(SkyPalette.dusk.sunWarm, SkyPalette.afternoon.sunWarm, t: clamped)
+    }
+    private var outerColor: Color {
+        Color.lerpHSL(SkyPalette.dusk.sunOuter, SkyPalette.afternoon.sunOuter, t: clamped)
+    }
+    private var haloColor: Color {
+        Color.lerpHSL(SkyPalette.dusk.halo, SkyPalette.afternoon.halo, t: clamped)
+    }
+
+    var body: some View {
+        ZStack {
+            // Atmospheric bleed — widest, softest light.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        stops: [
+                            .init(color: haloColor.opacity(0.04 + 0.16 * clamped), location: 0.0),
+                            .init(color: outerColor.opacity(0.08 * clamped), location: 0.5),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: maxDiameter * 1.05
+                    )
+                )
+                .frame(width: maxDiameter * 2.1, height: maxDiameter * 2.1)
+                .blur(radius: 6)
+
+            // Soft halo — radius grows with ratio.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        stops: [
+                            .init(color: haloColor.opacity(0.12 + 0.40 * clamped), location: 0.0),
+                            .init(color: outerColor.opacity(0.05 + 0.20 * clamped), location: 0.55),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: d * 0.95
+                    )
+                )
+                .frame(width: d * 1.9, height: d * 1.9)
+                .blur(radius: 4)
+
+            // Warm body bloom.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        stops: [
+                            .init(color: warmColor.opacity(0.9), location: 0.0),
+                            .init(color: outerColor.opacity(0.5), location: 0.7),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: d * 0.72
+                    )
+                )
+                .frame(width: d * 1.44, height: d * 1.44)
+                .opacity(0.25 + 0.75 * clamped)
+
+            // Luminous core — always present, muted when dim.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        stops: [
+                            .init(color: coreColor, location: 0.0),
+                            .init(color: warmColor, location: 0.55),
+                            .init(color: outerColor, location: 1.0)
+                        ],
+                        center: UnitPoint(x: 0.45, y: 0.42),
+                        startRadius: 0,
+                        endRadius: d * 0.6
+                    )
+                )
+                .frame(width: d, height: d)
+                .opacity(0.68 + 0.32 * clamped)
+
+            // Upper-left highlight — a soft white kiss.
+            Circle()
+                .fill(Color.white.opacity(0.26 * clamped))
+                .frame(width: d * 0.3, height: d * 0.3)
+                .blur(radius: d * 0.05)
+                .offset(x: -d * 0.12, y: -d * 0.1)
+
+            // Rays — discrete, ONLY at goal-hit.
+            if isFull {
+                ForEach([-64.0, -32.0, 0.0, 32.0, 64.0], id: \.self) { angle in
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: haloColor.opacity(0.8), location: 0.0),
+                                    .init(color: haloColor.opacity(0.22), location: 0.6),
+                                    .init(color: .clear, location: 1.0)
+                                ],
+                                startPoint: .bottom,
+                                endPoint: .top
+                            )
+                        )
+                        .frame(width: d * 0.07 + 1.0, height: d * 0.44)
+                        .blur(radius: d * 0.02)
+                        .offset(y: -d * 0.92)
+                        .rotationEffect(.degrees(angle))
+                }
+            }
+        }
+        .frame(width: maxDiameter * 1.7, height: maxDiameter * 1.7)
+        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: clamped)
+        .accessibilityElement()
+        .accessibilityLabel("Sun at \(Int((max(0, ratio) * 100).rounded())) percent of the daily goal")
     }
 }
 
 // MARK: - Recent suns
 
-/// A row of small suns — one per recent day, each lit and sized to how
-/// that day went — over little slices of sky, with a quiet day label
-/// under each. The most recent reads as today.
+/// A row of bare suns — one per recent day, each lit and sized to how
+/// that day went, with a quiet day label under each. Tapping one
+/// rewinds the card to that day; the selected one is ringed in accent.
 private struct RecentSunsStrip: View {
-    let ratios: [Double]
-    let sky: SkyPalette
+    let days: [SunDay]
+    let selectedId: Int
     let accent: Color
+    let onSelect: (Int) -> Void
 
     /// Up to the last ten days, oldest first.
-    private var days: [Double] { Array(ratios.suffix(10)) }
+    private var shown: [SunDay] { Array(days.suffix(10)) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 5) {
-            ForEach(Array(days.enumerated()), id: \.offset) { index, value in
-                let daysAgo = (days.count - 1) - index
-                let isToday = daysAgo == 0
-                VStack(spacing: 6) {
-                    ZStack {
-                        LinearGradient(colors: sky.skyStops, startPoint: .top, endPoint: .bottom)
-                        SunStateMarkView(ratio: value, diameter: 13)
-                            .offset(y: 2)
-                    }
-                    .frame(height: 44)
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .strokeBorder(isToday ? accent.opacity(0.65) : Color.white.opacity(0.08),
-                                          lineWidth: isToday ? 1.4 : 0.6)
-                    )
+        HStack(alignment: .top, spacing: 4) {
+            ForEach(shown) { day in
+                let isSelected = day.id == selectedId
+                let isToday = day.id == 0
+                Button {
+                    onSelect(day.id)
+                } label: {
+                    VStack(spacing: 5) {
+                        CenteredSunView(ratio: day.ratio, maxDiameter: 26)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                Circle()
+                                    .strokeBorder(
+                                        isSelected ? accent.opacity(0.7) : Color.clear,
+                                        lineWidth: 1.6
+                                    )
+                            )
 
-                    Text(label(daysAgo: daysAgo))
-                        .font(.sans(9, weight: isToday ? .bold : .medium))
-                        .foregroundStyle(isToday ? accent : Theme.textPrimary.opacity(0.4))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                        Text(label(day))
+                            .font(.sans(9, weight: isSelected ? .bold : .medium))
+                            .foregroundStyle(isSelected ? accent.darkenedForLabel : Theme.textPrimary.opacity(0.4))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .overlay(alignment: .top) {
+                        if isToday {
+                            Circle()
+                                .fill(accent.opacity(0.5))
+                                .frame(width: 3, height: 3)
+                                .offset(y: -3)
+                        }
+                    }
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(label(day)), tap to view this day")
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Recent days, each sun lit to how that day went")
     }
 
-    private func label(daysAgo: Int) -> String {
-        if daysAgo == 0 { return "Today" }
-        let cal = Calendar.current
-        guard let date = cal.date(byAdding: .day, value: -daysAgo, to: Date()) else { return "" }
+    private func label(_ day: SunDay) -> String {
+        if day.id == 0 { return "Today" }
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEEE"
-        return formatter.string(from: date)
+        return formatter.string(from: day.date)
+    }
+}
+
+// MARK: - Helpers
+
+extension Color {
+    /// A hand-dimmed accent variant that stays legible on light fills.
+    var darkenedForLabel: Color {
+        let hsl = hslComponents
+        return Color(hsl: (h: hsl.h, s: min(1, hsl.s * 1.05), l: max(0, hsl.l * 0.5), a: hsl.a))
     }
 }
 
 #Preview {
     ZStack {
         Theme.warmWheat.ignoresSafeArea()
-        VStack(spacing: 20) {
-            SunDayCard(
-                ratio: 0.8,
-                headline: "12 to a productive day",
-                subline: "6 of 8 done · most of the way",
-                accent: Color(hex: 0x639922),
-                recentRatios: [0.2, 0.9, 1.0, 0.5, 0.0, 0.7, 0.85]
-            )
-            SunDayCard(
-                ratio: 0.3,
-                headline: "Getting going",
-                subline: "2 of 8 done · early yet",
-                accent: Color(hex: 0xC9602A)
-            )
+        ScrollView {
+            VStack(spacing: 20) {
+                SunDayCard(
+                    days: (0..<7).reversed().map { offset in
+                        let ratios: [Double] = [0.2, 0.9, 1.0, 0.5, 0.0, 0.7, 0.85]
+                        return SunDay(
+                            id: offset,
+                            date: Calendar.current.date(byAdding: .day, value: -offset, to: Date()) ?? Date(),
+                            ratio: ratios[6 - offset],
+                            headline: offset == 0 ? "12 to a productive day" : "Strong day so far",
+                            subline: offset == 0 ? "6 of 8 done · most of the way" : "5 done",
+                            chips: [
+                                SunDayChip(title: "Write", isDone: true),
+                                SunDayChip(title: "Run", isDone: true),
+                                SunDayChip(title: "Read", isDone: false)
+                            ],
+                            scoreText: offset == 0 ? "38 points" : "\(40 + offset) points"
+                        )
+                    },
+                    accent: Color(hex: 0x639922)
+                )
+            }
+            .padding()
         }
-        .padding()
     }
 }

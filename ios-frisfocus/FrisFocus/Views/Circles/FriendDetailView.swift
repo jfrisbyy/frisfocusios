@@ -681,15 +681,7 @@ struct FriendDetailView: View {
                 trailingAction: tier != .quiet ? { showWeekSheet = true } : nil
             )
 
-            SunDayCard(
-                ratio: ringFill,
-                headline: todayHeadline,
-                subline: todaySubline,
-                accent: accent,
-                recentRatios: tier != .quiet ? day.rhythmBars : []
-            )
-
-            todayChips
+            SunDayCard(days: sunDays, accent: accent)
 
             // Quiet contextual actions — proof + cheer live here now,
             // so the identity card stays calm.
@@ -731,31 +723,66 @@ struct FriendDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private var todayChips: some View {
+    /// The card's days, oldest first ending today, resolved to this
+    /// friend's pairwise sharing tier. Past suns reveal their real
+    /// completed tasks at Full, the day's shape at Open, and never
+    /// reveal points (those stay behind the locked → asked → shared flow).
+    private var sunDays: [SunDay] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        guard tier != .quiet else {
+            return [SunDay(id: 0, date: today, ratio: 0, headline: todayHeadline,
+                           subline: todaySubline, chips: [], scoreText: nil)]
+        }
+        let bars = day.rhythmBars
+        let n = bars.count
+        return bars.enumerated().map { idx, ratio in
+            let daysAgo = (n - 1) - idx
+            let date = cal.date(byAdding: .day, value: -daysAgo, to: today) ?? today
+            if daysAgo == 0 {
+                return SunDay(
+                    id: 0, date: date, ratio: ratio,
+                    headline: todayHeadline, subline: todaySubline,
+                    chips: todayChipItems, scoreText: nil
+                )
+            }
+            return pastSunDay(daysAgo: daysAgo, date: date, ratio: ratio)
+        }
+    }
+
+    private var todayChipItems: [SunDayChip] {
         switch tier {
         case .full:
-            if !day.tasks.isEmpty {
-                TaskChipsFlow(
-                    items: day.tasks
-                        .sorted { $0.isDone && !$1.isDone }
-                        .map { (title: $0.title, isDone: $0.isDone) },
-                    accent: accent
-                )
-            }
+            return day.tasks
+                .sorted { $0.isDone && !$1.isDone }
+                .map { SunDayChip(title: $0.title, isDone: $0.isDone) }
         case .open:
-            let groups = day.categoryBreakdown
-            if !groups.isEmpty {
-                TaskChipsFlow(
-                    items: groups.map {
-                        (title: "\($0.category.displayName) · \($0.done) of \($0.total)", isDone: $0.done > 0)
-                    },
-                    accent: accent,
-                    maxVisible: 8
-                )
+            return day.categoryBreakdown.map {
+                SunDayChip(title: "\($0.category.displayName) · \($0.done) of \($0.total)", isDone: $0.done > 0)
             }
         case .quiet:
-            EmptyView()
+            return []
+        }
+    }
+
+    private func pastSunDay(daysAgo: Int, date: Date, ratio: Double) -> SunDay {
+        switch tier {
+        case .full:
+            let tasks = store.friendCompletedTasks(for: friend, on: date)
+            return SunDay(
+                id: daysAgo, date: date, ratio: ratio,
+                headline: dayHeadline(fraction: ratio, hasAnything: ratio > 0 || !tasks.isEmpty),
+                subline: tasks.isEmpty ? "a quiet day" : "\(tasks.count) done",
+                chips: tasks.map { SunDayChip(title: $0.title, isDone: true) },
+                scoreText: nil
+            )
+        default:
+            return SunDay(
+                id: daysAgo, date: date, ratio: ratio,
+                headline: dayHeadline(fraction: ratio, hasAnything: ratio > 0),
+                subline: "the shape of this day",
+                chips: [], scoreText: nil
+            )
         }
     }
 

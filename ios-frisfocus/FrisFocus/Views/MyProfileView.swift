@@ -525,17 +525,71 @@ struct MyProfileView: View {
                 trailingAction: previewTier != .quiet ? { showWeekSheet = true } : nil
             )
 
-            SunDayCard(
-                ratio: ringFill,
-                headline: todayHeadline,
-                subline: todaySubline,
-                accent: accent,
-                recentRatios: day.rhythmBars
-            )
-            .animation(.easeInOut(duration: 0.25), value: previewTier)
-
-            todayChips
+            SunDayCard(days: sunDays, accent: accent)
                 .animation(.easeInOut(duration: 0.25), value: previewTier)
+        }
+    }
+
+    /// The card's days, oldest first ending today. Each day is built
+    /// tier-resolved from my own real records, so tapping a past sun
+    /// reveals that day's true score and the tasks I actually finished.
+    private var sunDays: [SunDay] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        guard previewTier != .quiet else {
+            return [SunDay(id: 0, date: today, ratio: 0, headline: todayHeadline,
+                           subline: todaySubline, chips: [], scoreText: nil)]
+        }
+        let bars = day.rhythmBars
+        let n = bars.count
+        return bars.enumerated().map { idx, ratio in
+            let daysAgo = (n - 1) - idx
+            let date = cal.date(byAdding: .day, value: -daysAgo, to: today) ?? today
+            if daysAgo == 0 {
+                return SunDay(
+                    id: 0, date: date, ratio: ratio,
+                    headline: todayHeadline, subline: todaySubline,
+                    chips: todayChipItems, scoreText: "\(day.todayLogged) points"
+                )
+            }
+            return pastSunDay(daysAgo: daysAgo, date: date, ratio: ratio)
+        }
+    }
+
+    private var todayChipItems: [SunDayChip] {
+        switch previewTier {
+        case .full:
+            return day.tasks
+                .sorted { $0.isDone && !$1.isDone }
+                .map { SunDayChip(title: $0.title, isDone: $0.isDone) }
+        case .open:
+            return day.categoryBreakdown.map {
+                SunDayChip(title: "\($0.category.displayName) · \($0.done) of \($0.total)", isDone: $0.done > 0)
+            }
+        case .quiet:
+            return []
+        }
+    }
+
+    private func pastSunDay(daysAgo: Int, date: Date, ratio: Double) -> SunDay {
+        let score = store.score(on: date)
+        switch previewTier {
+        case .full:
+            let tasks = store.myCompletedTasks(on: date)
+            return SunDay(
+                id: daysAgo, date: date, ratio: ratio,
+                headline: dayHeadline(fraction: ratio, hasAnything: score > 0 || !tasks.isEmpty),
+                subline: tasks.isEmpty ? nil : "\(tasks.count) done",
+                chips: tasks.map { SunDayChip(title: $0.title, isDone: true) },
+                scoreText: "\(score) points"
+            )
+        default:
+            return SunDay(
+                id: daysAgo, date: date, ratio: ratio,
+                headline: dayHeadline(fraction: ratio, hasAnything: score > 0),
+                subline: "the shape of this day",
+                chips: [], scoreText: "\(score) points"
+            )
         }
     }
 
@@ -559,34 +613,6 @@ struct MyProfileView: View {
             return "the shape of your day — no task names"
         case .quiet:
             return "\(shortSeasonName) · day \(store.currentSeasonDay)"
-        }
-    }
-
-    @ViewBuilder
-    private var todayChips: some View {
-        switch previewTier {
-        case .full:
-            if !day.tasks.isEmpty {
-                TaskChipsFlow(
-                    items: day.tasks
-                        .sorted { $0.isDone && !$1.isDone }
-                        .map { (title: $0.title, isDone: $0.isDone) },
-                    accent: accent
-                )
-            }
-        case .open:
-            let groups = day.categoryBreakdown
-            if !groups.isEmpty {
-                TaskChipsFlow(
-                    items: groups.map {
-                        (title: "\($0.category.displayName) · \($0.done) of \($0.total)", isDone: $0.done > 0)
-                    },
-                    accent: accent,
-                    maxVisible: 8
-                )
-            }
-        case .quiet:
-            EmptyView()
         }
     }
 

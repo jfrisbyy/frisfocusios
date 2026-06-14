@@ -117,4 +117,69 @@ extension Store {
             milestoneAddedToday: milestoneAddedToday
         )
     }
+
+    /// The tasks and to-dos I actually completed on a given calendar day,
+    /// read from my own real records. Powers the profile day card's
+    /// tap-to-revisit on my own page. Each item reads as done (history).
+    func myCompletedTasks(on date: Date) -> [FriendDayTask] {
+        let cal = Calendar.current
+        var result: [FriendDayTask] = []
+        var seen = Set<UUID>()
+        for entry in logEntries
+            where cal.isDate(entry.date, inSameDayAs: date) && entry.entryType == .completed {
+            if let taskId = entry.taskId, let task = tasks.first(where: { $0.id == taskId }) {
+                if seen.insert(task.id).inserted {
+                    result.append(FriendDayTask(title: task.title, isDone: true, category: task.category))
+                }
+            } else if let todoId = entry.todoId, let todo = todos.first(where: { $0.id == todoId }) {
+                if seen.insert(todo.id).inserted {
+                    result.append(FriendDayTask(title: todo.title, isDone: true, category: .work))
+                }
+            } else if let title = entry.title, !title.isEmpty {
+                result.append(FriendDayTask(title: title, isDone: true, category: .work))
+            }
+        }
+        return result
+    }
+
+    /// The shared circle / pact tasks a friend completed on a given day,
+    /// built from the same locally-synced completion records that power
+    /// their today card and rhythm. Only completed items are returned —
+    /// this is honest history of what actually happened, and reveals
+    /// nothing beyond what they already share.
+    func friendCompletedTasks(for friend: Friend, on date: Date) -> [FriendDayTask] {
+        let cal = Calendar.current
+        let categories: [Category] = [.fitness, .health, .creative, .work, .spiritual, .apartment]
+        var result: [FriendDayTask] = []
+        var ci = 0
+        for circle in sharedCircles(withFriendId: friend.id) where circle.hasSharedList {
+            for task in circle.tasks {
+                let done = circleTaskCompletions.contains { c in
+                    c.circleId == circle.id
+                        && c.circleTaskId == task.id
+                        && c.memberId == friend.id
+                        && cal.isDate(c.date, inSameDayAs: date)
+                }
+                if done {
+                    result.append(FriendDayTask(title: task.title, isDone: true, category: categories[ci % categories.count]))
+                }
+                ci += 1
+            }
+        }
+        for pact in sharedPacts(withFriendId: friend.id).filter({ $0.status == .active }) {
+            for task in pact.tasks {
+                let done = pactCompletions.contains { c in
+                    c.pactId == pact.id
+                        && c.taskId == task.id
+                        && c.userId == friend.id
+                        && cal.isDate(c.date, inSameDayAs: date)
+                }
+                if done {
+                    result.append(FriendDayTask(title: task.name, isDone: true, category: categories[ci % categories.count]))
+                }
+                ci += 1
+            }
+        }
+        return result
+    }
 }
