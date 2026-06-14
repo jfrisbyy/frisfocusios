@@ -19,6 +19,7 @@ import UIKit
 struct WorkZoneView: View {
     @Environment(Store.self) private var store
     @State private var showCaptureSheet: Bool = false
+    @State private var showQuickAdd: Bool = false
     @State private var showWeekSchedule: Bool = false
     @State private var showFocusStart: Bool = false
     @State private var showFocusMode: Bool = false
@@ -64,6 +65,7 @@ struct WorkZoneView: View {
                             CadenceRoutineRow(link: link)
                         }
                     }
+                    quickAddPill
                 }
             }
 
@@ -89,6 +91,10 @@ struct WorkZoneView: View {
                 .presentationDetents([.fraction(0.45)])
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
+        }
+        .sheet(isPresented: $showQuickAdd) {
+            QuickAddToDaySheet()
+                .environment(store)
         }
         .sheet(isPresented: $showWeekSchedule) {
             WeekScheduleView()
@@ -237,6 +243,42 @@ struct WorkZoneView: View {
         showCaptureSheet = true
     }
 
+    // MARK: - Quick add
+
+    /// Soft pill below the plan items that opens the one-tap add sheet.
+    /// Only shown when the plan already has content; the empty day is
+    /// covered by the dashed CTA instead.
+    @ViewBuilder
+    private var quickAddPill: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showQuickAdd = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                Text("Add to today")
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .fill(Theme.textPrimary.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                    .strokeBorder(Theme.textPrimary.opacity(0.10), lineWidth: 0.8)
+            )
+        }
+        .buttonStyle(QuickAddPressStyle())
+        .accessibilityLabel("Add a task or to-do to today")
+    }
+
     // MARK: - Section helper
 
     @ViewBuilder
@@ -248,6 +290,17 @@ struct WorkZoneView: View {
             EyebrowText(text: eyebrow, opacity: 0.6)
             content()
         }
+    }
+}
+
+/// Gentle press-scale for the quick-add pill — a quiet shrink-and-dim
+/// on touch so the tap feels responsive without pulling focus.
+private struct QuickAddPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 

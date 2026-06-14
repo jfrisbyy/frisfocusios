@@ -2765,6 +2765,38 @@ extension Store {
         persistAll()
     }
 
+    /// Quick-add a brand-new To-do straight onto today's plan. Dated
+    /// today with a small default bonus so it qualifies for Today's
+    /// Plan immediately. Returns the created To-do for animation.
+    @discardableResult
+    func quickAddTodoToToday(title: String) -> Todo? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let todo = Todo(title: trimmed, dueDate: Date(), pointValue: 2)
+        todos.append(todo)
+        persistAll()
+        return todo
+    }
+
+    /// Pin an existing To-do onto today's plan — re-dates it to today
+    /// and gives it a small bonus if it had none, so it surfaces in
+    /// Today's Plan alongside the rest.
+    func pinTodoToToday(_ todo: Todo) {
+        guard let idx = todos.firstIndex(where: { $0.id == todo.id }) else { return }
+        todos[idx].dueDate = Date()
+        if todos[idx].pointValue == nil { todos[idx].pointValue = 2 }
+        persistAll()
+    }
+
+    /// True when this To-do already sits on today's plan — dated today
+    /// (or overdue) and pointed. Mirrors `dueTodosToday`'s membership
+    /// test so the quick-add sheet can mark items as already added.
+    func isTodoOnToday(_ todo: Todo) -> Bool {
+        guard let due = todo.dueDate, todo.pointValue != nil else { return false }
+        let cal = Calendar.current
+        return cal.isDate(due, inSameDayAs: today) || due < today
+    }
+
     /// Remove today's pin. Clears the one-off pin and any `.today` /
     /// today-dated `.singleDate` schedule; recurring schedules are left
     /// alone (those are managed through the schedule editor).
