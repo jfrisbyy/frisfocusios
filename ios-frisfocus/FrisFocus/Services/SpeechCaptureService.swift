@@ -35,8 +35,12 @@ final class SpeechCaptureService {
     /// the keyboard, which is always present anyway.
     private(set) var failureMessage: String?
 
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: Locale.preferredLanguages.first ?? "en-US"))
-        ?? SFSpeechRecognizer()
+    /// Built from the app's chosen language (not the phone's system
+    /// language) right before each capture, so changing the Language
+    /// setting takes effect the next time the mic is tapped. Falls back to
+    /// English, then the device default, if the chosen language has no
+    /// recognizer here.
+    private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
@@ -71,6 +75,20 @@ final class SpeechCaptureService {
         }
     }
 
+    /// Resolve a recognizer for the app's chosen language, falling back to
+    /// English and then the device default so voice always works even if
+    /// the chosen language isn't supported on this device.
+    private func makeRecognizer() -> SFSpeechRecognizer? {
+        let chosen = AppLanguageStore.shared.speechLocale
+        if let r = SFSpeechRecognizer(locale: chosen), r.isAvailable {
+            return r
+        }
+        if let english = SFSpeechRecognizer(locale: AppLanguage.default.locale), english.isAvailable {
+            return english
+        }
+        return SFSpeechRecognizer()
+    }
+
     /// Begin live transcription. Clears the previous transcript.
     func start() async {
         failureMessage = nil
@@ -78,6 +96,7 @@ final class SpeechCaptureService {
             failureMessage = "Voice needs microphone and speech permission — you can type instead."
             return
         }
+        recognizer = makeRecognizer()
         guard let recognizer, recognizer.isAvailable else {
             failureMessage = "Speech recognition isn't available right now — type your answer instead."
             return

@@ -307,6 +307,19 @@ struct ProfileSheetView: View {
             hubDivider
 
             NavigationLink {
+                LanguageSettingsView()
+            } label: {
+                hubRow(
+                    icon: "globe",
+                    title: "Language",
+                    subtitle: AppLanguageStore.shared.language.displayName
+                )
+            }
+            .buttonStyle(.plain)
+
+            hubDivider
+
+            NavigationLink {
                 BlockedAccountsView()
             } label: {
                 hubRow(
