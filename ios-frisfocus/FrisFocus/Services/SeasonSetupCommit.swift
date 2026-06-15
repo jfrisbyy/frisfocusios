@@ -26,10 +26,35 @@ extension Store {
     /// - Weekly floors attach as `PenaltyRule`s to the referenced task;
     ///   boosters reference the task when the name resolves, otherwise
     ///   the task's whole category.
+    /// - Milestones start unscheduled — a clean list with no target date
+    ///   and no forced "week" assignment; the user can give any one a
+    ///   target date later from the milestone editor.
+    /// - `endMode` decides how the season ends: open-ended (default),
+    ///   when every milestone lands, or on a chosen `endDate`. The stored
+    ///   `lengthDays` is derived from `endDate` for date-ending seasons
+    ///   and kept as a quiet nominal value otherwise (the day counter and
+    ///   stats read `endMode` to know whether to show a total).
     @discardableResult
-    func startSeason(from draft: RubricDraft, name: String, lengthDays: Int) -> Season {
+    func startSeason(
+        from draft: RubricDraft,
+        name: String,
+        endMode: SeasonEndMode,
+        endDate: Date?
+    ) -> Season {
         let seasonId = UUID()
         let slots: [Category] = [.spiritual, .fitness, .health, .work, .creative, .apartment]
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: Date())
+
+        // Derive the stored length. Date-ending seasons measure to the
+        // chosen end date; open-ended / milestone seasons keep a nominal
+        // 90 that display code never shows (it branches on `endMode`).
+        let resolvedEndDate: Date? = endMode == .date ? endDate : nil
+        let lengthDays: Int = {
+            guard endMode == .date, let endDate else { return 90 }
+            let days = cal.dateComponents([.day], from: startOfToday, to: cal.startOfDay(for: endDate)).day ?? 90
+            return max(1, days)
+        }()
 
         // Category slots + per-season name/color overrides.
         var slotByDraftId: [UUID: Category] = [:]
@@ -51,14 +76,13 @@ extension Store {
             seasonCategories = [SeasonCategory(category: .health, tier: .primary)]
         }
 
-        // Milestones, spread across the season's weeks.
-        let weeks = max(1, lengthDays / 7)
-        let milestones: [Milestone] = draft.milestones.enumerated().map { index, m in
-            let count = max(1, draft.milestones.count)
-            let week = max(1, min(weeks, Int((Double(index + 1) / Double(count)) * Double(weeks))))
-            return Milestone(
+        // Milestones start as a clean, unscheduled list — no scatter into
+        // random weeks and no target date. The user opts into a target
+        // date per milestone from the editor.
+        let milestones: [Milestone] = draft.milestones.map { m in
+            Milestone(
                 seasonId: seasonId,
-                weekNumber: week,
+                weekNumber: 1,
                 title: m.name,
                 status: .upcoming,
                 pointValue: m.value
@@ -68,14 +92,16 @@ extension Store {
         let season = Season(
             id: seasonId,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Season" : name,
-            lengthDays: max(7, lengthDays),
-            startDate: Calendar.current.startOfDay(for: Date()),
+            lengthDays: max(1, lengthDays),
+            startDate: startOfToday,
             startedAt: Date(),
             vibe: .coolDawn,
             dailyGoal: max(1, draft.dailyTarget),
             weeklyGoal: max(1, draft.weeklyTarget),
             categories: seasonCategories,
-            milestones: milestones
+            milestones: milestones,
+            endMode: endMode,
+            endDate: resolvedEndDate
         )
 
         // The daily task board.

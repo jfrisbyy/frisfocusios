@@ -344,11 +344,18 @@ struct ProofAttachPickerSheet: View {
         )
     }
 
+    private static let milestoneTargetFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
+
     private func milestoneSubtitle(_ milestone: Milestone) -> String {
         if milestone.isCompleted { return "Landed · the journey keeps growing" }
+        let lead = milestone.targetDate.map { "By \(Self.milestoneTargetFormatter.string(from: $0))" } ?? "In motion"
         let done = milestone.steps.filter(\.isCompleted).count
-        if milestone.steps.isEmpty { return "Week \(milestone.weekNumber) · in motion" }
-        return "Week \(milestone.weekNumber) · \(done) of \(milestone.steps.count) steps"
+        if milestone.steps.isEmpty { return lead }
+        return "\(lead) · \(done) of \(milestone.steps.count) steps"
     }
 
     private func noteRow(_ note: Note) -> some View {

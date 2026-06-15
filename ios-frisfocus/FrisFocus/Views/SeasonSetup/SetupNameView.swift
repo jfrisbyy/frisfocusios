@@ -14,18 +14,18 @@ import UIKit
 
 struct SetupNameView: View {
     @Bindable var viewModel: SeasonSetupViewModel
-    let onLockIn: (String, Int) -> Void
+    let onLockIn: (String, SeasonEndMode, Date?) -> Void
 
     @State private var name: String = ""
-    @State private var lengthDays: Int = 90
+    @State private var endMode: SeasonEndMode = .openEnded
+    @State private var endDate: Date = Calendar.current.date(byAdding: .day, value: 90, to: Date()) ?? Date()
     @State private var intention: String = ""
     @FocusState private var nameFocused: Bool
 
-    private let lengthOptions: [(label: String, days: Int)] = [
-        ("A month · 30 days", 30),
-        ("Six weeks · 42 days", 42),
-        ("A quarter · 90 days", 90),
-        ("Open — until the milestones land", 180),
+    private let endOptions: [(mode: SeasonEndMode, label: String)] = [
+        (.openEnded, "Open — until I end it"),
+        (.milestones, "Until the milestones land"),
+        (.date, "Ends on a date"),
     ]
 
     var body: some View {
@@ -93,20 +93,20 @@ struct SetupNameView: View {
                         }
 
                         VStack(spacing: 1) {
-                            // Length — confirm or adjust what was discussed.
+                            // How it ends — confirm or adjust what was discussed.
                             Menu {
-                                ForEach(lengthOptions, id: \.days) { option in
+                                ForEach(endOptions, id: \.mode) { option in
                                     Button(option.label) {
-                                        lengthDays = option.days
+                                        endMode = option.mode
                                     }
                                 }
                             } label: {
                                 HStack {
-                                    Text("How long")
+                                    Text("How it ends")
                                         .font(.sans(14, weight: .regular))
                                         .foregroundStyle(Theme.textPrimary.opacity(0.75))
                                     Spacer()
-                                    Text(lengthLabel)
+                                    Text(endModeLabel)
                                         .font(.sans(14, weight: .medium))
                                         .foregroundStyle(Theme.sunShadow)
                                     Image(systemName: "chevron.up.chevron.down")
@@ -119,6 +119,27 @@ struct SetupNameView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+
+                            // A real end date — only when "ends on a date".
+                            if endMode == .date {
+                                HStack {
+                                    Text("End date")
+                                        .font(.sans(14, weight: .regular))
+                                        .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                                    Spacer()
+                                    DatePicker(
+                                        "",
+                                        selection: $endDate,
+                                        in: tomorrow...,
+                                        displayedComponents: .date
+                                    )
+                                    .labelsHidden()
+                                    .tint(Theme.sunShadow)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Color.white.opacity(0.92))
+                            }
 
                             // Optional intention line — identity, not numbers.
                             HStack {
@@ -148,7 +169,11 @@ struct SetupNameView: View {
                 Button {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     let finalName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    onLockIn(finalName.isEmpty ? "New Season" : finalName, lengthDays)
+                    onLockIn(
+                        finalName.isEmpty ? "New Season" : finalName,
+                        endMode,
+                        endMode == .date ? endDate : nil
+                    )
                 } label: {
                     Text("Lock it in & start →")
                         .font(.sans(16, weight: .medium))
@@ -167,18 +192,33 @@ struct SetupNameView: View {
             if name.isEmpty {
                 name = viewModel.suggestedName ?? ""
             }
-            lengthDays = nearestLength(to: viewModel.suggestedLengthDays ?? 90)
+            applySuggestedEnd()
             if viewModel.suggestedName == nil {
                 nameFocused = true
             }
         }
     }
 
-    private var lengthLabel: String {
-        lengthOptions.first { $0.days == lengthDays }?.label ?? "\(lengthDays) days"
+    private var tomorrow: Date {
+        Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? Date()
     }
 
-    private func nearestLength(to days: Int) -> Int {
-        lengthOptions.min { abs($0.days - days) < abs($1.days - days) }?.days ?? 90
+    private var endModeLabel: String {
+        endOptions.first { $0.mode == endMode }?.label ?? "Open"
+    }
+
+    /// Pre-select the end mode from what the setup guide heard: a named
+    /// date → date-ending with that date; an explicit open-ended intent or
+    /// nothing → open-ended (the calm default).
+    private func applySuggestedEnd() {
+        if let date = viewModel.suggestedEndDate {
+            endMode = .date
+            endDate = date
+        } else {
+            endMode = .openEnded
+            if let days = viewModel.suggestedLengthDays {
+                endDate = Calendar.current.date(byAdding: .day, value: days, to: Date()) ?? endDate
+            }
+        }
     }
 }

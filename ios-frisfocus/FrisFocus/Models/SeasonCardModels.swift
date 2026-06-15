@@ -114,19 +114,22 @@ nonisolated struct SeasonCardMilestone: Codable, Identifiable, Equatable, Sendab
     var id: UUID = UUID()
     var title: String
     var weekNumber: Int = 1
+    /// Optional user-chosen target date — friends see "by Oct 12" when set.
+    var targetDate: Date?
     var isDone: Bool = false
     var completedDate: Date?
     var stepsDone: Int?
     var stepsTotal: Int?
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, weekNumber, isDone, completedDate, stepsDone, stepsTotal
+        case id, title, weekNumber, targetDate, isDone, completedDate, stepsDone, stepsTotal
     }
 
     init(
         id: UUID = UUID(),
         title: String,
         weekNumber: Int = 1,
+        targetDate: Date? = nil,
         isDone: Bool = false,
         completedDate: Date? = nil,
         stepsDone: Int? = nil,
@@ -135,6 +138,7 @@ nonisolated struct SeasonCardMilestone: Codable, Identifiable, Equatable, Sendab
         self.id = id
         self.title = title
         self.weekNumber = weekNumber
+        self.targetDate = targetDate
         self.isDone = isDone
         self.completedDate = completedDate
         self.stepsDone = stepsDone
@@ -146,6 +150,7 @@ nonisolated struct SeasonCardMilestone: Codable, Identifiable, Equatable, Sendab
         self.id = (try c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
         self.title = (try c.decodeIfPresent(String.self, forKey: .title)) ?? "A destination"
         self.weekNumber = (try c.decodeIfPresent(Int.self, forKey: .weekNumber)) ?? 1
+        self.targetDate = try c.decodeIfPresent(Date.self, forKey: .targetDate)
         self.isDone = (try c.decodeIfPresent(Bool.self, forKey: .isDone)) ?? false
         self.completedDate = try c.decodeIfPresent(Date.self, forKey: .completedDate)
         self.stepsDone = try c.decodeIfPresent(Int.self, forKey: .stepsDone)

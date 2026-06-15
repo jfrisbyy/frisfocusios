@@ -66,6 +66,12 @@ final class SeasonSetupViewModel {
     private(set) var draft: RubricDraft?
     private(set) var suggestedName: String?
     private(set) var suggestedLengthDays: Int?
+    /// A concrete end date the user mentioned during setup ("end on Oct
+    /// 12"), if any — pre-selects the date-ending mode on the final screen.
+    private(set) var suggestedEndDate: Date?
+    /// True when the user signalled an open-ended season ("no end date",
+    /// "until I'm done") — pre-selects open-ended on the final screen.
+    private(set) var suggestedOpenEnded: Bool = false
     /// True when the user skipped the conversation into the starter board.
     private(set) var usedStarter: Bool = false
 
@@ -150,6 +156,8 @@ final class SeasonSetupViewModel {
         usedStarter = true
         suggestedName = nil
         suggestedLengthDays = 90
+        suggestedEndDate = nil
+        suggestedOpenEnded = true
         stage = .review
     }
 
@@ -164,6 +172,8 @@ final class SeasonSetupViewModel {
         draft = nil
         suggestedName = nil
         suggestedLengthDays = nil
+        suggestedEndDate = nil
+        suggestedOpenEnded = false
         stage = .conversation
         if history.isEmpty && currentMessage.isEmpty && !isThinking {
             Task { await requestTurn(appending: nil) }
@@ -189,9 +199,9 @@ final class SeasonSetupViewModel {
 
     /// Freeze the rubric into the Store and land on the closing screen.
     /// After this, daily scoring is local math — no further AI calls.
-    func lockIn(store: Store, name: String, lengthDays: Int) {
+    func lockIn(store: Store, name: String, endMode: SeasonEndMode, endDate: Date?) {
         guard let draft else { return }
-        store.startSeason(from: draft, name: name, lengthDays: lengthDays)
+        store.startSeason(from: draft, name: name, endMode: endMode, endDate: endDate)
         SeasonSetupResumeStore.clear()
         stage = .begins
     }
@@ -258,6 +268,8 @@ final class SeasonSetupViewModel {
                 draft = RubricDraft(wire: wireRubric)
                 suggestedName = reply.suggestedName
                 suggestedLengthDays = reply.suggestedLengthDays ?? 90
+                suggestedOpenEnded = reply.suggestedOpenEnded ?? false
+                suggestedEndDate = Self.parseEndDate(reply.suggestedEndDate)
                 conversationDone = true
                 arcProgress = 1.0
                 // The rubric exists now — the conversation is no longer a
@@ -281,6 +293,21 @@ final class SeasonSetupViewModel {
         }
 
         isThinking = false
+    }
+
+    /// Parse an ISO `yyyy-MM-dd` end date from the setup guide into a
+    /// local `Date` at start of day. Returns nil for missing / unparseable
+    /// values or dates already in the past.
+    private static func parseEndDate(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let parsed = formatter.date(from: raw) else { return nil }
+        let day = Calendar.current.startOfDay(for: parsed)
+        return day > Calendar.current.startOfDay(for: Date()) ? day : nil
     }
 
     // MARK: - Optional TTS

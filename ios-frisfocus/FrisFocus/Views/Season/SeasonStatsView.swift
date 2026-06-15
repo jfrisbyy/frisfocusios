@@ -53,7 +53,7 @@ struct SeasonStatsView: View {
             Text(store.currentSeason.name)
                 .font(.serif(17, weight: .medium))
                 .foregroundStyle(Theme.textCream)
-            Text("day \(store.currentSeasonDay) of \(store.currentSeason.lengthDays) · \(daysLeft) left")
+            Text(store.seasonDayText)
                 .font(.sans(10, weight: .regular))
                 .foregroundStyle(Theme.textCream.opacity(0.55))
         }
@@ -70,6 +70,17 @@ struct SeasonStatsView: View {
 
     private var daysLeft: Int {
         max(0, store.currentSeason.lengthDays - store.currentSeasonDay + 1)
+    }
+
+    /// The "Days" summary value — date-ending seasons show "X of Y";
+    /// open-ended and milestone-ending seasons just show the day count.
+    private var daysValue: String {
+        switch store.currentSeason.resolvedEndMode {
+        case .date:
+            return "\(store.currentSeasonDay) of \(store.currentSeason.lengthDays)"
+        case .openEnded, .milestones:
+            return "\(store.currentSeasonDay)"
+        }
     }
 
     // MARK: - Week-by-week chart
@@ -293,7 +304,7 @@ struct SeasonStatsView: View {
             HStack(spacing: 10) {
                 summaryStat(
                     label: "Days",
-                    value: "\(store.currentSeasonDay) of \(store.currentSeason.lengthDays)"
+                    value: daysValue
                 )
                 summaryStat(
                     label: "Weeks at goal",

@@ -55,6 +55,20 @@ enum MilestoneStatus: String, Codable {
     case cleared, inMotion, upcoming
 }
 
+/// How a season reaches its end.
+///
+/// - `.openEnded` — runs indefinitely until the user chooses to end it.
+/// - `.milestones` — completes automatically once every milestone lands.
+/// - `.date` — ends on a chosen calendar date (`Season.endDate`).
+///
+/// Seasons persisted before this existed have a nil `endMode`; they read
+/// as `.date` using their saved `lengthDays` (see `Season.resolvedEndMode`).
+enum SeasonEndMode: String, Codable {
+    case openEnded
+    case milestones
+    case date
+}
+
 enum LogEntryType: String, Codable {
     case completed, skipped, penalty, boosterBonus, trainBonus, milestone
     /// A per-step credit on a "points per step" milestone — a smaller
@@ -632,6 +646,11 @@ struct Milestone: Codable, Identifiable {
     var completedDate: Date? = nil
     /// Smaller goals the milestone is broken into, in `orderIndex` order.
     var steps: [MilestoneStep] = []
+    /// An optional, user-chosen target date for this milestone. When set,
+    /// surfaces wherever the milestone is shown ("by Oct 12"); when nil the
+    /// milestone simply reads as part of the list. Replaces the old
+    /// auto-assigned `weekNumber` scheduling.
+    var targetDate: Date? = nil
     /// Photos and voice memos documenting the process, in attach order.
     var attachments: [MilestoneAttachment] = []
     /// Journal notes linked to this milestone.
@@ -669,7 +688,7 @@ struct Milestone: Codable, Identifiable {
 extension Milestone {
     private enum CodingKeys: String, CodingKey {
         case id, seasonId, weekNumber, title, status, pointValue,
-             completedDate, steps, attachments, linkedNoteIds, pointsPerStep
+             completedDate, steps, targetDate, attachments, linkedNoteIds, pointsPerStep
     }
 
     init(from decoder: Decoder) throws {
@@ -682,6 +701,7 @@ extension Milestone {
         self.pointValue = try c.decodeIfPresent(Int.self, forKey: .pointValue) ?? 0
         self.completedDate = try c.decodeIfPresent(Date.self, forKey: .completedDate)
         self.steps = try c.decodeIfPresent([MilestoneStep].self, forKey: .steps) ?? []
+        self.targetDate = try c.decodeIfPresent(Date.self, forKey: .targetDate)
         self.attachments = try c.decodeIfPresent([MilestoneAttachment].self, forKey: .attachments) ?? []
         self.linkedNoteIds = try c.decodeIfPresent([UUID].self, forKey: .linkedNoteIds) ?? []
         self.pointsPerStep = try c.decodeIfPresent(Bool.self, forKey: .pointsPerStep) ?? false
@@ -697,6 +717,7 @@ extension Milestone {
         try c.encode(pointValue, forKey: .pointValue)
         try c.encodeIfPresent(completedDate, forKey: .completedDate)
         try c.encode(steps, forKey: .steps)
+        try c.encodeIfPresent(targetDate, forKey: .targetDate)
         try c.encode(attachments, forKey: .attachments)
         try c.encode(linkedNoteIds, forKey: .linkedNoteIds)
         try c.encode(pointsPerStep, forKey: .pointsPerStep)
@@ -721,6 +742,14 @@ struct Season: Codable, Identifiable {
     var categories: [SeasonCategory]
     var milestones: [Milestone]
 
+    /// How this season ends. Optional so seasons persisted before flexible
+    /// length decode cleanly; a nil value reads as `.date` (legacy
+    /// fixed-length behavior) via `resolvedEndMode`.
+    var endMode: SeasonEndMode? = nil
+    /// The chosen end date when `endMode == .date`. Nil for the other modes
+    /// and for legacy seasons (which fall back to `lengthDays`).
+    var endDate: Date? = nil
+
     // MARK: Season look (published to friends via the season card)
 
     /// The curated cover this season wears on profile pages
@@ -736,6 +765,12 @@ struct Season: Codable, Identifiable {
     /// card ("resting this week", "locked in"). Optional so persisted
     /// seasons decode cleanly; published to friends via the season card.
     var moodLine: String?
+}
+
+extension Season {
+    /// The effective end mode — legacy seasons (nil `endMode`) read as
+    /// `.date`, preserving their original fixed-length behavior.
+    var resolvedEndMode: SeasonEndMode { endMode ?? .date }
 }
 
 // MARK: - Tasks / To-dos / Log / Notes

@@ -317,7 +317,7 @@ struct SunZoneView: View {
                     .font(.serif(15, weight: .medium))
                     .foregroundStyle(Theme.textCream.opacity(0.95))
 
-                Text("day \(store.currentSeasonDay) of \(store.currentSeason.lengthDays)")
+                Text(store.seasonDayText)
                     .font(.sans(9, weight: .regular))
                     .tracking(0.4)
                     .foregroundStyle(Theme.textCream.opacity(0.65))

@@ -20,15 +20,13 @@ enum MilestoneNudgeService {
         "milestone-nudge-\(milestoneId.uuidString)"
     }
 
-    /// 9 AM local on the first day of the milestone's target week,
-    /// counted from the season's start date.
+    /// 9 AM local on the morning of the milestone's target date. Returns
+    /// nil for unscheduled milestones (no target date) — they get no nudge.
     private static func nudgeDate(for milestone: Milestone, in season: Season) -> Date? {
+        guard let target = milestone.targetDate else { return nil }
         let cal = Calendar.current
-        let seasonStart = cal.startOfDay(for: season.startDate)
-        guard let weekStart = cal.date(byAdding: .day, value: (milestone.weekNumber - 1) * 7, to: seasonStart) else {
-            return nil
-        }
-        return cal.date(bySettingHour: 9, minute: 0, second: 0, of: weekStart)
+        let day = cal.startOfDay(for: target)
+        return cal.date(bySettingHour: 9, minute: 0, second: 0, of: day)
     }
 
     /// Re-schedule pending nudges to match the season's current
@@ -59,8 +57,8 @@ enum MilestoneNudgeService {
                 }
 
                 let content = UNMutableNotificationContent()
-                content.title = "Milestone week"
-                content.body = "“\(milestone.title)” is in motion this week — \(milestone.pointValue) pts when you land it."
+                content.title = "Milestone day"
+                content.body = "“\(milestone.title)” is aimed at today — \(milestone.pointValue) pts when you land it."
                 content.sound = .default
                 content.userInfo = [
                     "route": "milestone",

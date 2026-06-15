@@ -18,7 +18,8 @@ struct MilestoneComposerSheet: View {
     let editing: Milestone?
 
     @State private var title: String
-    @State private var weekNumber: Int
+    @State private var hasTargetDate: Bool
+    @State private var targetDate: Date
     @State private var pointValue: Int
     @State private var pointsPerStep: Bool
 
@@ -27,7 +28,12 @@ struct MilestoneComposerSheet: View {
     init(editing: Milestone?) {
         self.editing = editing
         _title = State(initialValue: editing?.title ?? "")
-        _weekNumber = State(initialValue: editing?.weekNumber ?? 1)
+        _hasTargetDate = State(initialValue: editing?.targetDate != nil)
+        _targetDate = State(
+            initialValue: editing?.targetDate
+                ?? Calendar.current.date(byAdding: .day, value: 14, to: Date())
+                ?? Date()
+        )
         _pointValue = State(initialValue: editing?.pointValue ?? 50)
         _pointsPerStep = State(initialValue: editing?.pointsPerStep ?? false)
     }
@@ -88,20 +94,31 @@ struct MilestoneComposerSheet: View {
 
     private var whenCard: some View {
         card {
-            EyebrowText(text: "When", opacity: 0.5)
-            Stepper(value: $weekNumber, in: 1...52) {
-                HStack(alignment: .lastTextBaseline, spacing: 6) {
-                    Text("Week \(weekNumber)")
-                        .font(.serif(17, weight: .medium))
+            Toggle(isOn: $hasTargetDate.animation(.easeInOut(duration: 0.2))) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Target date")
+                        .font(.sans(14, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
-                    Text("of the season")
-                        .font(.sans(11, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                    Text("Optional — aim this milestone at a day. Leave it off and it simply lives on your list.")
+                        .font(.serifItalic(11, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("A single gentle nudge arrives when this week begins, if the milestone isn't done yet.")
-                .font(.serifItalic(11, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.5))
+            .tint(Theme.alertGreen)
+
+            if hasTargetDate {
+                DatePicker(
+                    "Lands by",
+                    selection: $targetDate,
+                    displayedComponents: .date
+                )
+                .font(.sans(14, weight: .regular))
+                .tint(Theme.sunShadow)
+                Text("A single gentle nudge arrives that morning, if the milestone isn't done yet.")
+                    .font(.serifItalic(11, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
+            }
         }
     }
 
@@ -165,17 +182,18 @@ struct MilestoneComposerSheet: View {
     private func save() {
         guard canSave else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let chosenDate: Date? = hasTargetDate ? targetDate : nil
         if let editing {
             var updated = editing
             updated.title = title
-            updated.weekNumber = weekNumber
+            updated.targetDate = chosenDate
             updated.pointValue = pointValue
             updated.pointsPerStep = pointsPerStep
             store.updateMilestone(updated)
         } else {
             store.addMilestone(
                 title: title,
-                weekNumber: weekNumber,
+                targetDate: chosenDate,
                 pointValue: pointValue,
                 pointsPerStep: pointsPerStep
             )

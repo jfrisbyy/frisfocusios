@@ -46,9 +46,9 @@ struct SeasonSetupFlowView: View {
                     .transition(stageTransition)
 
             case .naming:
-                SetupNameView(viewModel: viewModel) { name, lengthDays in
+                SetupNameView(viewModel: viewModel) { name, endMode, endDate in
                     frozenName = name
-                    viewModel.lockIn(store: store, name: name, lengthDays: lengthDays)
+                    viewModel.lockIn(store: store, name: name, endMode: endMode, endDate: endDate)
                 }
                 .transition(stageTransition)
 

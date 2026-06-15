@@ -104,6 +104,12 @@ final class Store {
     /// Yesterday's (and older) leftover to-dos offered in that sheet.
     var carryForwardCandidates: [Todo] = []
 
+    /// Drives the gentle "season complete" prompt for milestone-ending
+    /// seasons — set the moment the last milestone lands. Not persisted;
+    /// purely a UI trigger that offers (never forces) starting the next
+    /// season. Cleared when the user dismisses or acts on it.
+    var showSeasonCompletePrompt: Bool = false
+
     /// Event occurrences whose homescreen check-in glance the user
     /// swiped away. Per-occurrence — the next event shows the card
     /// again. Persisted under its own key (not part of the social sync).
@@ -1159,6 +1165,7 @@ extension Store {
                     id: milestone.id,
                     title: milestone.title,
                     weekNumber: milestone.weekNumber,
+                    targetDate: milestone.targetDate,
                     isDone: milestone.isCompleted,
                     completedDate: milestone.completedDate,
                     stepsDone: milestone.steps.isEmpty ? nil : milestone.steps.filter(\.isCompleted).count,
@@ -1202,15 +1209,57 @@ extension Store {
         )
     }
 
-    /// 1-based day count into the current season, clamped to `1...lengthDays`.
-    /// Both endpoints are normalised to `startOfDay` so the boundary is
-    /// integer-aligned regardless of time-of-day drift.
+    /// 1-based day count into the current season. Both endpoints are
+    /// normalised to `startOfDay` so the boundary is integer-aligned
+    /// regardless of time-of-day drift. Date-ending seasons clamp to
+    /// `lengthDays`; open-ended and milestone-ending seasons keep
+    /// counting up with no ceiling.
     var currentSeasonDay: Int {
         let cal = Calendar.current
         let start = cal.startOfDay(for: currentSeason.startDate)
         let today = cal.startOfDay(for: Date())
         let days = cal.dateComponents([.day], from: start, to: today).day ?? 0
-        return min(max(days + 1, 1), currentSeason.lengthDays)
+        let raw = max(days + 1, 1)
+        if currentSeason.resolvedEndMode == .date {
+            return min(raw, max(1, currentSeason.lengthDays))
+        }
+        return raw
+    }
+
+    /// Lowercase day readout that adapts to how the season ends:
+    /// open-ended → "day 12"; date-ending → "day 12 of 90 · 79 left";
+    /// milestone-ending → "day 12 · 2 of 5 milestones".
+    var seasonDayText: String {
+        let day = currentSeasonDay
+        switch currentSeason.resolvedEndMode {
+        case .openEnded:
+            return "day \(day)"
+        case .milestones:
+            let total = currentSeason.milestones.count
+            guard total > 0 else { return "day \(day)" }
+            let done = currentSeason.milestones.filter { $0.isCompleted }.count
+            return "day \(day) · \(done) of \(total) milestones"
+        case .date:
+            let left = max(0, currentSeason.lengthDays - day + 1)
+            return "day \(day) of \(currentSeason.lengthDays) · \(left) left"
+        }
+    }
+
+    /// Uppercased compact day readout for header bands — "DAY 12",
+    /// "DAY 12 OF 90", or "DAY 12 · 2/5 MILESTONES".
+    var seasonDayTextCaps: String {
+        let day = currentSeasonDay
+        switch currentSeason.resolvedEndMode {
+        case .openEnded:
+            return "DAY \(day)"
+        case .milestones:
+            let total = currentSeason.milestones.count
+            guard total > 0 else { return "DAY \(day)" }
+            let done = currentSeason.milestones.filter { $0.isCompleted }.count
+            return "DAY \(day) · \(done)/\(total) MILESTONES"
+        case .date:
+            return "DAY \(day) OF \(currentSeason.lengthDays)"
+        }
     }
 
     // MARK: - Home composition

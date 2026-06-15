@@ -75,7 +75,7 @@ extension Store {
         let milestoneProgress: String = {
             guard let milestone else { return "—" }
             if milestone.isCompleted { return "landed" }
-            if milestone.steps.isEmpty { return "week \(milestone.weekNumber)" }
+            if milestone.steps.isEmpty { return "in motion" }
             let done = milestone.steps.filter(\.isCompleted).count
             return "\(done) of \(milestone.steps.count) steps"
         }()

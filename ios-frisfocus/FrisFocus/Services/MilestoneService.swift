@@ -72,6 +72,15 @@ extension Store {
             total: currentSeason.milestones.count
         )
 
+        // Milestone-ending seasons complete the moment the last milestone
+        // lands. Offer (never force) starting the next season — nothing is
+        // wiped until the user acts on the prompt.
+        if currentSeason.resolvedEndMode == .milestones,
+           !currentSeason.milestones.isEmpty,
+           currentSeason.milestones.allSatisfy({ $0.isCompleted }) {
+            showSeasonCompletePrompt = true
+        }
+
         persistAll()
         refreshMilestoneNudges()
     }
@@ -90,16 +99,19 @@ extension Store {
 
     // MARK: - CRUD
 
-    /// Append a new milestone to the current season.
+    /// Append a new milestone to the current season. Milestones start
+    /// unscheduled (`weekNumber` 1) and carry an optional `targetDate`
+    /// the user can set from the editor.
     @discardableResult
-    func addMilestone(title: String, weekNumber: Int, pointValue: Int, pointsPerStep: Bool = false) -> Milestone {
+    func addMilestone(title: String, targetDate: Date? = nil, pointValue: Int, pointsPerStep: Bool = false) -> Milestone {
         var milestone = Milestone(
             seasonId: currentSeason.id,
-            weekNumber: max(1, weekNumber),
+            weekNumber: 1,
             title: title.trimmingCharacters(in: .whitespacesAndNewlines),
             status: .upcoming,
             pointValue: max(0, pointValue)
         )
+        milestone.targetDate = targetDate
         milestone.pointsPerStep = pointsPerStep
         currentSeason.milestones.append(milestone)
         persistAll()

@@ -393,8 +393,17 @@ struct DestinationsTimeline: View {
         if isCurrent, let done = milestone.stepsDone, let total = milestone.stepsTotal, total > 0 {
             return "\(done) of \(total)"
         }
-        return "week \(milestone.weekNumber)"
+        if let target = milestone.targetDate {
+            return "by \(Self.milestoneTargetFormatter.string(from: target))"
+        }
+        return isCurrent ? "in motion" : "upcoming"
     }
+
+    private static let milestoneTargetFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
 }
 
 // MARK: - Seasons before

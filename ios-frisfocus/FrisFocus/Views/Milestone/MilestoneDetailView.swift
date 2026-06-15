@@ -184,12 +184,28 @@ struct MilestoneDetailView: View {
 
     // MARK: - Header card
 
+    private static let targetFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
+
+    /// "Milestone · landed" once done, "Milestone · by Oct 12" when a
+    /// target date is set, or just "Milestone" for an unscheduled one.
+    private func headerEyebrow(_ milestone: Milestone) -> String {
+        if milestone.isCompleted { return "Milestone · landed" }
+        if let target = milestone.targetDate {
+            return "Milestone · by \(Self.targetFormatter.string(from: target))"
+        }
+        return "Milestone"
+    }
+
     @ViewBuilder
     private func headerCard(_ milestone: Milestone) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 EyebrowText(
-                    text: milestone.isCompleted ? "Milestone · landed" : "Milestone · week \(milestone.weekNumber)",
+                    text: headerEyebrow(milestone),
                     opacity: 0.55
                 )
                 Spacer()

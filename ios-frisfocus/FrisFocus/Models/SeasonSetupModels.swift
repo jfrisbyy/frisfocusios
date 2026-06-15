@@ -33,12 +33,18 @@ nonisolated struct SetupWireReply: Codable, Sendable {
     let done: Bool?
     let suggestedName: String?
     let suggestedLengthDays: Int?
+    /// ISO `yyyy-MM-dd` end date the user named during setup, if any.
+    let suggestedEndDate: String?
+    /// True when the user signalled the season should run open-ended.
+    let suggestedOpenEnded: Bool?
     let rubric: SetupWireRubric?
 
     enum CodingKeys: String, CodingKey {
         case message, threads, teaching, done, rubric
         case suggestedName = "suggested_name"
         case suggestedLengthDays = "suggested_length_days"
+        case suggestedEndDate = "suggested_end_date"
+        case suggestedOpenEnded = "suggested_open_ended"
     }
 }
 

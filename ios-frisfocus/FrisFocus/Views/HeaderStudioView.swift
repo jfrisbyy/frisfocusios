@@ -166,7 +166,7 @@ struct HeaderStudioView: View {
                                 .lineLimit(2)
                                 .minimumScaleFactor(0.7)
                                 .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
-                            Text("DAY \(store.currentSeasonDay) OF \(store.currentSeason.lengthDays)")
+                            Text(store.seasonDayTextCaps)
                                 .font(.sans(10, weight: .semibold))
                                 .tracking(2)
                                 .foregroundStyle(Theme.textCream.opacity(0.85))

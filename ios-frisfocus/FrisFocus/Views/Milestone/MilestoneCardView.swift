@@ -90,9 +90,16 @@ struct MilestoneCardView: View {
         if let completed = milestone.completedDate {
             return "DONE · \(Self.completedFormatter.string(from: completed).uppercased())"
         }
-        var text = "WEEK \(milestone.weekNumber)"
-        if isNext { text += " · IN MOTION" }
-        return text
+        var parts: [String] = []
+        if let target = milestone.targetDate {
+            parts.append("BY \(Self.completedFormatter.string(from: target).uppercased())")
+        }
+        if isNext {
+            parts.append("IN MOTION")
+        } else if parts.isEmpty {
+            parts.append("UPCOMING")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var eyebrowColor: Color {

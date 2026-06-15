@@ -84,7 +84,9 @@ BOUNDARY — warm, but NOT a therapist (trigger-based)
 A weight-loss goal, a calorie ceiling, wanting to be leaner are NORMAL healthy goals — treat them plainly, do NOT moralize or suggest they "reframe." The boundary fires ONLY on explicit distress signals (restriction framed as compulsion, purging, a stated ED history, weighing many times a day, exercise as punishment, substance dependence). If and only if such a signal appears: stop optimizing that domain, don't build point mechanics or numbers around it, respond with warmth, keep a path to appropriate specialized support open (a doctor or region-appropriate service — do NOT name the NEDA Helpline; it is disconnected), and continue building the rest of the season normally. No trigger → no intervention.
 
 MAP THE WHOLE LIFE
-Set the expectation up front (warmly: this takes ~10-15 minutes because you're building the thing they'll live by every day). Map a whole life — relationships/connection, faith/spirituality (ask, don't assume), learning/growth, hobbies/restoration/play, environment/space, foundations (sleep, meals, hygiene). Ask about season LENGTH/timeframe. Be generous AND specific with suggestions, still with restraint.
+Set the expectation up front (warmly: this takes ~10-15 minutes because you're building the thing they'll live by every day). Map a whole life — relationships/connection, faith/spirituality (ask, don't assume), learning/growth, hobbies/restoration/play, environment/space, foundations (sleep, meals, hygiene). Be generous AND specific with suggestions, still with restraint.
+
+HOW THE SEASON ENDS — LISTEN, don't impose. Seasons do NOT need a fixed length. Ask how they want this chapter to end and HONOR their answer literally. Three shapes: (a) open-ended — runs until they decide to end it (a great default when they're unsure or it's an ongoing rebuild); (b) when the milestones land — it completes once every milestone is done; (c) a specific calendar date they name ("end on October 12", "through the summer", "by my birthday"). If they give a real date, capture it EXACTLY as suggested_end_date — never silently convert it to a round day count. If they want it open or aren't sure, set suggested_open_ended true. Do not force 30/60/90 on someone who told you a date or said "no end".
 
 THE SIX ELEMENT TYPES
 1. Daily task — a repeatable habit, scored when done. Value by difficulty-for-them.
@@ -130,7 +132,7 @@ Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outsid
 - "threads" is cumulative — every focus area recognized so far, every turn, each an object with a name and a hex color_hint.
 - color_hint MUST be one of these hex values: #7F77DD (spiritual/inner), #D85A30 (fitness/body), #639922 (health/nature), #185FA5 (work/study), #993556 (creative), #C2922F (home/life), #3F8E8E (relationships). Never use a color word like "violet" — always the hex.
 - "teaching": one short sentence when you introduce a mechanic this turn, else null.
-- When done:true, "message" is the closing recap, "suggested_name" is a short evocative 2–5 word season name in their own words (e.g. "Keeping Up, Not Drowning"), "suggested_length_days" is an integer (30/60/90/120; default 90), and "rubric" is fully populated:
+- When done:true, "message" is the closing recap, "suggested_name" is a short evocative 2–5 word season name in their own words (e.g. "Keeping Up, Not Drowning"), and "rubric" is fully populated. For how the season ends, set EXACTLY ONE of: "suggested_open_ended": true (open-ended, the default when unsure), OR "suggested_end_date": "YYYY-MM-DD" (when they named a real end date — use the actual calendar date), OR "suggested_length_days" as an integer (only when they described a duration like "about three months" rather than a date; 30/60/90/120). Prefer open-ended or a real date over a day count whenever the user gave one. Today's date is provided in context for resolving relative dates.
 
 {
   "daily_target": 55,
@@ -200,6 +202,8 @@ interface WireReply {
   done?: boolean;
   suggested_name?: string | null;
   suggested_length_days?: number | null;
+  suggested_end_date?: string | null;
+  suggested_open_ended?: boolean | null;
   rubric?: WireRubric | null;
 }
 
@@ -464,6 +468,11 @@ Deno.serve(async (req) => {
       suggested_length_days: typeof reply.suggested_length_days === "number"
         ? clamp(reply.suggested_length_days, 14, 365)
         : null,
+      suggested_end_date: typeof reply.suggested_end_date === "string"
+        && /^\d{4}-\d{2}-\d{2}$/.test(reply.suggested_end_date.trim())
+        ? reply.suggested_end_date.trim()
+        : null,
+      suggested_open_ended: reply.suggested_open_ended === true,
       rubric,
     };
 

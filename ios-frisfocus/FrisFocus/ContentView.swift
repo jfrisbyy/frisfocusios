@@ -32,6 +32,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
+    @State private var showSeasonSetupFromComplete: Bool = false
 
     var body: some View {
         @Bindable var store = store
@@ -41,6 +42,17 @@ struct ContentView: View {
                     .environment(store)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.hidden)
+            }
+            .alert("Every milestone landed", isPresented: $store.showSeasonCompletePrompt) {
+                Button("Start the next season") {
+                    showSeasonSetupFromComplete = true
+                }
+                Button("Keep going", role: .cancel) {}
+            } message: {
+                Text("You’ve reached every milestone of \(store.currentSeason.name). Start a fresh season whenever you’re ready — nothing changes until you do.")
+            }
+            .fullScreenCover(isPresented: $showSeasonSetupFromComplete) {
+                SeasonSetupFlowView()
             }
             .onOpenURL { url in
                 // A shared invite link (or scanned QR) opens us straight
