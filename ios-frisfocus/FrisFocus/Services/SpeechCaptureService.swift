@@ -41,6 +41,15 @@ final class SpeechCaptureService {
     private var task: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
 
+    /// Text from phrases the recognizer has already finalized. The live
+    /// `transcript` is this plus the current in-progress phrase, so a
+    /// natural "final" mid-answer never drops what you already said.
+    private var committedText: String = ""
+
+    /// True while we want to keep capturing audio. A finalized phrase
+    /// restarts recognition instead of ending the session.
+    private var wantsToListen: Bool = false
+
     /// Ask for speech + microphone permission. Idempotent.
     func requestPermission() async -> Bool {
         let speechStatus: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { continuation in
@@ -85,12 +94,10 @@ final class SpeechCaptureService {
             return
         }
 
-        let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        recognitionRequest.shouldReportPartialResults = true
-        if recognizer.supportsOnDeviceRecognition {
-            recognitionRequest.requiresOnDeviceRecognition = true
-        }
-        request = recognitionRequest
+        transcript = ""
+        committedText = ""
+        meterLevel = 0
+        wantsToListen = true
 
         let inputNode = audioEngine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
@@ -98,9 +105,6 @@ final class SpeechCaptureService {
             failureMessage = "No audio input is available here — type your answer instead."
             return
         }
-
-        transcript = ""
-        meterLevel = 0
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
@@ -127,23 +131,77 @@ final class SpeechCaptureService {
         }
 
         isListening = true
+        startRecognitionTask()
+    }
+
+    /// Start (or restart) a recognition task against the still-running audio
+    /// engine. Higher-accuracy server recognition is used when available;
+    /// on-device is the graceful fallback.
+    private func startRecognitionTask() {
+        guard let recognizer, wantsToListen else { return }
+
+        let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        recognitionRequest.shouldReportPartialResults = true
+        recognitionRequest.requiresOnDeviceRecognition = !recognizer.isAvailable && recognizer.supportsOnDeviceRecognition
+        request = recognitionRequest
 
         task = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
             Task { @MainActor in
                 guard let self else { return }
                 if let result {
-                    self.transcript = result.bestTranscription.formattedString
+                    let phrase = result.bestTranscription.formattedString
+                    self.transcript = self.stitched(phrase)
+                    if result.isFinal {
+                        self.commitFinalizedPhrase(phrase)
+                        return
+                    }
                 }
-                if error != nil || (result?.isFinal ?? false) {
-                    self.stopEngineOnly()
-                    self.isListening = false
+                if error != nil {
+                    // A phrase ended (silence/timeout). If the user still
+                    // wants to talk, keep what we have and listen again.
+                    if self.wantsToListen {
+                        self.commitFinalizedPhrase(nil)
+                    } else {
+                        self.stopEngineOnly()
+                        self.isListening = false
+                    }
                 }
             }
         }
     }
 
+    /// Combine already-finalized text with the current in-progress phrase.
+    private func stitched(_ phrase: String) -> String {
+        if committedText.isEmpty { return phrase }
+        if phrase.isEmpty { return committedText }
+        return committedText + " " + phrase
+    }
+
+    /// Fold a finalized phrase into `committedText` and, if the user is
+    /// still holding the session open, spin up a fresh recognition task
+    /// so dictation continues seamlessly.
+    private func commitFinalizedPhrase(_ phrase: String?) {
+        if let phrase {
+            let cleaned = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty {
+                committedText = committedText.isEmpty ? cleaned : committedText + " " + cleaned
+            }
+        }
+        transcript = committedText
+        task?.cancel()
+        task = nil
+        request = nil
+        guard wantsToListen else {
+            stopEngineOnly()
+            isListening = false
+            return
+        }
+        startRecognitionTask()
+    }
+
     /// Stop listening, keeping the transcript for the editable bubble.
     func stop() {
+        wantsToListen = false
         request?.endAudio()
         stopEngineOnly()
         isListening = false
@@ -153,6 +211,7 @@ final class SpeechCaptureService {
     func cancel() {
         stop()
         transcript = ""
+        committedText = ""
         meterLevel = 0
     }
 
@@ -161,6 +220,7 @@ final class SpeechCaptureService {
     func consumeTranscript() -> String {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = ""
+        committedText = ""
         meterLevel = 0
         return text
     }
