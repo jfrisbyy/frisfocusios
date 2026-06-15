@@ -150,6 +150,23 @@ final class SeasonSetupViewModel {
         stage = .review
     }
 
+    /// Return to the guided conversation after landing on the starter board
+    /// (e.g. the user skipped by accident). Drops the starter draft and
+    /// restores the conversation — resuming the in-progress thread if one
+    /// was underway, or opening a fresh one otherwise.
+    func returnToGuidedSetup() {
+        guard usedStarter else { return }
+        synthesizer.stopSpeaking(at: .immediate)
+        usedStarter = false
+        draft = nil
+        suggestedName = nil
+        suggestedLengthDays = nil
+        stage = .conversation
+        if history.isEmpty && currentMessage.isEmpty && !isThinking {
+            Task { await requestTurn(appending: nil) }
+        }
+    }
+
     /// Called by the conversation view after the crest animation lands.
     func advanceToReview() {
         guard conversationDone, draft != nil else { return }

@@ -196,6 +196,23 @@ struct RubricReviewView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if viewModel.usedStarter {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    viewModel.returnToGuidedSetup()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Back to guided setup")
+                            .font(.sans(12.5, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.sunShadow)
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 2)
+            }
             EyebrowText(text: viewModel.usedStarter ? "A simple starting board" : "Built from our conversation", opacity: 0.45)
             Text("Your season")
                 .font(.serif(30, weight: .medium))

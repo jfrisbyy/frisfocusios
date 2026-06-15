@@ -392,8 +392,9 @@ Deno.serve(async (req) => {
   try {
     await requireAuth(req);
 
-    const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+    const apiKey = Deno.env.get("OPENROUTER_API_KEY")?.trim();
     if (!apiKey) {
+      console.error("season-setup: OPENROUTER_API_KEY secret is missing at runtime");
       return json({ error: "Season setup AI is not configured yet (missing OPENROUTER_API_KEY secret)" }, 503);
     }
 
