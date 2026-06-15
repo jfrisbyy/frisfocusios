@@ -133,6 +133,9 @@ struct SunDayCard: View {
 
     /// The recent-days tray. Always present so its presence never shifts
     /// the page; only its height animates between zero and a fixed band.
+    /// The strip inside scrolls horizontally so a long run of days can
+    /// never impose a width wider than the card (which would shove the
+    /// whole page sideways).
     private var expandTray: some View {
         VStack(spacing: 0) {
             Rectangle()
@@ -145,8 +148,7 @@ struct SunDayCard: View {
                 accent: accent,
                 onSelect: select
             )
-            .padding(.horizontal, 14)
-            .padding(.vertical, 16)
+            .padding(.vertical, 14)
         }
         .frame(height: expanded ? nil : 0, alignment: .top)
         .opacity(expanded ? 1 : 0)
@@ -446,45 +448,53 @@ private struct RecentSunsStrip: View {
     private var shown: [SunDay] { Array(days.suffix(10)) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 4) {
-            ForEach(shown) { day in
-                let isSelected = day.id == selectedId
-                let isToday = day.id == 0
-                Button {
-                    onSelect(day.id)
-                } label: {
-                    VStack(spacing: 5) {
-                        CenteredSunView(ratio: day.ratio, maxDiameter: 26)
-                            .frame(width: 44, height: 44)
-                            .background(
-                                Circle()
-                                    .strokeBorder(
-                                        isSelected ? accent.opacity(0.7) : Color.clear,
-                                        lineWidth: 1.6
-                                    )
-                            )
-
-                        Text(label(day))
-                            .font(.sans(9, weight: isSelected ? .bold : .medium))
-                            .foregroundStyle(isSelected ? accent.darkenedForLabel : Theme.textPrimary.opacity(0.4))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .overlay(alignment: .top) {
-                        if isToday {
-                            Circle()
-                                .fill(accent.opacity(0.5))
-                                .frame(width: 3, height: 3)
-                                .offset(y: -3)
-                        }
-                    }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 6) {
+                ForEach(shown) { day in
+                    dayCell(day)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(label(day)), tap to view this day")
             }
         }
+        .contentMargins(.horizontal, 16, for: .scrollContent)
+        .frame(height: 64)
+    }
+
+    private func dayCell(_ day: SunDay) -> some View {
+        let isSelected = day.id == selectedId
+        let isToday = day.id == 0
+        return Button {
+            onSelect(day.id)
+        } label: {
+            VStack(spacing: 5) {
+                CenteredSunView(ratio: day.ratio, maxDiameter: 26)
+                    .frame(width: 44, height: 44)
+                    .background(
+                        Circle()
+                            .strokeBorder(
+                                isSelected ? accent.opacity(0.7) : Color.clear,
+                                lineWidth: 1.6
+                            )
+                    )
+
+                Text(label(day))
+                    .font(.sans(9, weight: isSelected ? .bold : .medium))
+                    .foregroundStyle(isSelected ? accent.darkenedForLabel : Theme.textPrimary.opacity(0.4))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(width: 46)
+            .contentShape(Rectangle())
+            .overlay(alignment: .top) {
+                if isToday {
+                    Circle()
+                        .fill(accent.opacity(0.5))
+                        .frame(width: 3, height: 3)
+                        .offset(y: -3)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(label(day)), tap to view this day")
     }
 
     private func label(_ day: SunDay) -> String {
