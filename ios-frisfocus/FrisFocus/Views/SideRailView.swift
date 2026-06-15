@@ -45,10 +45,11 @@ struct SideRailView: View {
     let tint: Color
     let onTap: (HomeZone) -> Void
     /// Called continuously while the user scrubs the rail with a drag
-    /// gesture — fires once per zone the finger newly enters. The
-    /// parent translates each call into a live scroll-to so the page
-    /// follows the finger across the rail.
-    var onScrub: ((HomeZone) -> Void)? = nil
+    /// gesture — passes a 0...1 fraction of how far down the rail the
+    /// finger is (0 = top of the page, 1 = the very bottom). The parent
+    /// translates this into a live scroll offset so the page follows the
+    /// finger smoothly, like dragging a scrollbar thumb.
+    var onScrub: ((Double) -> Void)? = nil
 
     /// Fixed-width track so the rail's footprint never changes when the
     /// active label swaps between SUN / WORK / NOTE / MILESTONES —
@@ -58,12 +59,12 @@ struct SideRailView: View {
     /// Wider hit area surfaced while a scrub is in flight so the
     /// finger keeps tracking even if it drifts left of the slim rail.
     private let scrubExpandedWidth: CGFloat = 110
-    /// How long the user must press the rail before scrub engages.
-    /// Short enough to feel responsive when you mean to scrub; long
-    /// enough that a casual vertical scroll near the right edge of the
-    /// screen never trips the rail (which used to widen leftward mid-
-    /// scroll, producing a side-to-side wobble).
-    private let scrubEngageDelay: Double = 0.18
+    /// How far the finger must travel along the rail before scrub
+    /// engages. Small enough to feel like an instant grab, large enough
+    /// that a quick tap stays a tap (handled by the section Buttons) and
+    /// a stray micro-movement near the right edge doesn't hijack a
+    /// normal vertical scroll.
+    private let scrubEngageDistance: CGFloat = 8
     /// Small vertical slop above/below the visible labels so the rail
     /// stays comfortable to grab — but no further. The rail's hit area
     /// used to span the entire screen height (the scrub backdrop is a
@@ -121,33 +122,33 @@ struct SideRailView: View {
 
     // MARK: - Scrub gesture
 
-    /// Sequenced LongPress → Drag so a casual vertical scroll that
-    /// happens to start on the right edge of the screen doesn't engage
-    /// the rail (which would widen it leftward and fight the scroll).
-    /// Holding briefly before sliding is the explicit "scrub" intent.
+    /// A plain drag that only engages once the finger has moved a few
+    /// points along the rail. Below that threshold the touch falls
+    /// through to the section Buttons (so a quick tap is always a jump),
+    /// and a normal vertical scroll that merely grazes the right edge
+    /// isn't hijacked. Once engaged, the finger's position maps
+    /// continuously onto the page like a scrollbar thumb.
     private var scrubGesture: some Gesture {
-        LongPressGesture(minimumDuration: scrubEngageDelay, maximumDistance: 4)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+        DragGesture(minimumDistance: scrubEngageDistance, coordinateSpace: .local)
             .onChanged { value in
-                switch value {
-                case .second(true, let drag?):
-                    if !isScrubbing {
-                        isScrubbing = true
-                        engageHaptic.prepare()
-                        engageHaptic.impactOccurred()
+                if !isScrubbing {
+                    isScrubbing = true
+                    engageHaptic.prepare()
+                    engageHaptic.impactOccurred()
+                    boundaryHaptic.prepare()
+                }
+                let fraction = fractionForY(value.location.y)
+                onScrub?(fraction)
+
+                // Light tick each time the finger crosses into a new
+                // section while scrubbing.
+                let zone = zoneForFraction(fraction)
+                if zone != lastScrubZone {
+                    if lastScrubZone != nil {
+                        boundaryHaptic.impactOccurred()
                         boundaryHaptic.prepare()
                     }
-                    let zone = zoneForY(drag.location.y)
-                    if zone != lastScrubZone {
-                        if lastScrubZone != nil {
-                            boundaryHaptic.impactOccurred()
-                            boundaryHaptic.prepare()
-                        }
-                        lastScrubZone = zone
-                        onScrub?(zone)
-                    }
-                default:
-                    break
+                    lastScrubZone = zone
                 }
             }
             .onEnded { _ in
@@ -157,15 +158,18 @@ struct SideRailView: View {
     }
 
     /// Maps a finger y-position (in the rail's local coordinate space)
-    /// onto one of the four zones by splitting the rail's visible
-    /// height into equal segments.
-    private func zoneForY(_ y: CGFloat) -> HomeZone {
-        let zones = HomeZone.allCases
+    /// onto a 0...1 fraction of the rail's visible height.
+    private func fractionForY(_ y: CGFloat) -> Double {
         let h = max(railHeight, 1)
-        // The gesture's local space includes the vertical slop padding;
-        // shift back into the labels' own coordinate space.
         let clamped = max(0, min(h, y - verticalHitSlop))
-        let segment = Int((clamped / h) * CGFloat(zones.count))
+        return Double(clamped / h)
+    }
+
+    /// Which zone a 0...1 fraction lands in — used only for boundary
+    /// haptics while scrubbing.
+    private func zoneForFraction(_ fraction: Double) -> HomeZone {
+        let zones = HomeZone.allCases
+        let segment = Int(fraction * Double(zones.count))
         let idx = min(zones.count - 1, max(0, segment))
         return zones[idx]
     }

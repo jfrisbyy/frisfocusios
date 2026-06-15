@@ -33,6 +33,13 @@ struct HomeView: View {
     @State private var haptic = UIImpactFeedbackGenerator(style: .light)
     @State private var topSafeInset: CGFloat = 0
 
+    // Continuous scrub support: bind the scroll view's position so the
+    // rail can drive it to an arbitrary offset, and track content vs.
+    // viewport height to map a 0...1 rail fraction onto a real y offset.
+    @State private var scrollPosition = ScrollPosition(edge: .top)
+    @State private var contentHeight: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
+
     // Sundial / sheet state
     @State private var sundialActive: SundialDestination = .home
     @State private var sundialPreCapture: SundialDestination = .home
@@ -162,9 +169,24 @@ struct HomeView: View {
                             .frame(height: 150)
                     }
                     .containerRelativeFrame(.horizontal)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear
+                                .onAppear { contentHeight = proxy.size.height }
+                                .onChange(of: proxy.size.height) { _, h in contentHeight = h }
+                        }
+                    )
                 }
                 .scrollClipDisabled(false)
+                .scrollPosition($scrollPosition)
                 .coordinateSpace(.named(scrollSpace))
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { viewportHeight = proxy.size.height }
+                            .onChange(of: proxy.size.height) { _, h in viewportHeight = h }
+                    }
+                )
                 .background(Theme.warmWheat)
                 .ignoresSafeArea(edges: .top)
                 .onPreferenceChange(ZoneFramesPreferenceKey.self) { frames in
@@ -179,10 +201,8 @@ struct HomeView: View {
                         onTap: { zone in
                             handleRailTap(zone: zone, proxy: scrollProxy)
                         },
-                        onScrub: { zone in
-                            withAnimation(.easeOut(duration: 0.18)) {
-                                scrollProxy.scrollTo(zone.anchorID, anchor: .top)
-                            }
+                        onScrub: { fraction in
+                            scrubTo(fraction: fraction)
                         }
                     )
                     .padding(.trailing, 4)
@@ -343,6 +363,17 @@ struct HomeView: View {
         withAnimation(.easeInOut(duration: 0.4)) {
             proxy.scrollTo(zone.anchorID, anchor: .top)
         }
+    }
+
+    /// Drives the scroll view to an arbitrary offset as the user drags
+    /// the rail. `fraction` is 0 (top of the page) ... 1 (bottom). We
+    /// map it onto the real scrollable range so the finger tracks the
+    /// page like a scrollbar thumb — set directly (no animation) so it
+    /// follows the finger frame-for-frame across the full page.
+    private func scrubTo(fraction: Double) {
+        let maxOffset = max(0, contentHeight - viewportHeight)
+        let targetY = CGFloat(max(0, min(1, fraction))) * maxOffset
+        scrollPosition.scrollTo(y: targetY)
     }
 }
 
