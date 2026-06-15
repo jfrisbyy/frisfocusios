@@ -160,6 +160,15 @@ struct ContentView: View {
                     // Safety net: flush any debounced, not-yet-written
                     // saves before iOS can suspend or kill the process.
                     store.flushPendingSaves()
+                    // Push the just-written season/journal slices to the
+                    // account now too, so a season created right before
+                    // closing the app reaches the cloud immediately rather
+                    // than waiting for the next foreground. Queued slices
+                    // still persist locally, so this is best-effort.
+                    if auth.user?.id != nil {
+                        Task { await seasonSync.flushNow() }
+                        Task { await notesSync.flushNow() }
+                    }
                 }
             }
     }
