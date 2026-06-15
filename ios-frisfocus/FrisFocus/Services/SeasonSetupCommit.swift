@@ -19,9 +19,10 @@ extension Store {
     ///   order, carrying their own name + color as per-season overrides
     ///   (the same mechanism the categories editor uses). First two read
     ///   as primary, next two support, the rest quiet.
-    /// - Draft tasks become `.daily`-pinned FFTasks with their scoring
-    ///   shape intact; the previous board is replaced (log history and
-    ///   to-dos stay untouched).
+    /// - Draft tasks become FFTasks with their scoring shape intact and
+    ///   no pin schedule (`.none`), so a new season starts with an empty
+    ///   Today's Plan; the user deliberately pins what to work on. The
+    ///   previous board is replaced (log history and to-dos stay untouched).
     /// - Weekly floors attach as `PenaltyRule`s to the referenced task;
     ///   boosters reference the task when the name resolves, otherwise
     ///   the task's whole category.
@@ -105,7 +106,7 @@ extension Store {
                 title: draftTask.name,
                 category: slot,
                 pointValue: max(1, draftTask.value),
-                pinSchedule: .daily,
+                pinSchedule: .none,
                 scoring: scoring
             )
             // Weekly floor referencing this task → attached penalty rule.

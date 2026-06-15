@@ -208,20 +208,28 @@ struct WorkZoneView: View {
 
     // MARK: - Empty state
 
-    /// Shown when nothing is pinned for today. Dashed border, italic
-    /// prompt, tap opens the capture sheet so the user can add their
-    /// first item without hunting for the `+` button.
+    /// Shown when nothing is pinned for today. Dashed border with a short
+    /// explanation that tasks live in the season and the user pins the
+    /// ones to focus on today, plus the tap-to-add prompt. Tapping opens
+    /// the capture sheet so the user can add their first item without
+    /// hunting for the `+` button.
     @ViewBuilder
     private var emptyPlanCTA: some View {
         Button(action: openCaptureSheet) {
-            HStack(spacing: 10) {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                Text("Pin a Task or add a To-do")
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Your tasks live in your season. Pin the ones you want to focus on today.")
                     .font(.serifItalic(13))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
-                Spacer(minLength: 0)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                    Text("Pin a Task or add a To-do")
+                        .font(.serifItalic(13))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                    Spacer(minLength: 0)
+                }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -235,7 +243,7 @@ struct WorkZoneView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Add a Task or To-do")
+        .accessibilityLabel("Today's Plan is empty. Your tasks live in your season — pin the ones you want to focus on today, or add a to-do.")
     }
 
     private func openCaptureSheet() {
