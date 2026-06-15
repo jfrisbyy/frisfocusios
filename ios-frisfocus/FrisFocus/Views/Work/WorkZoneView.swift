@@ -55,14 +55,11 @@ struct WorkZoneView: View {
                     ForEach(store.habitTrains) { train in
                         HabitTrainRow(train: train)
                     }
-                    ForEach(store.todaysPlan) { item in
-                        switch item {
-                        case .task(let task):
-                            TaskCardView(task: task)
-                        case .todo(let todo):
-                            TodoCardView(todo: todo)
-                        case .cadenceLink(let link):
-                            CadenceRoutineRow(link: link)
+                    if store.todaysPlan.count > Self.planScrollThreshold {
+                        scrollingPlanList
+                    } else {
+                        ForEach(store.todaysPlan) { item in
+                            planRow(for: item)
                         }
                     }
                     quickAddPill
@@ -146,6 +143,58 @@ struct WorkZoneView: View {
                 attachments: pendingFocusAttachments
             )
         }
+    }
+
+    // MARK: - Today's plan list
+
+    /// Once the plan grows past this many items, the mixed task/to-do
+    /// list becomes a self-contained scrollable box instead of pushing
+    /// the whole page taller.
+    private static let planScrollThreshold: Int = 8
+
+    /// Approximate height of a single plan row (card + inter-row spacing).
+    /// Used to cap the scroll box at roughly the threshold number of rows.
+    private static let approxRowHeight: CGFloat = 64
+
+    @ViewBuilder
+    private func planRow(for item: HomeRowItem) -> some View {
+        switch item {
+        case .task(let task):
+            TaskCardView(task: task)
+        case .todo(let todo):
+            TodoCardView(todo: todo)
+        case .cadenceLink(let link):
+            CadenceRoutineRow(link: link)
+        }
+    }
+
+    /// Scrollable box for long plans — capped at ~8 rows tall with soft
+    /// top/bottom fades so it's clear there's more to scroll. Blends into
+    /// the page with no hard border.
+    @ViewBuilder
+    private var scrollingPlanList: some View {
+        let maxHeight = Self.approxRowHeight * CGFloat(Self.planScrollThreshold)
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 10) {
+                ForEach(store.todaysPlan) { item in
+                    planRow(for: item)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .frame(maxHeight: maxHeight)
+        .mask(
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.04),
+                    .init(color: .black, location: 0.96),
+                    .init(color: .clear, location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     // MARK: - Week schedule entry
