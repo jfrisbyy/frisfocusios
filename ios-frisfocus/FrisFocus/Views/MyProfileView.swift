@@ -32,6 +32,7 @@ struct MyProfileView: View {
     @State private var showMyStories: Bool = false
     @State private var showCheers: Bool = false
     @State private var showWeekSheet: Bool = false
+    @State private var selectedDayId: Int = 0
     @State private var showMoodEditor: Bool = false
     @State private var moodDraft: String = ""
     @State private var ringFill: Double = 0
@@ -525,9 +526,22 @@ struct MyProfileView: View {
                 trailingAction: previewTier != .quiet ? { showWeekSheet = true } : nil
             )
 
-            SunDayCard(days: sunDays, accent: accent)
+            SunDayCard(days: sunDays, accent: accent, selectedId: $selectedDayId)
                 .animation(.easeInOut(duration: 0.25), value: previewTier)
+
+            if previewTier != .quiet {
+                DayTaskList(day: selectedSunDay, accent: accent)
+            }
         }
+        .onChange(of: sunDays.count) { _, newCount in
+            if selectedDayId > newCount - 1 { selectedDayId = 0 }
+        }
+    }
+
+    /// The day currently selected in the card, for the list below.
+    private var selectedSunDay: SunDay {
+        let days = sunDays
+        return days.first { $0.id == selectedDayId } ?? days.last ?? days[0]
     }
 
     /// The card's days, oldest first ending today. Each day is built

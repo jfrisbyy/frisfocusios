@@ -43,6 +43,7 @@ struct FriendDetailView: View {
     @State private var showProposePact: Bool = false
     @State private var showThread: Bool = false
     @State private var showWeekSheet: Bool = false
+    @State private var selectedDayId: Int = 0
     @State private var detailCircle: FFCircle?
     @State private var detailPact: Pact?
     @State private var ringPulse: Bool = false
@@ -681,7 +682,11 @@ struct FriendDetailView: View {
                 trailingAction: tier != .quiet ? { showWeekSheet = true } : nil
             )
 
-            SunDayCard(days: sunDays, accent: accent)
+            SunDayCard(days: sunDays, accent: accent, selectedId: $selectedDayId)
+
+            if tier != .quiet {
+                DayTaskList(day: selectedSunDay, accent: accent)
+            }
 
             // Quiet contextual actions — proof + cheer live here now,
             // so the identity card stays calm.
@@ -696,6 +701,12 @@ struct FriendDetailView: View {
             }
             .padding(.top, 2)
         }
+    }
+
+    /// The day currently selected in the card, for the list below.
+    private var selectedSunDay: SunDay {
+        let days = sunDays
+        return days.first { $0.id == selectedDayId } ?? days.last ?? days[0]
     }
 
     private var todayHeadline: String {

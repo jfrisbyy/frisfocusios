@@ -3,14 +3,15 @@
 //  FrisFocus
 //
 //  The warm "today" card every profile shares. The sun is the hero:
-//  centered and bare on the card (no sky box, no backdrop), simply
-//  growing in size and glowing brighter the closer the day is to its
-//  goal — a dim ember on a quiet day, a full warm glow on a strong one.
+//  a glowing disc on the left, simply growing in size and warming the
+//  closer the day is to its goal — a dim ember on a quiet day, a full
+//  warm glow on a strong one.
 //
-//  Tapping the card reveals a row of recent days as bare suns. Tapping
-//  any past sun rewinds the whole card in place — the big center sun,
-//  the headline, the score, and the task chips all shift to show that
-//  exact day, with a gentle marker and a one-tap way back to today.
+//  The card itself stays a slim horizontal band: sun, headline, and
+//  points. It only expands (in height, in place) to reveal a row of
+//  recent days as bare suns. The day's task list lives SEPARATELY,
+//  below the card, via `DayTaskList`. Tapping any sun moves the shared
+//  `selectedId` binding, and the list below rewinds to that day.
 //
 //  Privacy is the caller's job: each `SunDay` already carries only what
 //  the viewer is allowed to see (task names and score are omitted at
@@ -46,10 +47,10 @@ struct SunDayCard: View {
     /// Recent days, oldest first, ending with today. Must be non-empty.
     let days: [SunDay]
     let accent: Color
-    var chipsMaxVisible: Int = 6
+    /// Currently viewed day, as days-ago. 0 = today. Owned by the parent
+    /// so the separate task list below can follow the same selection.
+    @Binding var selectedId: Int
 
-    /// Currently viewed day, as days-ago. 0 = today.
-    @State private var selectedId: Int = 0
     @State private var expanded: Bool = false
 
     private var today: SunDay { days.last ?? days[0] }
@@ -90,7 +91,7 @@ struct SunDayCard: View {
 
             HStack(alignment: .center, spacing: 16) {
                 CenteredSunView(ratio: selected.ratio, maxDiameter: 40)
-                    .frame(width: 88, height: 88)
+                    .frame(width: 84, height: 84)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(selected.headline)
@@ -118,18 +119,7 @@ struct SunDayCard: View {
                 .id(selected.id)
                 .transition(.opacity)
             }
-            .frame(minHeight: 88)
-
-            if !selected.chips.isEmpty {
-                TaskChipsFlow(
-                    items: selected.chips.map { (title: $0.title, isDone: $0.isDone) },
-                    accent: accent,
-                    maxVisible: chipsMaxVisible
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .id("chips-\(selected.id)")
-                .transition(.opacity)
-            }
+            .frame(minHeight: 84)
 
             if canExpand {
                 expandToggle
@@ -206,13 +196,98 @@ struct SunDayCard: View {
 
     private func select(_ id: Int) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        selectedId = id
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            selectedId = id
+        }
     }
 
     private func longLabel(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE"
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Day task list
+
+/// The calm task list that lives BELOW the sun card. It renders the
+/// chips of whichever `SunDay` is currently selected — done items ticked
+/// and tinted, open items quiet. Swapping `day` cross-fades the rows so
+/// tapping a past sun rewinds the list smoothly. Empty days (or privacy
+/// levels that reveal no task names) show a soft, honest empty line.
+struct DayTaskList: View {
+    let day: SunDay
+    let accent: Color
+    /// When true, the list shows a quiet empty line for days with no
+    /// revealed items. When false, the section simply renders nothing.
+    var showsEmptyState: Bool = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if day.chips.isEmpty {
+                if showsEmptyState {
+                    emptyLine
+                }
+            } else {
+                ForEach(day.chips) { chip in
+                    DayTaskRow(chip: chip, accent: accent)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .id("day-list-\(day.id)")
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.28), value: day.id)
+    }
+
+    private var emptyLine: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "moon.stars")
+                .font(.sans(13, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            Text(day.id == 0 ? "Nothing on today's plan yet" : "A quiet day — nothing logged")
+                .font(.sans(13.5, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.42))
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.textPrimary.opacity(0.03))
+        )
+    }
+}
+
+/// A single calm row in the day task list.
+private struct DayTaskRow: View {
+    let chip: SunDayChip
+    let accent: Color
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: chip.isDone ? "checkmark.circle.fill" : "circle")
+                .font(.sans(16, weight: .regular))
+                .foregroundStyle(chip.isDone ? accent : Theme.textPrimary.opacity(0.22))
+
+            Text(chip.title)
+                .font(.sans(14.5, weight: chip.isDone ? .medium : .regular))
+                .foregroundStyle(chip.isDone ? Theme.textPrimary.opacity(0.85) : Theme.textPrimary.opacity(0.55))
+                .strikethrough(false)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(chip.isDone ? accent.opacity(0.07) : Theme.textPrimary.opacity(0.03))
+        )
+        .accessibilityElement()
+        .accessibilityLabel("\(chip.title), \(chip.isDone ? "done" : "not done")")
     }
 }
 
@@ -430,32 +505,46 @@ extension Color {
     }
 }
 
-#Preview {
-    ZStack {
-        Theme.warmWheat.ignoresSafeArea()
-        ScrollView {
-            VStack(spacing: 20) {
-                SunDayCard(
-                    days: (0..<7).reversed().map { offset in
-                        let ratios: [Double] = [0.2, 0.9, 1.0, 0.5, 0.0, 0.7, 0.85]
-                        return SunDay(
-                            id: offset,
-                            date: Calendar.current.date(byAdding: .day, value: -offset, to: Date()) ?? Date(),
-                            ratio: ratios[6 - offset],
-                            headline: offset == 0 ? "12 to a productive day" : "Strong day so far",
-                            subline: offset == 0 ? "6 of 8 done · most of the way" : "5 done",
-                            chips: [
-                                SunDayChip(title: "Write", isDone: true),
-                                SunDayChip(title: "Run", isDone: true),
-                                SunDayChip(title: "Read", isDone: false)
-                            ],
-                            scoreText: offset == 0 ? "38 points" : "\(40 + offset) points"
-                        )
-                    },
-                    accent: Color(hex: 0x639922)
-                )
-            }
-            .padding()
+private struct SunDayCardPreview: View {
+    @State private var selectedId: Int = 0
+
+    private var days: [SunDay] {
+        (0..<7).reversed().map { offset in
+            let ratios: [Double] = [0.2, 0.9, 1.0, 0.5, 0.0, 0.7, 0.85]
+            return SunDay(
+                id: offset,
+                date: Calendar.current.date(byAdding: .day, value: -offset, to: Date()) ?? Date(),
+                ratio: ratios[6 - offset],
+                headline: offset == 0 ? "12 to a productive day" : "Strong day so far",
+                subline: offset == 0 ? "6 of 8 done · most of the way" : "5 done",
+                chips: [
+                    SunDayChip(title: "Write", isDone: true),
+                    SunDayChip(title: "Run", isDone: true),
+                    SunDayChip(title: "Read", isDone: false)
+                ],
+                scoreText: offset == 0 ? "38 points" : "\(40 + offset) points"
+            )
         }
     }
+
+    private var selected: SunDay {
+        days.first { $0.id == selectedId } ?? days[days.count - 1]
+    }
+
+    var body: some View {
+        ZStack {
+            Theme.warmWheat.ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 16) {
+                    SunDayCard(days: days, accent: Color(hex: 0x639922), selectedId: $selectedId)
+                    DayTaskList(day: selected, accent: Color(hex: 0x639922))
+                }
+                .padding()
+            }
+        }
+    }
+}
+
+#Preview {
+    SunDayCardPreview()
 }
