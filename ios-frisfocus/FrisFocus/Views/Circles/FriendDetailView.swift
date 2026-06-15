@@ -770,10 +770,11 @@ struct FriendDetailView: View {
         case .full:
             return day.tasks
                 .sorted { $0.isDone && !$1.isDone }
-                .map { SunDayChip(title: $0.title, isDone: $0.isDone) }
+                .map { SunDayChip(title: $0.title, isDone: $0.isDone, category: $0.category) }
         case .open:
             return day.categoryBreakdown.map {
-                SunDayChip(title: "\($0.category.displayName) · \($0.done) of \($0.total)", isDone: $0.done > 0)
+                SunDayChip(title: $0.category.displayName, isDone: $0.done > 0,
+                           category: $0.category, summaryDone: $0.done, summaryTotal: $0.total)
             }
         case .quiet:
             return []
@@ -788,7 +789,7 @@ struct FriendDetailView: View {
                 id: daysAgo, date: date, ratio: ratio,
                 headline: dayHeadline(fraction: ratio, hasAnything: ratio > 0 || !tasks.isEmpty),
                 subline: tasks.isEmpty ? "a quiet day" : "\(tasks.count) done",
-                chips: tasks.map { SunDayChip(title: $0.title, isDone: true) },
+                chips: tasks.map { SunDayChip(title: $0.title, isDone: true, category: $0.category) },
                 scoreText: nil
             )
         default:

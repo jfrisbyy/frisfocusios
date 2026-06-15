@@ -22,10 +22,22 @@ import SwiftUI
 import UIKit
 
 /// One soft chip describing something done (or open) on a given day.
+/// Each chip carries its life-area `category` (when known) so the list
+/// below the sun can group and color-code it the way the rest of the
+/// app does. When `summaryDone`/`summaryTotal` are set, the chip is a
+/// category SUMMARY row (the Open privacy tier, where task names aren't
+/// shared) rather than a single task.
 struct SunDayChip: Identifiable, Equatable {
     let id = UUID()
     let title: String
     let isDone: Bool
+    var category: Category? = nil
+    var summaryDone: Int? = nil
+    var summaryTotal: Int? = nil
+
+    /// True when this chip stands for a whole category's done/total
+    /// count rather than one named task.
+    var isSummary: Bool { summaryTotal != nil }
 }
 
 /// A single day on the card. `id` is days-ago (0 = today). The caller
@@ -224,15 +236,42 @@ struct DayTaskList: View {
     /// revealed items. When false, the section simply renders nothing.
     var showsEmptyState: Bool = true
 
+    /// True when this day only shares category counts (Open tier), not
+    /// individual task names — render one summary row per category.
+    private var isSummaryList: Bool { day.chips.contains { $0.isSummary } }
+
+    /// The named-task chips grouped under their life-area category,
+    /// preserving the order categories first appear in the day.
+    private var groups: [DayTaskGroupModel] {
+        var order: [String] = []
+        var byKey: [String: [SunDayChip]] = [:]
+        var catForKey: [String: Category?] = [:]
+        for chip in day.chips {
+            let key = chip.category?.rawValue ?? "_none"
+            if byKey[key] == nil {
+                order.append(key)
+                catForKey[key] = chip.category
+            }
+            byKey[key, default: []].append(chip)
+        }
+        return order.map {
+            DayTaskGroupModel(id: $0, category: catForKey[$0] ?? nil, chips: byKey[$0] ?? [])
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 16) {
             if day.chips.isEmpty {
                 if showsEmptyState {
                     emptyLine
                 }
-            } else {
+            } else if isSummaryList {
                 ForEach(day.chips) { chip in
-                    DayTaskRow(chip: chip, accent: accent)
+                    DayCategorySummaryRow(chip: chip, accent: accent)
+                }
+            } else {
+                ForEach(groups) { group in
+                    DayTaskGroupView(group: group, accent: accent)
                 }
             }
         }
@@ -261,21 +300,64 @@ struct DayTaskList: View {
     }
 }
 
-/// A single calm row in the day task list.
+/// One life-area group in the day list — a soft category header (dot,
+/// name, done count) over the tasks logged in that area that day.
+struct DayTaskGroupModel: Identifiable {
+    let id: String
+    let category: Category?
+    let chips: [SunDayChip]
+
+    var done: Int { chips.filter { $0.isDone }.count }
+    var total: Int { chips.count }
+}
+
+private struct DayTaskGroupView: View {
+    let group: DayTaskGroupModel
+    let accent: Color
+
+    private var tint: Color {
+        group.category.map { Color(hex: $0.hexColor) } ?? accent
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 8, height: 8)
+                Text((group.category?.displayName ?? "Other").uppercased())
+                    .font(.sans(11, weight: .bold))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                Spacer(minLength: 0)
+                Text("\(group.done) of \(group.total)")
+                    .font(.sans(11.5, weight: .semibold))
+                    .foregroundStyle(tint.darkenedForLabel.opacity(0.85))
+            }
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 6) {
+                ForEach(group.chips) { chip in
+                    DayTaskRow(chip: chip, tint: tint)
+                }
+            }
+        }
+    }
+}
+
+/// A single calm row in the day task list — a checked-off box matching
+/// the rest of the app, tinted to its category.
 private struct DayTaskRow: View {
     let chip: SunDayChip
-    let accent: Color
+    let tint: Color
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: chip.isDone ? "checkmark.circle.fill" : "circle")
-                .font(.sans(16, weight: .regular))
-                .foregroundStyle(chip.isDone ? accent : Theme.textPrimary.opacity(0.22))
+            checkbox
 
             Text(chip.title)
                 .font(.sans(14.5, weight: chip.isDone ? .medium : .regular))
                 .foregroundStyle(chip.isDone ? Theme.textPrimary.opacity(0.85) : Theme.textPrimary.opacity(0.55))
-                .strikethrough(false)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -286,10 +368,71 @@ private struct DayTaskRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(chip.isDone ? accent.opacity(0.07) : Theme.textPrimary.opacity(0.03))
+                .fill(chip.isDone ? tint.opacity(0.08) : Theme.textPrimary.opacity(0.03))
         )
         .accessibilityElement()
         .accessibilityLabel("\(chip.title), \(chip.isDone ? "done" : "not done")")
+    }
+
+    private var checkbox: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(chip.isDone ? tint : Color.clear)
+            .frame(width: 22, height: 22)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        chip.isDone ? Color.clear : Theme.textPrimary.opacity(0.22),
+                        lineWidth: 1.5
+                    )
+            )
+            .overlay {
+                if chip.isDone {
+                    Image(systemName: "checkmark")
+                        .font(.sans(12, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
+    }
+}
+
+/// A category summary row — used when only counts are shared (Open
+/// tier), not task names. Styled to sit alongside the task rows.
+private struct DayCategorySummaryRow: View {
+    let chip: SunDayChip
+    let accent: Color
+
+    private var tint: Color {
+        chip.category.map { Color(hex: $0.hexColor) } ?? accent
+    }
+    private var done: Int { chip.summaryDone ?? 0 }
+    private var total: Int { chip.summaryTotal ?? 0 }
+    private var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle()
+                .fill(tint)
+                .frame(width: 10, height: 10)
+
+            Text(chip.category?.displayName ?? chip.title)
+                .font(.sans(14.5, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.82))
+
+            Spacer(minLength: 8)
+
+            Text("\(done) of \(total)")
+                .font(.sans(12.5, weight: .semibold))
+                .foregroundStyle(tint.darkenedForLabel.opacity(0.9))
+        }
+        .padding(.vertical, 11)
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(tint.opacity(0.05 + 0.07 * fraction))
+        )
+        .accessibilityElement()
+        .accessibilityLabel("\(chip.category?.displayName ?? chip.title), \(done) of \(total) done")
     }
 }
 
@@ -528,9 +671,10 @@ private struct SunDayCardPreview: View {
                 headline: offset == 0 ? "12 to a productive day" : "Strong day so far",
                 subline: offset == 0 ? "6 of 8 done · most of the way" : "5 done",
                 chips: [
-                    SunDayChip(title: "Write", isDone: true),
-                    SunDayChip(title: "Run", isDone: true),
-                    SunDayChip(title: "Read", isDone: false)
+                    SunDayChip(title: "Write", isDone: true, category: .creative),
+                    SunDayChip(title: "Sketch", isDone: false, category: .creative),
+                    SunDayChip(title: "Run", isDone: true, category: .fitness),
+                    SunDayChip(title: "Read", isDone: false, category: .work)
                 ],
                 scoreText: offset == 0 ? "38 points" : "\(40 + offset) points"
             )
