@@ -115,6 +115,10 @@ struct MyProfileView: View {
 
                     Color.clear.frame(height: 130)
                 }
+                // Pin the page to the scroll container's width so no
+                // child can ever stretch it wider than the screen and
+                // shove the whole layout sideways.
+                .containerRelativeFrame(.horizontal)
             }
             .background(Theme.warmWheat)
             .ignoresSafeArea(edges: .top)
