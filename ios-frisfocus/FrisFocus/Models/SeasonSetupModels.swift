@@ -138,11 +138,39 @@ nonisolated struct SetupWireMilestone: Codable, Sendable {
 /// A recognized focus area shown as a live chip + a colored tick on the
 /// orb arc. `arcPosition` records where on the arc the thread first
 /// appeared, so ticks stay planted as the orb keeps climbing.
-struct SetupThread: Identifiable, Equatable {
+struct SetupThread: Identifiable, Equatable, Codable {
     var id: String { name.lowercased() }
     var name: String
     var colorHex: String
     var arcPosition: Double
+}
+
+// MARK: - Resumable conversation snapshot
+
+/// A full snapshot of an in-progress setup conversation, persisted so the
+/// user can leave and pick the exact same chat back up later. Only the
+/// pre-rubric conversation is captured — once the rubric is produced the
+/// flow advances to review and the snapshot is cleared.
+nonisolated struct SetupConversationSnapshot: Codable, Sendable {
+    /// The running message history replayed to keep the model's context.
+    var history: [AIMessage]
+    var currentMessage: String
+    var lastAnswer: String?
+    var priorMessage: String?
+    var threads: [SetupThread]
+    var teaching: String?
+    var arcProgress: Double
+    var userTurns: Int
+    var savedAt: Date
+
+    /// A short human hint for the resume card — the last thing discussed.
+    var hint: String {
+        let trimmed = currentMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Picking up where you left off" }
+        if trimmed.count <= 90 { return trimmed }
+        let cut = trimmed.prefix(90)
+        return cut.trimmingCharacters(in: .whitespaces) + "\u{2026}"
+    }
 }
 
 // MARK: - Editable draft rubric (review screen)

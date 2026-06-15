@@ -11,12 +11,17 @@
 import SwiftUI
 
 struct SeasonSetupFlowView: View {
+    /// When true, the flow drops straight into the saved conversation
+    /// instead of showing the begin screen (used by the settings resume).
+    var startInResume: Bool = false
+
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var viewModel = SeasonSetupViewModel()
     @State private var frozenName: String = ""
+    @State private var didStart: Bool = false
 
     var body: some View {
         ZStack {
@@ -24,6 +29,7 @@ struct SeasonSetupFlowView: View {
             case .begin:
                 SetupBeginView(
                     onBegin: { viewModel.begin() },
+                    onResume: { viewModel.resume() },
                     onClose: { dismiss() }
                 )
                 .transition(stageTransition)
@@ -59,6 +65,13 @@ struct SeasonSetupFlowView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: viewModel.stage)
         .interactiveDismissDisabled(viewModel.stage != .begin)
+        .onAppear {
+            guard !didStart else { return }
+            didStart = true
+            if startInResume, SeasonSetupResumeStore.hasSaved {
+                viewModel.resume()
+            }
+        }
     }
 
     private var stageTransition: AnyTransition {

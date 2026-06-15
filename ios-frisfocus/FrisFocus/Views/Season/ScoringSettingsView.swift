@@ -18,6 +18,8 @@ struct ScoringSettingsView: View {
     @State private var newSeasonName: String = ""
     @State private var confirmNewSeason: Bool = false
     @State private var showSeasonSetup: Bool = false
+    @State private var resumeSetup: Bool = false
+    @State private var savedSetup: SetupConversationSnapshot? = SeasonSetupResumeStore.load()
 
     private var thresholdBinding: Binding<Int> {
         Binding(
@@ -52,6 +54,34 @@ struct ScoringSettingsView: View {
                         }
                     }
                     .buttonStyle(.plain)
+
+                    if let savedSetup {
+                        Button {
+                            resumeSetup = true
+                            showSeasonSetup = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.uturn.forward")
+                                    .font(.system(size: 18, weight: .regular))
+                                    .foregroundStyle(Theme.sunShadow)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Continue where you left off")
+                                        .font(.sans(15, weight: .medium))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Text(savedSetup.hint)
+                                        .font(.sans(12, weight: .regular))
+                                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.leading)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
                 } header: {
                     Text("Season setup")
                 } footer: {
@@ -111,8 +141,11 @@ struct ScoringSettingsView: View {
                         .foregroundStyle(Theme.textPrimary.opacity(0.7))
                 }
             }
-            .fullScreenCover(isPresented: $showSeasonSetup) {
-                SeasonSetupFlowView()
+            .fullScreenCover(isPresented: $showSeasonSetup, onDismiss: {
+                resumeSetup = false
+                savedSetup = SeasonSetupResumeStore.load()
+            }) {
+                SeasonSetupFlowView(startInResume: resumeSetup)
             }
             .confirmationDialog(
                 "Start a new season from this one's setup?",

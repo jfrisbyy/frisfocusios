@@ -82,10 +82,17 @@ struct SetupConversationView: View {
             isPresented: $confirmExit,
             titleVisibility: .visible
         ) {
-            Button("Leave", role: .destructive) { onClose() }
+            Button("Save & exit") {
+                viewModel.saveProgress()
+                onClose()
+            }
+            Button("Discard", role: .destructive) {
+                viewModel.discardSavedProgress()
+                onClose()
+            }
             Button("Keep going", role: .cancel) {}
         } message: {
-            Text("The conversation so far won't be kept.")
+            Text("Save & exit keeps this conversation so you can pick it back up later.")
         }
     }
 

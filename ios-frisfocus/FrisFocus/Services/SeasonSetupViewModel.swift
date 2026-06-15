@@ -73,10 +73,30 @@ final class SeasonSetupViewModel {
     // MARK: - Flow
 
     /// Begin → conversation. Fetches the model's opening question.
+    /// Starting fresh replaces any saved in-progress conversation.
     func begin() {
+        SeasonSetupResumeStore.clear()
         stage = .conversation
         guard history.isEmpty, currentMessage.isEmpty else { return }
         Task { await requestTurn(appending: nil) }
+    }
+
+    /// Resume a previously saved conversation, dropping straight back into
+    /// the exact spot the user left off.
+    func resume() {
+        guard let snapshot = SeasonSetupResumeStore.load() else {
+            begin()
+            return
+        }
+        history = snapshot.history
+        currentMessage = snapshot.currentMessage
+        lastAnswer = snapshot.lastAnswer
+        priorMessage = snapshot.priorMessage
+        threads = snapshot.threads
+        teaching = snapshot.teaching
+        arcProgress = snapshot.arcProgress
+        userTurns = snapshot.userTurns
+        stage = .conversation
     }
 
     /// Send a user answer (typed or transcribed — same pipeline).
@@ -95,8 +115,33 @@ final class SeasonSetupViewModel {
         Task { await requestTurn(appending: text) }
     }
 
+    /// Discard the saved in-progress conversation (the "Discard" exit).
+    func discardSavedProgress() {
+        SeasonSetupResumeStore.clear()
+    }
+
+    /// Persist the current in-progress conversation so it can be resumed.
+    /// No-op once the rubric is produced (the flow advances to review).
+    func saveProgress() {
+        guard !conversationDone, stage == .conversation else { return }
+        guard !history.isEmpty else { return }
+        let snapshot = SetupConversationSnapshot(
+            history: history,
+            currentMessage: currentMessage,
+            lastAnswer: lastAnswer,
+            priorMessage: priorMessage,
+            threads: threads,
+            teaching: teaching,
+            arcProgress: arcProgress,
+            userTurns: userTurns,
+            savedAt: Date()
+        )
+        SeasonSetupResumeStore.save(snapshot)
+    }
+
     /// Skip the conversation — sensible starter board, straight to review.
     func skipToStarter() {
+        SeasonSetupResumeStore.clear()
         synthesizer.stopSpeaking(at: .immediate)
         draft = RubricDraft.starter()
         usedStarter = true
@@ -127,6 +172,7 @@ final class SeasonSetupViewModel {
     func lockIn(store: Store, name: String, lengthDays: Int) {
         guard let draft else { return }
         store.startSeason(from: draft, name: name, lengthDays: lengthDays)
+        SeasonSetupResumeStore.clear()
         stage = .begins
     }
 
@@ -193,9 +239,14 @@ final class SeasonSetupViewModel {
                 suggestedLengthDays = reply.suggestedLengthDays ?? 90
                 conversationDone = true
                 arcProgress = 1.0
+                // The rubric exists now — the conversation is no longer a
+                // resumable thing; the flow advances to review.
+                SeasonSetupResumeStore.clear()
             } else {
                 // Glide up a step per exchange; never quite crest early.
                 arcProgress = min(0.92, 0.06 + Double(userTurns + 1) * 0.085)
+                // Quietly keep progress after every successful exchange.
+                saveProgress()
             }
 
             if speakReplies {
