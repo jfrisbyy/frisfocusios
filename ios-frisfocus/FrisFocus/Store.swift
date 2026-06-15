@@ -97,6 +97,13 @@ final class Store {
     /// midnight flips the day, even with the app sitting open.
     var today: Date = Calendar.current.startOfDay(for: Date())
 
+    /// Drives the morning carry-forward sheet. Set once per day by
+    /// `evaluateCarryForwardPrompt()` when unfinished, pointed to-dos from
+    /// a previous day are waiting. Not persisted — purely a UI trigger.
+    var showCarryForwardPrompt: Bool = false
+    /// Yesterday's (and older) leftover to-dos offered in that sheet.
+    var carryForwardCandidates: [Todo] = []
+
     /// Event occurrences whose homescreen check-in glance the user
     /// swiped away. Per-occurrence — the next event shows the card
     /// again. Persisted under its own key (not part of the social sync).
@@ -279,6 +286,7 @@ final class Store {
         static let proofPins = "proofPins"
         static let proofLibrary = "proofLibrary"
         static let lastRollover = "lastRolloverDate"
+        static let lastCarryForwardDay = "lastCarryForwardPromptDay"
         static let modelVersion = "modelVersion"
 
         // Identity — preserved across model-version bumps so the
@@ -354,6 +362,7 @@ final class Store {
             userDefaults.removeObject(forKey: Keys.notes)
             userDefaults.removeObject(forKey: Keys.folders)
             userDefaults.removeObject(forKey: Keys.lastRollover)
+            userDefaults.removeObject(forKey: Keys.lastCarryForwardDay)
             userDefaults.removeObject(forKey: Keys.friends)
             userDefaults.removeObject(forKey: Keys.circles)
             userDefaults.removeObject(forKey: Keys.circleTaskCompletions)
@@ -1000,12 +1009,30 @@ extension Store {
         score(on: displayedDay)
     }
 
+    /// The instant the current season began earning points. Falls back to
+    /// the season's start-of-day for seasons saved before the precise
+    /// timestamp existed.
+    private var currentSeasonEpoch: Date {
+        currentSeason.startedAt ?? currentSeason.startDate
+    }
+
+    /// Whether a log entry counts toward the current season's live score.
+    /// Only the season-start day can hold pre-season activity (logged
+    /// earlier that day under the previous season); those entries are
+    /// excluded so a brand-new season opens at zero. Every other day is
+    /// untouched, so the rhythm chart still tells the full story.
+    private func countsTowardCurrentSeason(_ entry: LogEntry) -> Bool {
+        let cal = Calendar.current
+        guard cal.isDate(entry.date, inSameDayAs: currentSeasonEpoch) else { return true }
+        return entry.date >= currentSeasonEpoch
+    }
+
     /// Sum of points earned on any local calendar day. Drives both the
     /// live sun and the past-day time machine snapshot.
     func score(on day: Date) -> Int {
         let cal = Calendar.current
         return logEntries
-            .filter { cal.isDate($0.date, inSameDayAs: day) }
+            .filter { cal.isDate($0.date, inSameDayAs: day) && countsTowardCurrentSeason($0) }
             .map { $0.pointsEarned }
             .reduce(0, +)
     }
@@ -1016,7 +1043,7 @@ extension Store {
         let cal = Calendar.current
         guard let week = cal.dateInterval(of: .weekOfYear, for: Date()) else { return 0 }
         return logEntries
-            .filter { $0.date >= week.start && $0.date < week.end }
+            .filter { $0.date >= week.start && $0.date < week.end && countsTowardCurrentSeason($0) }
             .map { $0.pointsEarned }
             .reduce(0, +)
     }
@@ -1230,7 +1257,11 @@ extension Store {
         let today = self.today
         return todos.filter { todo in
             guard let due = todo.dueDate, todo.pointValue != nil else { return false }
-            return cal.isDate(due, inSameDayAs: today) || due < today
+            // A to-do belongs to its due day only. Once that day passes it
+            // leaves Today's Plan (the morning carry-forward prompt offers
+            // to bring yesterday's leftovers into today) instead of
+            // lingering forever as a permanent overdue item.
+            return cal.isDate(due, inSameDayAs: today)
         }
     }
 
@@ -2997,6 +3028,62 @@ extension Store {
 
         userDefaults.set(today, forKey: Keys.lastRollover)
         persistAll()
+
+        // After the day has rolled, see if yesterday left unfinished
+        // to-dos worth offering to carry forward.
+        evaluateCarryForwardPrompt()
+    }
+
+    // MARK: - Morning carry-forward
+
+    /// Decide whether to surface the morning "carry yesterday's to-dos
+    /// forward" sheet. Shows at most once per local day, and only when
+    /// there are unfinished, pointed to-dos whose due day has already
+    /// passed. Safe to call repeatedly (on rollover and on foreground).
+    func evaluateCarryForwardPrompt() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+
+        // Never nag twice for the same day.
+        if let last = userDefaults.object(forKey: Keys.lastCarryForwardDay) as? Date,
+           cal.isDate(last, inSameDayAs: today) {
+            return
+        }
+        // Don't stack on top of an already-open prompt.
+        guard !showCarryForwardPrompt else { return }
+
+        let leftovers = todos.filter { todo in
+            guard !todo.isCompleted, todo.pointValue != nil, let due = todo.dueDate else { return false }
+            return cal.startOfDay(for: due) < today
+        }
+        guard !leftovers.isEmpty else { return }
+
+        carryForwardCandidates = leftovers
+        showCarryForwardPrompt = true
+    }
+
+    /// Re-date the chosen leftovers to today so they drop straight into
+    /// Today's Plan, then close the prompt for the rest of the day.
+    func carryTodosForward(_ ids: Set<UUID>) {
+        let today = Calendar.current.startOfDay(for: Date())
+        for i in todos.indices where ids.contains(todos[i].id) {
+            todos[i].dueDate = today
+            todos[i].isCompleted = false
+            todos[i].completedAt = nil
+        }
+        persistAll()
+        dismissCarryForwardPrompt()
+    }
+
+    /// Close the carry-forward sheet and mark it handled for today so it
+    /// won't reappear until the next day's leftovers.
+    func dismissCarryForwardPrompt() {
+        userDefaults.set(
+            Calendar.current.startOfDay(for: Date()),
+            forKey: Keys.lastCarryForwardDay
+        )
+        showCarryForwardPrompt = false
+        carryForwardCandidates = []
     }
 
     // MARK: - Homescreen event glance
@@ -3027,7 +3114,7 @@ extension Store {
                 continue
             }
             let dayScore = logEntries
-                .filter { cal.isDate($0.date, inSameDayAs: day) }
+                .filter { cal.isDate($0.date, inSameDayAs: day) && countsTowardCurrentSeason($0) }
                 .map { $0.pointsEarned }
                 .reduce(0, +)
             results.append(dayScore)

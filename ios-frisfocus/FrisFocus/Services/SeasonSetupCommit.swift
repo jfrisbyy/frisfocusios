@@ -70,6 +70,7 @@ extension Store {
             name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Season" : name,
             lengthDays: max(7, lengthDays),
             startDate: Calendar.current.startOfDay(for: Date()),
+            startedAt: Date(),
             vibe: .coolDawn,
             dailyGoal: max(1, draft.dailyTarget),
             weeklyGoal: max(1, draft.weeklyTarget),
@@ -156,12 +157,17 @@ extension Store {
             )
         }
 
-        // The freeze. Log history, to-dos, and notes stay untouched.
-        // The season being replaced is archived as a past chapter first
-        // so profile pages can tell the story season by season.
+        // The freeze. A new season is a clean slate: the previous board's
+        // tasks and to-dos are cleared so nothing from the old chapter
+        // bleeds in, and `startedAt` scopes the live score so today opens
+        // at zero. Log history and notes stay untouched (the rhythm chart
+        // still tells the full story). The season being replaced is
+        // archived as a past chapter first so profile pages can tell the
+        // story season by season.
         archiveCurrentSeasonAsChapter()
         currentSeason = season
         tasks = newTasks
+        todos = []
         avoidanceItems = newNegatives
         boosters = newBoosters
         persistAll()

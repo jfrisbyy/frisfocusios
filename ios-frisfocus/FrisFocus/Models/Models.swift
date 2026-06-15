@@ -708,6 +708,13 @@ struct Season: Codable, Identifiable {
     var name: String
     var lengthDays: Int
     var startDate: Date
+    /// The exact moment this season was committed (full timestamp, not
+    /// start-of-day). Used to scope the live daily score so a new season
+    /// started midway through a day begins at zero — activity logged
+    /// earlier that day (under the previous season) no longer counts.
+    /// Optional so seasons persisted before this field decode cleanly;
+    /// nil falls back to `startDate`.
+    var startedAt: Date? = nil
     var vibe: SeasonVibe
     var dailyGoal: Int
     var weeklyGoal: Int

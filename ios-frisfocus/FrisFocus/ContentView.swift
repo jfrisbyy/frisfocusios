@@ -34,7 +34,14 @@ struct ContentView: View {
     @State private var pendingInvite: InviteTarget?
 
     var body: some View {
-        HomeView()
+        @Bindable var store = store
+        return HomeView()
+            .sheet(isPresented: $store.showCarryForwardPrompt) {
+                CarryForwardPromptView(candidates: store.carryForwardCandidates)
+                    .environment(store)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.hidden)
+            }
             .onOpenURL { url in
                 // A shared invite link (or scanned QR) opens us straight
                 // to the inviter's profile with an Add control.
@@ -99,6 +106,7 @@ struct ContentView: View {
             .onAppear {
                 print("[FrisFocus] Tasks: \(store.tasks.count), To-dos: \(store.todos.count), Notes: \(store.notes.count), LogEntries: \(store.logEntries.count)")
                 store.performDayRolloverIfNeeded()
+                store.evaluateCarryForwardPrompt()
                 // Keep milestone target-week nudges aligned with the
                 // season's current milestones on every launch.
                 store.refreshMilestoneNudges()
@@ -122,6 +130,7 @@ struct ContentView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     store.performDayRolloverIfNeeded()
+                    store.evaluateCarryForwardPrompt()
                     // Re-check Screen Time approval on every return — the
                     // user may have granted access in Settings or signed
                     // into iCloud while away; the UI updates immediately.
