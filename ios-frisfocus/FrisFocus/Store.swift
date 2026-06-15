@@ -3052,9 +3052,12 @@ extension Store {
         // Don't stack on top of an already-open prompt.
         guard !showCarryForwardPrompt else { return }
 
+        guard let yesterday = cal.date(byAdding: .day, value: -1, to: today) else { return }
         let leftovers = todos.filter { todo in
             guard !todo.isCompleted, todo.pointValue != nil, let due = todo.dueDate else { return false }
-            return cal.startOfDay(for: due) < today
+            // Only yesterday's leftovers — matching the prompt's copy.
+            // Anything older has already expired and won't reappear.
+            return cal.isDate(due, inSameDayAs: yesterday)
         }
         guard !leftovers.isEmpty else { return }
 

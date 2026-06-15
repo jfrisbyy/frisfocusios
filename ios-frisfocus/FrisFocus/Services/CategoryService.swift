@@ -116,6 +116,9 @@ extension Store {
 
         currentSeason = season
         persistAll()
+        // Clear stale milestone reminders from the previous season. The
+        // new season has no milestones yet, so this only cancels.
+        MilestoneNudgeService.refresh(for: season)
         return season
     }
 }

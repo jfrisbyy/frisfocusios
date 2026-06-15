@@ -53,6 +53,7 @@ struct SeasonInlineDetailView: View {
     @State private var showSettings: Bool = false
     @State private var showSeasonSetup: Bool = false
     @State private var showNextSeasonDialog: Bool = false
+    @State private var showEndSeasonConfirm: Bool = false
     /// Whether the season options grid is unfolded. Collapsed by
     /// default — the row stays quiet until asked.
     @State private var optionsExpanded: Bool = false
@@ -134,8 +135,18 @@ struct SeasonInlineDetailView: View {
                 store.startNewSeasonFromCurrent(name: nil)
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "End this season?",
+            isPresented: $showEndSeasonConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("End season & start setup", role: .destructive) {
+                showSeasonSetup = true
+            }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Guided setup builds a fresh rubric in conversation. Carrying forward keeps your categories and targets — the day count restarts and milestones reset.")
+            Text("Your score resets to zero and your current tasks and to-dos clear out. This season is saved to your history, then you'll shape the next one.")
         }
     }
 
@@ -630,7 +641,13 @@ struct SeasonInlineDetailView: View {
                 label: "Scoring",
                 hint: "Reminders, categories, colors",
                 iconName: "slider.horizontal.3"
-            ) { showSettings = true }
+            ) { showSettings = true },
+            SeasonOptionItem(
+                label: "End season",
+                hint: "Wrap up & start fresh",
+                iconName: "flag.checkered",
+                haptic: .medium
+            ) { showEndSeasonConfirm = true }
         ]
     }
 

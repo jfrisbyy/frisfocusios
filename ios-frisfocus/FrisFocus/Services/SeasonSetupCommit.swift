@@ -171,6 +171,10 @@ extension Store {
         avoidanceItems = newNegatives
         boosters = newBoosters
         persistAll()
+        // Cancel any milestone reminders left pending from the finished
+        // season and schedule only the new season's milestone nudges, so
+        // no ghost notification fires for a goal that no longer exists.
+        MilestoneNudgeService.refresh(for: season)
         return season
     }
 }
