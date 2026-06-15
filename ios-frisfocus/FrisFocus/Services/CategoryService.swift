@@ -119,6 +119,10 @@ extension Store {
         // Clear stale milestone reminders from the previous season. The
         // new season has no milestones yet, so this only cancels.
         MilestoneNudgeService.refresh(for: season)
+        // Republish the season card immediately so friends see the new
+        // season's name/cover and reset milestone tally without waiting
+        // for the debounced sync flush.
+        republishSeasonCardNow()
         return season
     }
 }

@@ -175,6 +175,10 @@ extension Store {
         // season and schedule only the new season's milestone nudges, so
         // no ghost notification fires for a goal that no longer exists.
         MilestoneNudgeService.refresh(for: season)
+        // Push the fresh season card right away so friends stop seeing
+        // the finished season's name, cover, and milestone tally the
+        // instant the new season begins, not after the next sync flush.
+        republishSeasonCardNow()
         return season
     }
 }

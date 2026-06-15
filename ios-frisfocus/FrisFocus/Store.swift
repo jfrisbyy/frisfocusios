@@ -1168,6 +1168,15 @@ extension Store {
         )
     }
 
+    /// Force an immediate publish of the friend-readable season card,
+    /// bypassing the debounced sync flush. Called right after a season
+    /// reset so friends never see the finished season's name, cover, or
+    /// milestone tally linger while the normal flush is still pending.
+    func republishSeasonCardNow() {
+        let sync = seasonSync
+        Task { await sync?.pushSeasonCard() }
+    }
+
     /// Archive the season currently being lived as a past chapter —
     /// called right before a new season replaces it. Seasons that never
     /// actually started (created today) and already-archived ids are
