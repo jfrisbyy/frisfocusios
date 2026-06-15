@@ -187,13 +187,15 @@ struct SetupConversationView: View {
                         thinkingIndicator
                             .padding(.top, 20)
                     } else {
-                        Text(viewModel.currentMessage)
-                            .font(.serif(23, weight: .medium))
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(Theme.textPrimary)
-                            .padding(.horizontal, 32)
-                            .contentTransition(.opacity)
-                            .animation(.easeInOut(duration: 0.35), value: viewModel.currentMessage)
+                        TypewriterText(
+                            fullText: viewModel.currentMessage,
+                            revealID: viewModel.messageRevealID,
+                            font: .serif(23, weight: .medium),
+                            color: Theme.textPrimary,
+                            alignment: .center,
+                            reduceMotion: reduceMotion
+                        )
+                        .padding(.horizontal, 32)
                     }
 
                     if viewModel.isThinking && !viewModel.currentMessage.isEmpty {
@@ -248,10 +250,15 @@ struct SetupConversationView: View {
                             .padding(.horizontal, 4)
                     }
 
-                    Text(viewModel.currentMessage)
-                        .font(.serif(17, weight: .regular))
-                        .lineSpacing(5)
-                        .foregroundStyle(Theme.textPrimary.opacity(0.92))
+                    TypewriterText(
+                        fullText: viewModel.currentMessage,
+                        revealID: viewModel.messageRevealID,
+                        font: .serif(17, weight: .regular),
+                        color: Theme.textPrimary.opacity(0.92),
+                        alignment: .leading,
+                        lineSpacing: 5,
+                        reduceMotion: reduceMotion
+                    )
 
                     if let teaching = viewModel.teaching {
                         teachingCard(teaching)

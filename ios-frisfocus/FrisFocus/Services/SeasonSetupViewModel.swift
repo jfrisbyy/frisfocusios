@@ -33,6 +33,9 @@ final class SeasonSetupViewModel {
 
     /// The AI's current question/turn, rendered large in the serif voice.
     private(set) var currentMessage: String = ""
+    /// Bumped each time a fresh reply arrives so the view types it out.
+    /// Stays 0 for resumed conversations, which show the last turn in full.
+    private(set) var messageRevealID: Int = 0
     /// The user's most recent answer (warm dark bubble under the question).
     private(set) var lastAnswer: String?
     /// The previous AI question, faded above for one-exchange context.
@@ -230,6 +233,7 @@ final class SeasonSetupViewModel {
 
             let reply = envelope.reply
             currentMessage = reply.message
+            messageRevealID += 1
             teaching = reply.teaching
 
             // Threads are cumulative from the server; keep first-seen arc
