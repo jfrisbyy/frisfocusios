@@ -52,6 +52,10 @@ struct HomeView: View {
     @State private var showFriendsFromBanner: Bool = false
     /// The circle event opened from the homescreen "Upcoming" glance.
     @State private var homeEventTarget: HomeEventTarget?
+    /// Brief confirmation text after a shake-to-undo. Nil when hidden.
+    @State private var undoMessage: String?
+    /// Auto-dismiss timer for the undo banner.
+    @State private var undoDismissTask: Task<Void, Never>?
 
     private let scrollSpace = "frisFocusScroll"
 
@@ -233,6 +237,8 @@ struct HomeView: View {
             // Root page — nothing to go back to, so a left-edge swipe
             // opens the proof camera instead.
             .edgeSwipeCamera()
+            // Shake to undo the last reversible plan action.
+            .onShake { handleShakeUndo() }
             // Folding the season detail closed gently scrolls the sun
             // zone back to the top so the user is never stranded
             // mid-page where the detail used to be.
@@ -293,6 +299,11 @@ struct HomeView: View {
                         onDismiss: { store.clearPendingTrainAward() }
                     )
                     .allowsHitTesting(store.pendingTrainAward != nil)
+
+                    if let message = undoMessage {
+                        UndoBanner(text: message)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
                 .padding(.top, max(topSafeInset, 12) + 6)
             }
@@ -374,6 +385,52 @@ struct HomeView: View {
         let maxOffset = max(0, contentHeight - viewportHeight)
         let targetY = CGFloat(max(0, min(1, fraction))) * maxOffset
         scrollPosition.scrollTo(y: targetY)
+    }
+
+    // MARK: - Shake to undo
+
+    /// Roll back the last reversible plan action and flash a confirming
+    /// banner. Ignored when there's nothing left on the undo stack.
+    private func handleShakeUndo() {
+        guard store.canUndo, let label = store.undoLastAction() else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        undoDismissTask?.cancel()
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            undoMessage = label
+        }
+        undoDismissTask = Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    undoMessage = nil
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Undo banner
+
+/// Small pill that confirms what a shake just undid, then fades out.
+private struct UndoBanner: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 12, weight: .semibold))
+            Text("Undone — \(text)")
+                .font(.sans(13, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.textCream)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(
+            Capsule().fill(Theme.textPrimary.opacity(0.92))
+        )
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
     }
 }
 

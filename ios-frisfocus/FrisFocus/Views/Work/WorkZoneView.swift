@@ -28,6 +28,8 @@ struct WorkZoneView: View {
     @State private var pendingFocusLabel: String? = nil
     @State private var pendingFocusAttachments: [FocusTaskAttachment] = []
     @State private var pendingGroveFriendIds: [UUID] = []
+    /// Confirmation gate for the long-press "clear today's plan" action.
+    @State private var showClearConfirm: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -36,6 +38,14 @@ struct WorkZoneView: View {
                     title: "Today's plan",
                     subline: store.workSubline
                 )
+                .contentShape(Rectangle())
+                .contextMenu {
+                    Button(role: .destructive) {
+                        showClearConfirm = true
+                    } label: {
+                        Label("Clear today's plan", systemImage: "trash")
+                    }
+                }
                 HStack(spacing: 8) {
                     weekScheduleButton
                     focusEntryButton
@@ -83,6 +93,19 @@ struct WorkZoneView: View {
         .padding(.horizontal, Theme.pageHorizontalPadding)
         .frame(maxWidth: .infinity)
         .background(Theme.warmWheat)
+        .confirmationDialog(
+            "Clear today's plan?",
+            isPresented: $showClearConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Clear today's plan", role: .destructive) {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                store.clearTodaysPlan()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This removes everything from today. Your tasks and to-dos stay safe in your library.")
+        }
         .sheet(isPresented: $showCaptureSheet) {
             CaptureSheetView()
                 .presentationDetents([.fraction(0.45)])
@@ -160,12 +183,53 @@ struct WorkZoneView: View {
     private func planRow(for item: HomeRowItem) -> some View {
         switch item {
         case .task(let task):
-            TaskCardView(task: task)
+            PlanSwipeRow(
+                onComplete: { completeTaskViaSwipe(task) },
+                onRemove: { removeTaskFromToday(task) }
+            ) {
+                TaskCardView(task: task)
+            }
         case .todo(let todo):
-            TodoCardView(todo: todo)
+            PlanSwipeRow(
+                onComplete: { completeTodoViaSwipe(todo) },
+                onRemove: { removeTodoFromToday(todo) }
+            ) {
+                TodoCardView(todo: todo)
+            }
         case .cadenceLink(let link):
             CadenceRoutineRow(link: link)
         }
+    }
+
+    // MARK: - Swipe shortcut actions
+
+    /// Swipe-right on a task: mark it done with its normal points. Past
+    /// days and already-completed tasks are left untouched.
+    private func completeTaskViaSwipe(_ task: FFTask) {
+        guard !store.isViewingPast else { return }
+        guard !store.hasLogEntryToday(forTaskId: task.id) else { return }
+        store.captureUndo("Completed \u{201C}\(task.title)\u{201D}")
+        store.completeTask(task)
+    }
+
+    /// Swipe-left on a task: take its today-pin off the plan.
+    private func removeTaskFromToday(_ task: FFTask) {
+        guard !store.isViewingPast else { return }
+        store.unpinTaskFromToday(task)
+    }
+
+    /// Swipe-right on a to-do: mark it done with its normal points.
+    private func completeTodoViaSwipe(_ todo: Todo) {
+        guard !store.isViewingPast else { return }
+        guard !todo.isCompleted else { return }
+        store.captureUndo("Completed \u{201C}\(todo.title)\u{201D}")
+        store.toggleTodo(todo)
+    }
+
+    /// Swipe-left on a to-do: take it off today's plan.
+    private func removeTodoFromToday(_ todo: Todo) {
+        guard !store.isViewingPast else { return }
+        store.unpinTodoFromToday(todo)
     }
 
     /// Scrollable box for long plans — capped at ~8 rows tall with soft

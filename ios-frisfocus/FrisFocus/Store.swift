@@ -269,6 +269,54 @@ final class Store {
     /// single tap would oscillate between the two stores.
     private var isMirroringFromCircle: Bool = false
 
+    // MARK: - Undo (shake-to-undo)
+
+    /// A point-in-time snapshot of the plan-bearing slices, captured
+    /// before a reversible shortcut action (clear today's plan, swipe
+    /// done, take off today). Restoring one rolls those slices back.
+    private struct UndoSnapshot {
+        let label: String
+        let tasks: [FFTask]
+        let todos: [Todo]
+        let logEntries: [LogEntry]
+        let signalFacts: [SignalFact]
+    }
+
+    /// Bounded stack of recent reversible actions. Off-band from
+    /// observation so pushing a snapshot never invalidates any view.
+    @ObservationIgnored private var undoStack: [UndoSnapshot] = []
+
+    /// Whether there's a reversible action waiting for a shake-to-undo.
+    var canUndo: Bool { !undoStack.isEmpty }
+
+    /// Capture the current plan state so the next shortcut action can be
+    /// undone with a shake. Call BEFORE mutating. Keeps a short history.
+    func captureUndo(_ label: String) {
+        undoStack.append(
+            UndoSnapshot(
+                label: label,
+                tasks: tasks,
+                todos: todos,
+                logEntries: logEntries,
+                signalFacts: signalFacts
+            )
+        )
+        if undoStack.count > 12 { undoStack.removeFirst() }
+    }
+
+    /// Roll back the most recent captured action and return its label
+    /// (for the confirmation banner). Returns nil when nothing is left.
+    @discardableResult
+    func undoLastAction() -> String? {
+        guard let snap = undoStack.popLast() else { return nil }
+        tasks = snap.tasks
+        todos = snap.todos
+        logEntries = snap.logEntries
+        signalFacts = snap.signalFacts
+        persistAll()
+        return snap.label
+    }
+
     /// Transient signal published when a booster is earned. Views can
     /// observe it to render a one-time toast and call `clearPendingBoosterAward()`
     /// to dismiss. Not persisted — it lives in memory until consumed.
@@ -2891,6 +2939,7 @@ extension Store {
     /// alone (those are managed through the schedule editor).
     func unpinTaskFromToday(_ task: FFTask) {
         guard let idx = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        captureUndo("Took “\(task.title)” off today")
         let cal = Calendar.current
         if let oneOff = tasks[idx].oneOffPinDate, cal.isDateInToday(oneOff) {
             tasks[idx].oneOffPinDate = nil
@@ -2903,6 +2952,50 @@ extension Store {
         default:
             break
         }
+        persistAll()
+    }
+
+    /// Take a To-do off today's plan without deleting it — clears its
+    /// due date so it leaves Today's Plan but stays in the library.
+    /// Undoable with a shake.
+    func unpinTodoFromToday(_ todo: Todo) {
+        guard let idx = todos.firstIndex(where: { $0.id == todo.id }) else { return }
+        captureUndo("Took “\(todo.title)” off today")
+        todos[idx].dueDate = nil
+        persistAll()
+    }
+
+    /// Sweep every manually-added item off today's plan for a clean
+    /// slate — one-off task pins are cleared and today's dated To-dos
+    /// are un-dated, so they leave the plan but stay in the library.
+    /// Recurring task schedules are untouched (managed in the schedule
+    /// editor). Nothing is deleted, and the whole sweep is undoable.
+    func clearTodaysPlan() {
+        captureUndo("Cleared today’s plan")
+        let cal = Calendar.current
+        let today = self.today
+
+        for idx in tasks.indices {
+            if let oneOff = tasks[idx].oneOffPinDate, cal.isDateInToday(oneOff) {
+                tasks[idx].oneOffPinDate = nil
+            }
+            switch tasks[idx].pinSchedule {
+            case .today:
+                tasks[idx].pinSchedule = .none
+            case .singleDate(let date) where cal.isDateInToday(date):
+                tasks[idx].pinSchedule = .none
+            default:
+                break
+            }
+        }
+
+        for idx in todos.indices {
+            guard let due = todos[idx].dueDate, todos[idx].pointValue != nil else { continue }
+            if cal.isDate(due, inSameDayAs: today) || due < today {
+                todos[idx].dueDate = nil
+            }
+        }
+
         persistAll()
     }
 
