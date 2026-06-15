@@ -89,8 +89,8 @@ struct SunDayCard: View {
             }
 
             HStack(alignment: .center, spacing: 16) {
-                CenteredSunView(ratio: selected.ratio, maxDiameter: 50)
-                    .frame(width: 96, height: 96)
+                CenteredSunView(ratio: selected.ratio, maxDiameter: 40)
+                    .frame(width: 88, height: 88)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(selected.headline)
@@ -118,7 +118,7 @@ struct SunDayCard: View {
                 .id(selected.id)
                 .transition(.opacity)
             }
-            .frame(minHeight: 96)
+            .frame(minHeight: 88)
 
             if !selected.chips.isEmpty {
                 TaskChipsFlow(
@@ -231,6 +231,10 @@ struct CenteredSunView: View {
     private var isFull: Bool { ratio >= 1.0 }
     /// Size grows from a small ember (50%) to full (100%).
     private var d: CGFloat { maxDiameter * (0.5 + 0.5 * clamped) }
+    /// The fixed box the sun and ALL of its glow live inside. Every
+    /// glowing layer is sized and faded to vanish before this edge so
+    /// nothing ever bleeds past the card and into the page.
+    private var side: CGFloat { maxDiameter * 2.0 }
 
     private var coreColor: Color {
         Color.lerpHSL(SkyPalette.dusk.sunCore, SkyPalette.afternoon.sunCore, t: clamped)
@@ -261,8 +265,8 @@ struct CenteredSunView: View {
                         endRadius: maxDiameter * 1.05
                     )
                 )
-                .frame(width: maxDiameter * 2.1, height: maxDiameter * 2.1)
-                .blur(radius: 6)
+                .frame(width: side, height: side)
+                .blur(radius: 5)
 
             // Soft halo — radius grows with ratio.
             Circle()
@@ -278,7 +282,7 @@ struct CenteredSunView: View {
                         endRadius: d * 0.95
                     )
                 )
-                .frame(width: d * 1.9, height: d * 1.9)
+                .frame(width: min(d * 1.9, side), height: min(d * 1.9, side))
                 .blur(radius: 4)
 
             // Warm body bloom.
@@ -344,7 +348,8 @@ struct CenteredSunView: View {
                 }
             }
         }
-        .frame(width: maxDiameter * 1.7, height: maxDiameter * 1.7)
+        .frame(width: side, height: side)
+        .clipShape(Circle())
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: clamped)
         .accessibilityElement()
         .accessibilityLabel("Sun at \(Int((max(0, ratio) * 100).rounded())) percent of the daily goal")
