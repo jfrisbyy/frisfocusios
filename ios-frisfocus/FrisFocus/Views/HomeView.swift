@@ -40,10 +40,7 @@ struct HomeView: View {
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
 
-    // Sundial / sheet state
-    @State private var sundialActive: SundialDestination = .home
-    @State private var sundialPreCapture: SundialDestination = .home
-    @State private var showCaptureSheet: Bool = false
+    // Nav / sheet state
     @State private var showProfileSheet: Bool = false
     @State private var showCircles: Bool = false
     /// The circle whose Golden Hour surface the golden orb opens.
@@ -213,14 +210,8 @@ struct HomeView: View {
                 }
 
                 SundialNavView(
-                    active: sundialActive,
-                    onCaptureTap: {
-                        sundialPreCapture = sundialActive
-                        withAnimation { sundialActive = .capture }
-                        showCaptureSheet = true
-                    },
+                    active: .home,
                     onHomeTap: {
-                        withAnimation { sundialActive = .home }
                         withAnimation(.easeInOut(duration: 0.4)) {
                             scrollProxy.scrollTo(HomeZone.sun.anchorID, anchor: .top)
                         }
@@ -248,14 +239,6 @@ struct HomeView: View {
                         scrollProxy.scrollTo(HomeZone.sun.anchorID, anchor: .top)
                     }
                 }
-            }
-            .sheet(isPresented: $showCaptureSheet, onDismiss: {
-                withAnimation { sundialActive = sundialPreCapture }
-            }) {
-                CaptureSheetView()
-                    .presentationDetents([.fraction(0.5)])
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(28)
             }
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
