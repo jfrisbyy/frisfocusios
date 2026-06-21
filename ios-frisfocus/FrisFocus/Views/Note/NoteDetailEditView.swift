@@ -62,7 +62,11 @@ struct NoteDetailEditView: View {
     @State private var isUndoing: Bool = false
 
     @FocusState private var titleFocused: Bool
-    @FocusState private var bodyFocused: Bool
+
+    /// Bridge to the smart body editor (focus + formatting commands).
+    @State private var editorController = SmartNoteEditorController()
+    /// Whether the formatting options row is open.
+    @State private var formatExpanded: Bool = false
 
     /// Debounce token for textual autosave. Bumped on every keystroke;
     /// the trailing task only fires the persist when it's still current.
@@ -339,7 +343,7 @@ struct NoteDetailEditView: View {
             .foregroundStyle(Theme.textPrimary)
             .submitLabel(.next)
             .onSubmit {
-                bodyFocused = true
+                editorController.focus()
             }
             .padding(.top, -4)
             .padding(.bottom, -8)
@@ -348,15 +352,14 @@ struct NoteDetailEditView: View {
 
     @ViewBuilder
     private var bodyField: some View {
-        TextField(
-            "What wants to be written?",
+        SmartNoteEditor(
             text: $noteText,
-            axis: .vertical
+            placeholder: "What wants to be written?",
+            controller: editorController,
+            bodySize: 17,
+            lineSpacing: 6,
+            italic: true
         )
-        .focused($bodyFocused)
-        .font(.serifItalic(17, weight: .regular))
-        .lineSpacing(6)
-        .foregroundStyle(Theme.textPrimary)
         .frame(minHeight: 160, alignment: .topLeading)
         .padding(.vertical, 4)
     }
@@ -387,6 +390,13 @@ struct NoteDetailEditView: View {
     @ViewBuilder
     private var toolStrip: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if formatExpanded {
+                NoteFormatOptionsRow(controller: editorController)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             Rectangle()
                 .fill(Theme.sunWarm.opacity(0.35))
                 .frame(height: 0.5)
@@ -420,6 +430,8 @@ struct NoteDetailEditView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Tags")
                 }
+
+                NoteFormatToggle(expanded: $formatExpanded)
 
                 Spacer(minLength: 0)
             }

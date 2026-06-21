@@ -50,8 +50,12 @@ struct NewNoteFormView: View {
     @State private var lastSnapshotAt: Date = .distantPast
     @State private var isUndoing: Bool = false
 
-    @FocusState private var bodyFocused: Bool
     @FocusState private var titleFocused: Bool
+
+    /// Bridge to the smart body editor (focus + formatting commands).
+    @State private var editorController = SmartNoteEditorController()
+    /// Whether the formatting options row is open.
+    @State private var formatExpanded: Bool = false
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -98,7 +102,13 @@ struct NewNoteFormView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            toolStrip
+            VStack(spacing: 0) {
+                if formatExpanded {
+                    NoteFormatOptionsRow(controller: editorController)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                toolStrip
+            }
         }
         .sheet(isPresented: $showFolderPicker) {
             FolderPickerSheetView(selectedFolderId: $selectedFolderId)
@@ -244,7 +254,7 @@ struct NewNoteFormView: View {
             .foregroundStyle(Theme.textPrimary)
             .submitLabel(.next)
             .onSubmit {
-                bodyFocused = true
+                editorController.focus()
             }
             .padding(.bottom, -6)
             .accessibilityLabel("Note title")
@@ -252,15 +262,14 @@ struct NewNoteFormView: View {
 
     @ViewBuilder
     private var bodyField: some View {
-        TextField(
-            "What wants to be written?",
+        SmartNoteEditor(
             text: $noteText,
-            axis: .vertical
+            placeholder: "What wants to be written?",
+            controller: editorController,
+            bodySize: 17,
+            lineSpacing: 7,
+            italic: true
         )
-        .focused($bodyFocused)
-        .font(.serifItalic(17, weight: .regular))
-        .lineSpacing(7)
-        .foregroundStyle(Theme.textPrimary)
         .frame(minHeight: 140, alignment: .topLeading)
         .padding(.vertical, 2)
     }
@@ -324,6 +333,8 @@ struct NewNoteFormView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Tags")
             }
+
+            NoteFormatToggle(expanded: $formatExpanded)
 
             Spacer(minLength: 0)
 

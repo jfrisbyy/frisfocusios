@@ -114,11 +114,8 @@ struct MilestoneNoteLinkSheet: View {
                     }
 
                     if let body = note.body, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(body)
-                            .font(.serif(13, weight: .regular))
+                        NoteBodyText(text: body, size: 13, lineSpacing: 3, italic: false, lineLimit: 2)
                             .foregroundStyle(Theme.textPrimary.opacity(0.75))
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
                     } else if !note.voiceMemos.isEmpty {
                         HStack(spacing: 4) {
                             Image(systemName: "waveform")

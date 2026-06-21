@@ -47,12 +47,7 @@ struct NoteEntryView: View {
             }
 
             if let body = note.body, !body.isEmpty {
-                Text(body)
-                    .font(.serifItalic(16, weight: .regular))
-                    .lineSpacing(6)
-                    .foregroundStyle(Theme.textPrimary)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                NoteBodyText(text: body, size: 16, lineSpacing: 6)
             }
 
             if !note.photos.isEmpty {
