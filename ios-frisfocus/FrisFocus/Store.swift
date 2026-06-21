@@ -197,6 +197,14 @@ final class Store {
     /// design — low-value habits never nag.
     var reminderValueThreshold: Int = 8 { didSet { markDirty(.settings) } }
 
+    // MARK: - Needs You (smart triage + Today's Read)
+
+    /// Transient + persisted state for the Needs You section: per-day
+    /// dismiss/snooze of cards and the cached once-daily "Today's Read".
+    /// Self-persisting via UserDefaults, so it stays out of the main
+    /// save/load envelope. Observable so the section re-renders on change.
+    let needsYou = NeedsYouState()
+
     // MARK: - Pacts
 
     /// Two-person, time-boxed shared commitments. A pact is the

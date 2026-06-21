@@ -76,23 +76,16 @@ struct WorkZoneView: View {
                 }
             }
 
-            // Needs You — live alerts from missed Must-Dos + Should-Do drift
-            if store.hasAlerts {
-                sectionGroup(eyebrow: "Needs You") {
-                    VStack(spacing: 10) {
-                        ForEach(store.alerts) { alert in
-                            AlertCardView(alert: alert)
-                        }
-                    }
-                }
-                .padding(.bottom, 28)
-            } else {
-                Spacer().frame(height: 28)
-            }
+            // Needs You — smart, ranked, tappable triage + Today's Read.
+            NeedsYouSection(
+                onStartFocus: { task in startFocus(on: task) },
+                onQuickAdd: { showQuickAdd = true }
+            )
         }
         .padding(.horizontal, Theme.pageHorizontalPadding)
         .frame(maxWidth: .infinity)
         .background(Theme.warmWheat)
+        .onAppear { store.needsYou.rolloverIfNeeded() }
         .confirmationDialog(
             "Clear today's plan?",
             isPresented: $showClearConfirm,
@@ -199,6 +192,20 @@ struct WorkZoneView: View {
         case .cadenceLink(let link):
             CadenceRoutineRow(link: link)
         }
+    }
+
+    // MARK: - Focus from a Needs You card
+
+    /// Start a solo focus block on a specific task, labelled with its
+    /// title. Routes through the same full-screen focus flow the FOCUS
+    /// button uses.
+    private func startFocus(on task: FFTask) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        pendingFocusDuration = TimeInterval((task.estimatedMinutes ?? 45) * 60)
+        pendingFocusLabel = task.title
+        pendingFocusAttachments = []
+        pendingGroveFriendIds = []
+        showFocusMode = true
     }
 
     // MARK: - Swipe shortcut actions
