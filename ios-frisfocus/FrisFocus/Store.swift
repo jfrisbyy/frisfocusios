@@ -1340,13 +1340,14 @@ extension Store {
     /// displayed day; on a past day, tasks actually logged that day
     /// are included even if they weren't pinned.
     var planTasksToday: [FFTask] {
-        guard isViewingPast else {
-            // Reads the observable `today` so the plan re-derives the
-            // instant the day rolls over at midnight.
-            return tasks.filter { $0.isPinnedFor(today) }
-        }
+        // Reads the observable `today` (live) or `displayedDay` (past) so
+        // the plan re-derives the instant the day rolls over at midnight.
         let cal = Calendar.current
-        let day = displayedDay
+        let day = isViewingPast ? displayedDay : today
+        // Anything completed on the displayed day stays on the plan even
+        // when it's no longer pinned — so clearing today's plan never
+        // erases the record of what you already got done. The repeat
+        // pattern is untouched; only the unfinished items are swept off.
         let loggedIds = Set(logEntries.compactMap { entry -> UUID? in
             guard entry.entryType == .completed,
                   cal.isDate(entry.date, inSameDayAs: day) else { return nil }
@@ -1370,6 +1371,12 @@ extension Store {
         }
         let today = self.today
         return todos.filter { todo in
+            // A to-do completed today stays on the plan as a checked-off
+            // item even after the plan is cleared, so the record of what
+            // you finished remains visible instead of disappearing.
+            if let done = todo.completedAt, cal.isDate(done, inSameDayAs: today) {
+                return true
+            }
             guard let due = todo.dueDate, todo.pointValue != nil else { return false }
             // A to-do belongs to its due day only. Once that day passes it
             // leaves Today's Plan (the morning carry-forward prompt offers
