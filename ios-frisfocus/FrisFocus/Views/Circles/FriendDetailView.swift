@@ -591,7 +591,6 @@ struct FriendDetailView: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .disabled(!hasAnyStories)
         .matchedTransitionSource(id: "frienddetail-story", in: storyZoom)
         .accessibilityLabel(
             hasUnviewedStories

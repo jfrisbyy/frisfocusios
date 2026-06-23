@@ -359,7 +359,6 @@ struct MyProfileView: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .disabled(!hasStories)
         .matchedTransitionSource(id: "myprofile-story", in: storyZoom)
         .accessibilityLabel(hasStories ? "Your story — tap to view" : "Your profile photo")
         .overlay(alignment: .bottomTrailing) {
