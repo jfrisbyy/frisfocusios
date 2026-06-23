@@ -794,6 +794,11 @@ struct FFTask: Codable, Identifiable {
     /// so pinning a recurring task to an extra day never destroys its
     /// weekly schedule. Day rollover sweeps stale values.
     var oneOffPinDate: Date? = nil
+    /// One-shot "skip from today's plan" that layers ON TOP of
+    /// `pinSchedule`, suppressing a recurring task for a single day
+    /// without touching its repeat pattern. Set by "Clear today's plan";
+    /// day rollover sweeps stale values so the task returns on schedule.
+    var skipDate: Date? = nil
     /// Optional daily time window ("7:00–8:00 AM") applied to every
     /// day this task is pinned. Drives the card's time chip and the
     /// weekly schedule's agenda ordering.
@@ -809,7 +814,7 @@ struct FFTask: Codable, Identifiable {
     // `booster` / `penalty` / `scoring` still hydrate. Missing keys fall
     // through to the property defaults.
     private enum CodingKeys: String, CodingKey {
-        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, timeWindow, booster, penalty, scoring
+        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, booster, penalty, scoring
     }
 
     init(
@@ -822,6 +827,7 @@ struct FFTask: Codable, Identifiable {
         estimatedMinutes: Int? = nil,
         pinSchedule: PinSchedule = .none,
         oneOffPinDate: Date? = nil,
+        skipDate: Date? = nil,
         timeWindow: TimeWindow? = nil,
         booster: BoosterRule? = nil,
         penalty: PenaltyRule? = nil,
@@ -836,6 +842,7 @@ struct FFTask: Codable, Identifiable {
         self.estimatedMinutes = estimatedMinutes
         self.pinSchedule = pinSchedule
         self.oneOffPinDate = oneOffPinDate
+        self.skipDate = skipDate
         self.timeWindow = timeWindow
         self.booster = booster
         self.penalty = penalty
@@ -853,6 +860,7 @@ struct FFTask: Codable, Identifiable {
         self.estimatedMinutes = try c.decodeIfPresent(Int.self, forKey: .estimatedMinutes)
         self.pinSchedule = try c.decodeIfPresent(PinSchedule.self, forKey: .pinSchedule) ?? .none
         self.oneOffPinDate = try c.decodeIfPresent(Date.self, forKey: .oneOffPinDate)
+        self.skipDate = try c.decodeIfPresent(Date.self, forKey: .skipDate)
         self.timeWindow = try c.decodeIfPresent(TimeWindow.self, forKey: .timeWindow)
         self.booster = try c.decodeIfPresent(BoosterRule.self, forKey: .booster)
         self.penalty = try c.decodeIfPresent(PenaltyRule.self, forKey: .penalty)
@@ -870,6 +878,7 @@ struct FFTask: Codable, Identifiable {
         try c.encodeIfPresent(estimatedMinutes, forKey: .estimatedMinutes)
         try c.encode(pinSchedule, forKey: .pinSchedule)
         try c.encodeIfPresent(oneOffPinDate, forKey: .oneOffPinDate)
+        try c.encodeIfPresent(skipDate, forKey: .skipDate)
         try c.encodeIfPresent(timeWindow, forKey: .timeWindow)
         try c.encodeIfPresent(booster, forKey: .booster)
         try c.encodeIfPresent(penalty, forKey: .penalty)
@@ -1152,6 +1161,12 @@ extension FFTask {
     /// "pin to today" never erases a recurring weekly pattern.
     func isPinnedFor(_ date: Date) -> Bool {
         let cal = Calendar.current
+        // A per-day skip (from "Clear today's plan") suppresses the task
+        // for that one day, overriding both the one-off pin and the
+        // recurring schedule. The repeat pattern itself is untouched.
+        if let skip = skipDate, cal.isDate(date, inSameDayAs: skip) {
+            return false
+        }
         if let oneOff = oneOffPinDate, cal.isDate(date, inSameDayAs: oneOff) {
             return true
         }

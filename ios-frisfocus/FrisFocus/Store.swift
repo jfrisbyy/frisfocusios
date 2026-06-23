@@ -2973,11 +2973,12 @@ extension Store {
         persistAll()
     }
 
-    /// Sweep every manually-added item off today's plan for a clean
-    /// slate — one-off task pins are cleared and today's dated To-dos
-    /// are un-dated, so they leave the plan but stay in the library.
-    /// Recurring task schedules are untouched (managed in the schedule
-    /// editor). Nothing is deleted, and the whole sweep is undoable.
+    /// Sweep every item off today's plan for a clean slate — one-off
+    /// task pins are cleared, today's dated To-dos are un-dated, and
+    /// recurring habits (daily / specific-weekday) get a one-day
+    /// `skipDate` so they drop off today but return tomorrow on their
+    /// normal schedule. Their repeat pattern is never touched. Nothing
+    /// is deleted, and the whole sweep is a single undoable action.
     func clearTodaysPlan() {
         captureUndo("Cleared today’s plan")
         let cal = Calendar.current
@@ -2992,6 +2993,12 @@ extension Store {
                 tasks[idx].pinSchedule = .none
             case .singleDate(let date) where cal.isDateInToday(date):
                 tasks[idx].pinSchedule = .none
+            case .daily, .daysOfWeek:
+                // Recurring habit pinned today: skip it for today only,
+                // leaving the repeat pattern intact so it returns tomorrow.
+                if tasks[idx].isPinnedFor(today) {
+                    tasks[idx].skipDate = today
+                }
             default:
                 break
             }
@@ -3120,6 +3127,11 @@ extension Store {
             // One-off "pin to today" pins from previous days are stale.
             if let oneOff = tasks[i].oneOffPinDate, cal.startOfDay(for: oneOff) < today {
                 tasks[i].oneOffPinDate = nil
+            }
+            // A one-day "skip from plan" only suppresses its own day;
+            // sweep it once that day has passed so the habit returns.
+            if let skip = tasks[i].skipDate, cal.startOfDay(for: skip) < today {
+                tasks[i].skipDate = nil
             }
         }
 
