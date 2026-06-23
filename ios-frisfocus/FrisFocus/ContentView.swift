@@ -33,10 +33,68 @@ struct ContentView: View {
 
     @State private var pendingInvite: InviteTarget?
     @State private var showSeasonSetupFromComplete: Bool = false
+    /// Drives guided season setup after a clean start or leaving the demo.
+    @State private var showCleanSeasonSetup: Bool = false
+    /// Confirmation before wiping the sample sandbox.
+    @State private var showExitDemoConfirm: Bool = false
+
+    /// True while the first-run welcome should cover the home. The
+    /// setter is a no-op — the cover only dismisses once the user's
+    /// choice flips `appMode` out of `.uninitialized`.
+    private var introBinding: Binding<Bool> {
+        Binding(
+            get: { store.needsFirstRunIntro },
+            set: { _ in }
+        )
+    }
 
     var body: some View {
         @Bindable var store = store
         return HomeView()
+            // Demo marker — a small, always-legible pill while exploring
+            // the sample sandbox, tappable to leave it.
+            .overlay(alignment: .top) {
+                if store.appMode == .demo {
+                    DemoModePill { showExitDemoConfirm = true }
+                        .padding(.top, 4)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.3), value: store.appMode)
+            .confirmationDialog(
+                "Exit demo?",
+                isPresented: $showExitDemoConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Exit and start fresh", role: .destructive) {
+                    store.exitDemo()
+                }
+                Button("Keep exploring", role: .cancel) {}
+            } message: {
+                Text("This clears all the sample data and starts your own season from scratch. Nothing from the demo is kept.")
+            }
+            // First-launch welcome — covers the home until the user picks
+            // a path. Non-dismissible: a choice must be made.
+            .fullScreenCover(isPresented: introBinding, onDismiss: {
+                if store.needsSeasonSetup { showCleanSeasonSetup = true }
+            }) {
+                FirstRunIntroView(
+                    onStartClean: { store.startCleanSeason() },
+                    onStartDemo: { store.startDemo() }
+                )
+                .interactiveDismissDisabled(true)
+            }
+            // Guided season setup for a clean start / after exiting the demo.
+            .fullScreenCover(isPresented: $showCleanSeasonSetup) {
+                SeasonSetupFlowView()
+            }
+            // Leaving the demo (from anywhere) transitions demo → clean;
+            // open guided setup once the wipe lands.
+            .onChange(of: store.appMode) { old, new in
+                if old == .demo && new == .clean {
+                    showCleanSeasonSetup = true
+                }
+            }
             .sheet(isPresented: $store.showCarryForwardPrompt) {
                 CarryForwardPromptView(candidates: store.carryForwardCandidates)
                     .environment(store)
@@ -54,6 +112,7 @@ struct ContentView: View {
             .fullScreenCover(isPresented: $showSeasonSetupFromComplete) {
                 SeasonSetupFlowView()
             }
+            .environment(store)
             .onOpenURL { url in
                 // A shared invite link (or scanned QR) opens us straight
                 // to the inviter's profile with an Add control.
@@ -192,6 +251,50 @@ struct ContentView: View {
                     }
                 }
             }
+    }
+}
+
+// MARK: - Demo marker
+
+/// A small, always-legible pill shown at the top of the home while the
+/// user is exploring the sample sandbox. Tapping it offers a way out.
+private struct DemoModePill: View {
+    let onTap: () -> Void
+    @State private var pulse: Bool = false
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(Theme.cadenceLavender)
+                    .frame(width: 7, height: 7)
+                    .opacity(pulse ? 0.4 : 1)
+                Text("Demo · sample data")
+                    .font(.sans(12.5, weight: .semibold))
+                Text("Exit")
+                    .font(.sans(12.5, weight: .semibold))
+                    .foregroundStyle(Theme.cadenceLavenderDark)
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(0.8))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Theme.cadenceLavender.opacity(0.45), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+        .accessibilityLabel("Exploring demo with sample data. Tap to exit.")
     }
 }
 

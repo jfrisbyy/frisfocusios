@@ -48,6 +48,22 @@ final class Store {
     /// the data model don't reset who the user is.
     var currentUserId: UUID = UUID()
 
+    /// The install's first-run lifecycle state. `.uninitialized` until
+    /// the welcome intro resolves into a clean personal start or the
+    /// sample sandbox. Drives the intro cover and the demo marker.
+    var appMode: AppMode = .uninitialized
+
+    /// True only on a brand-new install that hasn't chosen a path yet —
+    /// the welcome intro is shown over the home while this holds.
+    var needsFirstRunIntro: Bool { appMode == .uninitialized }
+
+    /// True while a clean start is waiting for its first real season —
+    /// the placeholder season has no name yet. Drives the automatic
+    /// jump into guided season setup after "Start my season" / "Exit demo".
+    var needsSeasonSetup: Bool {
+        appMode == .clean && currentSeason.name.isEmpty
+    }
+
     var friends: [Friend] = [] { didSet { markDirty(.friends) } }
     var circles: [FFCircle] = [] { didSet { markDirty(.circles) } }
     var circleTaskCompletions: [CircleTaskCompletion] = [] { didSet { markDirty(.circleTaskCompletions) } }
@@ -350,6 +366,7 @@ final class Store {
         static let lastRollover = "lastRolloverDate"
         static let lastCarryForwardDay = "lastCarryForwardPromptDay"
         static let modelVersion = "modelVersion"
+        static let appMode = "appMode"
 
         // Identity — preserved across model-version bumps so the
         // same install keeps the same user id forever, even after a
@@ -482,10 +499,17 @@ final class Store {
             self.dismissedEventGlanceIds = Set(raw.compactMap(UUID.init))
         }
 
+        // Resolve the first-run lifecycle state. A brand-new install
+        // (no stored mode) sits in `.uninitialized` until the welcome
+        // intro resolves; installs that predate this feature but already
+        // carry data are treated as `.clean` so they're never re-introduced.
+        let storedMode = userDefaults.string(forKey: Keys.appMode).flatMap(AppMode.init(rawValue:))
+
         let storedSeasonData = userDefaults.data(forKey: Keys.currentSeason)
         let hasPersistedData = storedSeasonData != nil || userDefaults.data(forKey: Keys.tasks) != nil
         if hasPersistedData {
             // Returning user — load everything we've persisted.
+            self.appMode = storedMode ?? .clean
             if let storedSeasonData,
                let season = try? JSONDecoder().decode(Season.self, from: storedSeasonData) {
                 self.currentSeason = season
@@ -589,22 +613,43 @@ final class Store {
             // the group-story layer landed so "Our story" always has a
             // timeline to look back on.
             self.circles = Store.withChapterTimelines(self.circles)
-        } else {
-            // First launch — seed the user's own starter content and
-            // immediately persist. Social data is deliberately NOT
-            // seeded: friends, circles, stories, cheers, and pacts all
-            // come from the real synced graph once the user signs in.
+        } else if storedMode == .demo {
+            // A demo install whose seeded data somehow didn't persist —
+            // rebuild the full sample sandbox so the marker + content match.
+            // Assigned directly (not via `applyDemoSeed`) because `self`
+            // can't be used before every stored property is initialized.
+            self.appMode = .demo
             self.currentSeason = Store.seedSeason()
             self.tasks = Store.seedTasks()
             self.todos = Store.seedTodos()
             self.logEntries = Store.seedLogEntries()
             self.folders = Store.seedFolders()
             self.notes = Store.seedNotes()
-
-            // First-launch seed: assignments inside `init` don't fire
-            // `didSet`, so mark everything dirty and write it through now.
+            let social = Store.seedDemoSocial(myUserId: self.currentUserId)
+            self.friends = social.friends
+            self.circles = social.circles
+            self.storyPosts = social.posts
+            self.cheers = social.cheers
             markAllDirty()
             flushPendingSaves()
+        } else if storedMode == .clean {
+            // The user already chose a clean start on a previous launch but
+            // hasn't finished season setup yet. Keep the empty slate (a
+            // nameless placeholder season) so we drop straight back into
+            // guided setup rather than re-running the intro or seeding.
+            self.appMode = .clean
+            self.currentSeason = Store.emptySeason()
+            markAllDirty()
+            flushPendingSaves()
+        } else {
+            // Brand-new install. Seed NOTHING and hold in `.uninitialized`
+            // so the welcome intro decides the path. A nameless placeholder
+            // season keeps `currentSeason` non-optional while the intro
+            // covers the home. Deliberately NOT persisted — nothing is
+            // written until the user makes a choice, so a relaunch before
+            // choosing still shows the intro.
+            self.appMode = .uninitialized
+            self.currentSeason = Store.emptySeason()
         }
 
         // One-time reset of the legacy local-only social graph (the
@@ -3521,6 +3566,214 @@ extension Store {
                 label: "morning pages"
             )
         ]
+    }
+
+    /// A nameless placeholder season that keeps `currentSeason`
+    /// non-optional on a clean slate (before the user has run guided
+    /// setup). Its empty `name` is the signal `needsSeasonSetup` reads.
+    static func emptySeason() -> Season {
+        Season(
+            name: "",
+            lengthDays: 60,
+            startDate: Calendar.current.startOfDay(for: Date()),
+            vibe: .warmForest,
+            dailyGoal: 50,
+            weeklyGoal: 350,
+            categories: [],
+            milestones: []
+        )
+    }
+
+    /// Local sample friends, a circle, recent story moments, and a
+    /// couple of cheers — enough for the demo's social side to feel
+    /// lived-in without a backend. Authored against `myUserId` so the
+    /// cheers land on the current user and the circle includes them.
+    static func seedDemoSocial(myUserId: UUID) -> (friends: [Friend], circles: [FFCircle], posts: [StoryPost], cheers: [Cheer]) {
+        let now = Date()
+        let cal = Calendar.current
+
+        var maya = Friend(displayName: "Maya R.", initials: "MR", accentColorHex: "7F77DD")
+        maya.currentSeasonName = "Marathon Build"
+        maya.currentSeasonDay = 31
+        maya.todayScore = 48
+        maya.hitGoalToday = true
+        maya.lastSignalAt = cal.date(byAdding: .hour, value: -2, to: now)
+        maya.sharesWithMe = SharingSettings.from(tier: .full)
+        maya.connectedAt = cal.date(byAdding: .day, value: -120, to: now)
+
+        var theo = Friend(displayName: "Theo K.", initials: "TK", accentColorHex: "D85A30")
+        theo.currentSeasonName = "Founder Sprint"
+        theo.currentSeasonDay = 12
+        theo.todayScore = 22
+        theo.hitGoalToday = false
+        theo.lastSignalAt = cal.date(byAdding: .hour, value: -6, to: now)
+        theo.sharesWithMe = SharingSettings.from(tier: .open)
+        theo.connectedAt = cal.date(byAdding: .day, value: -64, to: now)
+
+        var ines = Friend(displayName: "Inés M.", initials: "IM", accentColorHex: "639922")
+        ines.currentSeasonName = "Quiet Mornings"
+        ines.currentSeasonDay = 7
+        ines.todayScore = 35
+        ines.hitGoalToday = true
+        ines.lastSignalAt = cal.date(byAdding: .hour, value: -20, to: now)
+        ines.sharesWithMe = SharingSettings.from(tier: .open)
+        ines.connectedAt = cal.date(byAdding: .day, value: -210, to: now)
+
+        let friends = [maya, theo, ines]
+
+        let circle = FFCircle(
+            name: "Sunrise Crew",
+            type: .witness,
+            timeframe: .ongoing,
+            memberIds: [myUserId, maya.id, theo.id, ines.id],
+            tasks: [],
+            createdAt: cal.date(byAdding: .day, value: -45, to: now) ?? now,
+            ownerId: myUserId
+        )
+        let circles = withChapterTimelines([circle])
+
+        let posts: [StoryPost] = [
+            StoryPost(
+                authorId: maya.id,
+                createdAt: cal.date(byAdding: .hour, value: -3, to: now) ?? now,
+                caption: "18 miles done before sunrise. Legs are jelly but the lake was glass."
+            ),
+            StoryPost(
+                authorId: ines.id,
+                createdAt: cal.date(byAdding: .hour, value: -9, to: now) ?? now,
+                caption: "Day 7 of no-phone mornings. Wrote two pages instead."
+            )
+        ]
+
+        let cheers: [Cheer] = [
+            Cheer(
+                fromFriendId: maya.id,
+                fromName: maya.displayName,
+                fromInitials: maya.initials,
+                fromColorHex: maya.accentColorHex,
+                toUserId: myUserId,
+                message: "You're three demos deep — keep the momentum 🔥",
+                sentAt: cal.date(byAdding: .hour, value: -1, to: now) ?? now
+            ),
+            Cheer(
+                fromFriendId: theo.id,
+                fromName: theo.displayName,
+                fromInitials: theo.initials,
+                fromColorHex: theo.accentColorHex,
+                toUserId: myUserId,
+                message: "Proud of your streak this week.",
+                sentAt: cal.date(byAdding: .hour, value: -4, to: now) ?? now
+            )
+        ]
+
+        return (friends, circles, posts, cheers)
+    }
+
+    /// Fill a store instance with the full sample sandbox — personal
+    /// content plus the local social preview. Used both by `startDemo()`
+    /// and the init rebuild path. Assignments here are made directly on
+    /// `store`, so callers must mark dirty + flush themselves.
+    static func applyDemoSeed(to store: Store) {
+        store.currentSeason = seedSeason()
+        store.tasks = seedTasks()
+        store.todos = seedTodos()
+        store.logEntries = seedLogEntries()
+        store.folders = seedFolders()
+        store.notes = seedNotes()
+
+        let social = seedDemoSocial(myUserId: store.currentUserId)
+        store.friends = social.friends
+        store.circles = social.circles
+        store.storyPosts = social.posts
+        store.cheers = social.cheers
+    }
+}
+
+// MARK: - First-run lifecycle
+//
+// The three transitions out of the welcome intro: a clean personal
+// start, the sample sandbox, and leaving the sandbox. Each writes the
+// new `appMode` straight to UserDefaults (it sits outside the batched
+// DataKey slices) and flushes the data through immediately.
+
+extension Store {
+    private func persistAppMode() {
+        userDefaults.set(appMode.rawValue, forKey: "appMode")
+    }
+
+    /// Reset every persisted collection to empty. The user's identity
+    /// (`currentUserId`) and the season are left to the caller.
+    private func wipeAllData() {
+        pastSeasons = []
+        tasks = []
+        todos = []
+        logEntries = []
+        notes = []
+        folders = []
+        proofPins = []
+        proofLibrary = []
+        friends = []
+        circles = []
+        circleTaskCompletions = []
+        circleContributions = []
+        circleEvents = []
+        eventRSVPs = []
+        eventCheckIns = []
+        signalFacts = []
+        cheers = []
+        storyPosts = []
+        directShares = []
+        likes = []
+        comments = []
+        mediaAssets = []
+        avoidanceItems = []
+        avoidanceOccurrences = []
+        habitTrains = []
+        boosters = []
+        viewedStoryPostIds = []
+        pacts = []
+        pactCompletions = []
+        circleTaskRequests = []
+        focusSessions = []
+        sharedFocusBlocks = []
+        scheduledGroves = []
+        cadenceLinks = []
+        cadenceOutcomeFulfillments = []
+        consumedCadenceEventIds = []
+    }
+
+    /// "Start my season": clean slate, nameless placeholder season,
+    /// `.clean` mode. `needsSeasonSetup` then drives the jump into
+    /// guided setup.
+    func startCleanSeason() {
+        wipeAllData()
+        currentSeason = Store.emptySeason()
+        appMode = .clean
+        persistAppMode()
+        markAllDirty()
+        flushPendingSaves()
+    }
+
+    /// "Explore a demo": load the full sample sandbox and enter
+    /// `.demo` mode so the marker shows.
+    func startDemo() {
+        wipeAllData()
+        Store.applyDemoSeed(to: self)
+        appMode = .demo
+        persistAppMode()
+        markAllDirty()
+        flushPendingSaves()
+    }
+
+    /// "Exit demo": wipe every sample row and drop into the same clean
+    /// fresh start as "Start my season".
+    func exitDemo() {
+        wipeAllData()
+        currentSeason = Store.emptySeason()
+        appMode = .clean
+        persistAppMode()
+        markAllDirty()
+        flushPendingSaves()
     }
 }
 
