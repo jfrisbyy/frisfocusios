@@ -44,6 +44,9 @@ final class SeasonSetupViewModel {
     private(set) var threads: [SetupThread] = []
     /// Gentle inline teaching note for this turn, if any.
     private(set) var teaching: String?
+    /// Short tappable answers for yes/no or confirmation turns. Empty for
+    /// open-ended questions and cleared while a call is in flight.
+    private(set) var answerOptions: [String] = []
     /// True while a backend call is in flight.
     private(set) var isThinking: Bool = false
     /// Set when the backend/model call fails; the view offers retry/skip.
@@ -223,6 +226,9 @@ final class SeasonSetupViewModel {
     private func requestTurn(appending userText: String?) async {
         errorMessage = nil
         isThinking = true
+        // Options belong to the turn just answered — drop them while the
+        // next turn is being fetched so stale cards never linger.
+        answerOptions = []
 
         var attempt = history
         if let userText {
@@ -245,6 +251,15 @@ final class SeasonSetupViewModel {
             currentMessage = reply.message
             messageRevealID += 1
             teaching = reply.teaching
+            // Offer tappable answers only for genuine yes/no / confirmation
+            // turns, and never once the conversation has produced a rubric.
+            answerOptions = reply.done == true
+                ? []
+                : (reply.answerOptions ?? [])
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .prefix(3)
+                    .map { $0 }
 
             // Threads are cumulative from the server; keep first-seen arc
             // positions so ticks stay planted while the orb climbs.

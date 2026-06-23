@@ -376,6 +376,13 @@ struct SetupConversationView: View {
     @ViewBuilder
     private var inputBar: some View {
         VStack(spacing: 10) {
+            if !viewModel.answerOptions.isEmpty
+                && !viewModel.isThinking
+                && !showTranscriptEditor
+                && !speech.isListening {
+                answerOptionsBar
+            }
+
             if showTranscriptEditor {
                 transcriptEditor
             }
@@ -403,6 +410,43 @@ struct SetupConversationView: View {
             )
             .ignoresSafeArea(edges: .bottom)
         )
+    }
+
+    /// Tappable short answers for yes/no & confirmation turns. Soft pills
+    /// on the parchment; the mic/keyboard stay available beneath them.
+    private var answerOptionsBar: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 132), spacing: 8)],
+            alignment: .center,
+            spacing: 8
+        ) {
+            ForEach(viewModel.answerOptions, id: \.self) { option in
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    if speech.isListening { speech.cancel() }
+                    viewModel.send(option)
+                } label: {
+                    Text(option)
+                        .font(.sans(14, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 11)
+                        .background(Color.white.opacity(0.85))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule().strokeBorder(Theme.sunShadow.opacity(0.3), lineWidth: 0.75)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isThinking)
+            }
+        }
+        .padding(.horizontal, 20)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .animation(.spring(duration: 0.35), value: viewModel.answerOptions)
     }
 
     /// A finished take — live, editable before it's sent so mangled

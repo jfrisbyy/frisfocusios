@@ -30,6 +30,9 @@ nonisolated struct SetupWireReply: Codable, Sendable {
     let message: String
     let threads: [SetupWireThread]?
     let teaching: String?
+    /// Short tappable answers for yes/no or confirmation turns. Nil/empty
+    /// for open-ended questions, which still take voice or keyboard input.
+    let answerOptions: [String]?
     let done: Bool?
     let suggestedName: String?
     let suggestedLengthDays: Int?
@@ -41,6 +44,7 @@ nonisolated struct SetupWireReply: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case message, threads, teaching, done, rubric
+        case answerOptions = "answer_options"
         case suggestedName = "suggested_name"
         case suggestedLengthDays = "suggested_length_days"
         case suggestedEndDate = "suggested_end_date"

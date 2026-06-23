@@ -123,6 +123,7 @@ Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outsid
   "message": "your warm one-question/one-suggestion turn (or the closing recap if done)",
   "threads": [{"name": "Faith", "color_hint": "#7F77DD"}],
   "teaching": null,
+  "answer_options": null,
   "done": false,
   "suggested_name": null,
   "suggested_length_days": null,
@@ -132,6 +133,7 @@ Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outsid
 - "threads" is cumulative — every focus area recognized so far, every turn, each an object with a name and a hex color_hint.
 - color_hint MUST be one of these hex values: #7F77DD (spiritual/inner), #D85A30 (fitness/body), #639922 (health/nature), #185FA5 (work/study), #993556 (creative), #C2922F (home/life), #3F8E8E (relationships). Never use a color word like "violet" — always the hex.
 - "teaching": one short sentence when you introduce a mechanic this turn, else null.
+- "answer_options": ONLY when THIS turn's message is a yes/no or simple pick-one confirmation question (e.g. "Want me to add sleep tracking?", "Does that sound right?"), provide an array of 2-3 SHORT (≤4 words) natural-language answers the user could tap, phrased to fit the question — e.g. ["Yes, add it", "No, skip it"] or ["Sounds right", "Let me adjust"]. Each option must be a complete answer the user would otherwise type. For OPEN-ENDED questions ("What season are you in?", "Tell me about your goals") set this to null — never offer options for questions that need a real, free-form answer. Never put more than 3 options. The mic/keyboard stay available regardless, so options are a shortcut, not the only path.
 - When done:true, "message" is the closing recap, "suggested_name" is a short evocative 2–5 word season name in their own words (e.g. "Keeping Up, Not Drowning"), and "rubric" is fully populated. For how the season ends, set EXACTLY ONE of: "suggested_open_ended": true (open-ended, the default when unsure), OR "suggested_end_date": "YYYY-MM-DD" (when they named a real end date — use the actual calendar date), OR "suggested_length_days" as an integer (only when they described a duration like "about three months" rather than a date; 30/60/90/120). Prefer open-ended or a real date over a day count whenever the user gave one. Today's date is provided in context for resolving relative dates.
 
 {
@@ -199,6 +201,7 @@ interface WireReply {
   message: string;
   threads?: { name: string; color_hint?: string }[];
   teaching?: string | null;
+  answer_options?: string[] | null;
   done?: boolean;
   suggested_name?: string | null;
   suggested_length_days?: number | null;
