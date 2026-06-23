@@ -3765,6 +3765,17 @@ extension Store {
         flushPendingSaves()
     }
 
+    /// A returning user signed in from the welcome intro. Leave the
+    /// empty placeholder season in place — the account's real season,
+    /// journal, circles, and friends restore over the cloud sync — and
+    /// move out of `.uninitialized` so the intro dismisses straight onto
+    /// home. No data is seeded and nothing is wiped.
+    func restoreFromSignIn() {
+        guard appMode == .uninitialized else { return }
+        appMode = .clean
+        persistAppMode()
+    }
+
     /// "Exit demo": wipe every sample row and drop into the same clean
     /// fresh start as "Start my season".
     func exitDemo() {

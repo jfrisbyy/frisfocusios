@@ -7,8 +7,12 @@
 //  start a clean personal season, or explore the fully-seeded sample
 //  sandbox. Shown only while the Store sits in `.uninitialized`.
 //
+//  A subtle "Already have an account? Sign in" link sits at the bottom
+//  of every page so returning users can restore their account.
+//
 
 import SwiftUI
+import AuthenticationServices
 
 struct FirstRunIntroView: View {
     /// Begin a clean, empty personal journey → guided season setup.
@@ -16,9 +20,11 @@ struct FirstRunIntroView: View {
     /// Load the fully-lived-in sample sandbox.
     let onStartDemo: () -> Void
 
+    @Environment(AuthManager.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page: Int = 0
     @State private var appeared: Bool = false
+    @State private var showSignIn: Bool = false
 
     private static let pages: [IntroPage] = [
         IntroPage(
@@ -47,7 +53,8 @@ struct FirstRunIntroView: View {
     private var isLastPage: Bool { page == Self.pages.count }
 
     var body: some View {
-        ZStack {
+        @Bindable var auth = auth
+        return ZStack {
             backdrop
 
             TabView(selection: $page) {
@@ -62,17 +69,34 @@ struct FirstRunIntroView: View {
                     .padding(.horizontal, 28)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .ignoresSafeArea()
-
-            VStack {
-                Spacer()
+            // Footer lives in the bottom safe-area inset so it always sits
+            // comfortably above the home indicator and the pages above it
+            // are automatically inset — never clipped or overlapped.
+            .safeAreaInset(edge: .bottom) {
                 footer
-                    .padding(.bottom, 44)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
             }
         }
         .opacity(appeared ? 1 : 0)
         .onAppear {
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.6)) { appeared = true }
+        }
+        .sheet(isPresented: $showSignIn) {
+            SignInSheet()
+                .environment(auth)
+                .presentationDetents([.height(420)])
+                .presentationDragIndicator(.visible)
+        }
+        // A completed sign-in dismisses the sheet immediately; the intro
+        // cover itself dismisses once the Store leaves `.uninitialized`.
+        .onChange(of: auth.user?.id) { _, newId in
+            if newId != nil { showSignIn = false }
+        }
+        .alert("Sign in failed", isPresented: $auth.showError) {
+            Button("OK") {}
+        } message: {
+            Text(auth.errorMessage)
         }
     }
 
@@ -102,10 +126,10 @@ struct FirstRunIntroView: View {
         .ignoresSafeArea()
     }
 
-    // MARK: Footer (dots + skip)
+    // MARK: Footer (dots + skip + sign-in)
 
     private var footer: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 14) {
             HStack(spacing: 8) {
                 ForEach(0...Self.pages.count, id: \.self) { index in
                     Capsule()
@@ -131,6 +155,22 @@ struct FirstRunIntroView: View {
                 // Keep the footer height stable on the choice screen.
                 Color.clear.frame(height: 18)
             }
+
+            // Always-present sign-in entry for returning users.
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showSignIn = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Already have an account?")
+                        .foregroundStyle(Theme.textTertiary)
+                    Text("Sign in")
+                        .foregroundStyle(Theme.textPrimary)
+                        .fontWeight(.semibold)
+                }
+                .font(.sans(13.5, weight: .regular))
+            }
+            .buttonStyle(.plain)
         }
     }
 }
@@ -154,27 +194,28 @@ private struct IntroPageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer()
+            Spacer(minLength: 12)
 
             ZStack {
                 Circle()
                     .fill(page.tint.opacity(0.14))
-                    .frame(width: 116, height: 116)
+                    .frame(width: 108, height: 108)
                 Image(systemName: page.symbol)
-                    .font(.system(size: 46, weight: .regular))
+                    .font(.system(size: 44, weight: .regular))
                     .foregroundStyle(page.tint)
                     .symbolRenderingMode(.hierarchical)
             }
             .scaleEffect(shown ? 1 : 0.8)
             .opacity(shown ? 1 : 0)
-            .padding(.bottom, 34)
+            .padding(.bottom, 30)
 
             EyebrowText(text: page.eyebrow, opacity: 0.5)
                 .padding(.bottom, 14)
 
             Text(page.title)
-                .font(.serif(34, weight: .semibold))
+                .font(.serif(33, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
+                .minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 16)
 
@@ -184,8 +225,7 @@ private struct IntroPageView: View {
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Spacer()
-            Spacer()
+            Spacer(minLength: 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
@@ -208,14 +248,15 @@ private struct IntroChoiceView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer()
+            Spacer(minLength: 12)
 
             EyebrowText(text: "READY WHEN YOU ARE", opacity: 0.5)
                 .padding(.bottom, 14)
 
             Text("How do you\nwant to begin?")
-                .font(.serif(34, weight: .semibold))
+                .font(.serif(33, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
+                .minimumScaleFactor(0.85)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 12)
 
@@ -224,7 +265,7 @@ private struct IntroChoiceView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 30)
+                .padding(.bottom, 28)
 
             Button {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -243,8 +284,7 @@ private struct IntroChoiceView: View {
             }
             .buttonStyle(.plain)
 
-            Spacer()
-            Spacer()
+            Spacer(minLength: 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .opacity(shown ? 1 : 0)
@@ -310,6 +350,91 @@ private struct IntroChoiceView: View {
     }
 }
 
+// MARK: - Sign-in sheet
+
+/// A compact sign-in surface for returning users, mirroring the
+/// Apple / Google buttons used in the account hub. On success the
+/// Store's `restoreFromSignIn()` (wired in ContentView) moves the app
+/// out of `.uninitialized` and the welcome cover dismisses straight
+/// onto the restored home.
+private struct SignInSheet: View {
+    @Environment(AuthManager.self) private var auth
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 10) {
+                EyebrowText(text: "WELCOME BACK", opacity: 0.5)
+
+                Text("Sign in to restore\nyour seasons")
+                    .font(.serif(25, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("Your season, journal, circles, and friends sync back to this device.")
+                    .font(.sans(13.5, weight: .regular))
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .padding(.horizontal, 12)
+            }
+            .padding(.top, 28)
+
+            VStack(spacing: 12) {
+                SignInWithAppleButton(.continue) { request in
+                    request.requestedScopes = [.email, .fullName]
+                } onCompletion: { _ in
+                    Task { await auth.signIn(provider: "apple") }
+                }
+                .signInWithAppleButtonStyle(.black)
+                .frame(height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .disabled(auth.isSigningIn)
+
+                googleButton
+            }
+            .padding(.top, 28)
+            .overlay(alignment: .top) {
+                if auth.isSigningIn {
+                    ProgressView()
+                        .tint(Theme.textPrimary)
+                        .padding(.top, -26)
+                }
+            }
+
+            Spacer(minLength: 12)
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity)
+        .background(Theme.warmWheat)
+    }
+
+    private var googleButton: some View {
+        Button {
+            Task { await auth.signIn(provider: "google") }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "globe")
+                    .font(.system(size: 17, weight: .semibold))
+                Text("Continue with Google")
+                    .font(.sans(17, weight: .medium))
+            }
+            .foregroundStyle(Theme.textPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(Theme.paperCream)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Theme.textPrimary.opacity(0.14), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(auth.isSigningIn)
+    }
+}
+
 #Preview {
     FirstRunIntroView(onStartClean: {}, onStartDemo: {})
+        .environment(AuthManager())
 }

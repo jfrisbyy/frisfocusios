@@ -37,6 +37,10 @@ struct ContentView: View {
     @State private var showCleanSeasonSetup: Bool = false
     /// Confirmation before wiping the sample sandbox.
     @State private var showExitDemoConfirm: Bool = false
+    /// True once a returning user signed in from the welcome intro, so
+    /// dismissing the cover never bounces them into guided season setup
+    /// while their real season is still restoring from the cloud.
+    @State private var didSignInFromIntro: Bool = false
 
     /// True while the first-run welcome should cover the home. The
     /// setter is a no-op — the cover only dismisses once the user's
@@ -76,7 +80,7 @@ struct ContentView: View {
             // First-launch welcome — covers the home until the user picks
             // a path. Non-dismissible: a choice must be made.
             .fullScreenCover(isPresented: introBinding, onDismiss: {
-                if store.needsSeasonSetup { showCleanSeasonSetup = true }
+                if store.needsSeasonSetup && !didSignInFromIntro { showCleanSeasonSetup = true }
             }) {
                 FirstRunIntroView(
                     onStartClean: { store.startCleanSeason() },
@@ -113,6 +117,16 @@ struct ContentView: View {
                 SeasonSetupFlowView()
             }
             .environment(store)
+            // A returning user signing in from the welcome intro: move the
+            // Store out of `.uninitialized` so the cover dismisses straight
+            // onto home. Their real data restores via the sync `.task`
+            // below; we flag the sign-in so setup never auto-launches.
+            .onChange(of: auth.user?.id) { _, newId in
+                if newId != nil && store.appMode == .uninitialized {
+                    didSignInFromIntro = true
+                    store.restoreFromSignIn()
+                }
+            }
             .onOpenURL { url in
                 // A shared invite link (or scanned QR) opens us straight
                 // to the inviter's profile with an Add control.
