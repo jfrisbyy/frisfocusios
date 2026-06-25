@@ -252,6 +252,10 @@ struct HomeView: View {
                         }
                     }
 
+                    // First-check coaching, only in the session right
+                    // after the cold-start board lands here.
+                    ColdStartCoachBanner()
+
                     // Live friend-graph moments — a request just arrived,
                     // or someone accepted yours. Tap opens Friends.
                     FriendRequestBanner {

@@ -83,7 +83,6 @@ struct ContentView: View {
                 if store.needsSeasonSetup && !didSignInFromIntro { showCleanSeasonSetup = true }
             }) {
                 FirstRunIntroView(
-                    onStartClean: { store.startCleanSeason() },
                     onStartDemo: { store.startDemo() }
                 )
                 .interactiveDismissDisabled(true)

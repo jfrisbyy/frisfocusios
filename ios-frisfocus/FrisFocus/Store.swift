@@ -57,6 +57,12 @@ final class Store {
     /// the welcome intro is shown over the home while this holds.
     var needsFirstRunIntro: Bool { appMode == .uninitialized }
 
+    /// True for the session right after the cold-start board lands on
+    /// home — drives the gentle first-check coaching ("the sun's
+    /// rising"). Transient: never persisted, so it only ever shows once,
+    /// right after onboarding, and is gone on the next launch.
+    var coldStartCoaching: Bool = false
+
     /// True while a clean start is waiting for its first real season —
     /// the placeholder season has no name yet. Drives the automatic
     /// jump into guided season setup after "Start my season" / "Exit demo".
@@ -3785,6 +3791,91 @@ extension Store {
         persistAppMode()
         markAllDirty()
         flushPendingSaves()
+    }
+
+    /// Commit the 60-second cold-start board. Builds a real (named)
+    /// season from the chosen directions so the sun has a ratio to
+    /// compute, pins every kept task to today's plan, and lands the
+    /// person on their live home with the sun low. The season is named,
+    /// so `needsSeasonSetup` reads false and the deep season conversation
+    /// never auto-launches — it stays optional, ready to absorb this
+    /// board later. Tasks score on an invisible flat default; no point
+    /// number is shown until the season conversation assigns real values.
+    func commitColdStart(board: [ColdStartFinalTask], directionTitles: [String]) {
+        wipeAllData()
+
+        let cal = Calendar.current
+        let now = Date()
+        let perTaskPoints = 10
+
+        // Daily plan tasks — pinned daily, flat-scored, grouped by the
+        // suggested life-area's mapped category. Order is the ranking
+        // prior the season conversation can build on.
+        var built: [FFTask] = []
+        for item in board {
+            built.append(FFTask(
+                title: item.label,
+                category: item.lifeArea.appCategory,
+                pointValue: perTaskPoints,
+                tier: .should,
+                pinSchedule: .daily
+            ))
+        }
+
+        // Season categories from the board, first appearance = primary.
+        var categories: [SeasonCategory] = []
+        var seenCats = Set<Category>()
+        for item in board where !seenCats.contains(item.lifeArea.appCategory) {
+            seenCats.insert(item.lifeArea.appCategory)
+            categories.append(SeasonCategory(
+                category: item.lifeArea.appCategory,
+                tier: categories.isEmpty ? .primary : .support
+            ))
+        }
+
+        let dailyGoal = max(perTaskPoints, built.count * perTaskPoints)
+        let seasonName: String = {
+            if directionTitles.count == 1, let only = directionTitles.first { return only }
+            return "Your First Season"
+        }()
+
+        var season = Store.emptySeason()
+        season.name = seasonName
+        season.startDate = cal.startOfDay(for: now)
+        season.startedAt = now
+        season.dailyGoal = dailyGoal
+        season.weeklyGoal = dailyGoal * 7
+        season.categories = categories
+        season.endMode = .openEnded
+        season.intention = "Started with a clean board."
+
+        currentSeason = season
+        tasks = built
+        appMode = .clean
+        coldStartCoaching = true
+        persistAppMode()
+        markAllDirty()
+        flushPendingSaves()
+    }
+
+    /// Today's board progress for the first-check coaching line:
+    /// how many of today's planned items are done, and the total.
+    var coldStartProgress: (done: Int, total: Int) {
+        var done = 0
+        var total = 0
+        for item in todaysPlan {
+            switch item {
+            case .task(let task):
+                total += 1
+                if hasLogEntryToday(forTaskId: task.id) { done += 1 }
+            case .todo(let todo):
+                total += 1
+                if todo.isCompleted { done += 1 }
+            case .cadenceLink:
+                break
+            }
+        }
+        return (done, total)
     }
 }
 
