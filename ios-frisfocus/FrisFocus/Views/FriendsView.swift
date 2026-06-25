@@ -21,7 +21,10 @@ struct FriendsView: View {
     /// The app-wide friend graph — shared with the banners and avatar
     /// dot, so accepting here clears the alerts everywhere instantly.
     @Environment(FriendGraphService.self) private var service
+    @Environment(WalkthroughManager.self) private var walkthrough
     @State private var discover = DiscoverService()
+    /// The People-privacy concept lesson, fired once on first visit.
+    @State private var lesson: WalkthroughLesson?
     @State private var query: String = ""
     @State private var hasSearched: Bool = false
     @State private var searchTask: Task<Void, Never>?
@@ -50,6 +53,18 @@ struct FriendsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Theme.warmWheat, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                WalkthroughHelpButton { lesson = .peoplePrivacy }
+            }
+        }
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0) }
+        .onAppear {
+            // The privacy model, exactly when it becomes relevant.
+            if auth.user != nil, walkthrough.shouldFire(.peoplePrivacy) {
+                lesson = .peoplePrivacy
+            }
+        }
         .task { await reload() }
         .refreshable { await reload() }
         .alert("Something went wrong", isPresented: $service.showError) {

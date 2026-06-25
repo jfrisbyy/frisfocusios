@@ -63,6 +63,14 @@ final class Store {
     /// right after onboarding, and is gone on the next launch.
     var coldStartCoaching: Bool = false
 
+    /// True while the post-board account seam (sign-in → claim name →
+    /// invite) is being shown over the home. Keeps the first-run cover
+    /// up even after `commitColdStart` flips `appMode` to `.clean`, so the
+    /// person finishes the seam before landing on their live home.
+    /// Transient: never persisted, so a force-quit mid-seam simply leaves
+    /// them on their saved board, signed out, on the next launch.
+    var accountSeamActive: Bool = false
+
     /// True while a clean start is waiting for its first real season —
     /// the placeholder season has no name yet. Drives the automatic
     /// jump into guided season setup after "Start my season" / "Exit demo".
@@ -3853,6 +3861,9 @@ extension Store {
         tasks = built
         appMode = .clean
         coldStartCoaching = true
+        // Keep the first-run cover up: the account seam (sign-in → name →
+        // invite) runs over the home before the person starts tracking.
+        accountSeamActive = true
         persistAppMode()
         markAllDirty()
         flushPendingSaves()

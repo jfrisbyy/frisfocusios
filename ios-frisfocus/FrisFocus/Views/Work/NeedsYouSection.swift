@@ -13,7 +13,11 @@ import UIKit
 
 struct NeedsYouSection: View {
     @Environment(Store.self) private var store
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.openURL) private var openURL
+    /// The "ask for a read" concept lesson, fired once when a read first
+    /// becomes available.
+    @State private var lesson: WalkthroughLesson?
 
     /// Start a timed focus block on a task (wired to WorkZoneView's flow).
     let onStartFocus: (FFTask) -> Void
@@ -36,6 +40,18 @@ struct NeedsYouSection: View {
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.rankedNeedsYou)
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0) }
+        .onChange(of: store.canShowReadPrompt) { _, can in
+            fireReadLessonIfReady(available: can)
+        }
+        .onAppear { fireReadLessonIfReady(available: store.canShowReadPrompt) }
+    }
+
+    /// Fire the read concept the first time a read can actually be asked
+    /// for — in context, never upfront.
+    private func fireReadLessonIfReady(available: Bool) {
+        guard available, lesson == nil, walkthrough.shouldFire(.theRead) else { return }
+        lesson = .theRead
     }
 
     // MARK: - Content router
@@ -65,6 +81,9 @@ struct NeedsYouSection: View {
     private func header(count: Int) -> some View {
         HStack(alignment: .firstTextBaseline) {
             EyebrowText(text: "Needs You", opacity: 0.6)
+            if walkthrough.seen.contains(WalkthroughLesson.theRead.id) {
+                WalkthroughHelpButton { lesson = .theRead }
+            }
             Spacer()
             if count > 0 {
                 Text("\(count) thing\(count == 1 ? "" : "s")")

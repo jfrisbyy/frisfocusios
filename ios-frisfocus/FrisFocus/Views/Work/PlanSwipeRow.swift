@@ -9,6 +9,11 @@
 //  drags engage, so vertical scrolling and the card's own tap /
 //  long-press stay intact.
 //
+//  Once an item is finished, the right-swipe changes meaning: instead
+//  of re-completing it, it opens the camera to capture proof (warm sun
+//  backing + camera glyph). This is the hidden swipe-to-capture gesture
+//  the mechanics tour teaches.
+//
 
 import SwiftUI
 import UIKit
@@ -18,6 +23,11 @@ struct PlanSwipeRow<Content: View>: View {
     let onComplete: () -> Void
     /// Swipe-left action — take the item off today.
     let onRemove: () -> Void
+    /// Whether the wrapped item is already finished today. When true, the
+    /// right-swipe captures proof instead of re-completing.
+    var isCompleted: Bool = false
+    /// Right-swipe on a finished item — open the proof camera.
+    var onCaptureProof: (() -> Void)? = nil
     @ViewBuilder var content: Content
 
     @State private var offsetX: CGFloat = 0
@@ -55,7 +65,11 @@ struct PlanSwipeRow<Content: View>: View {
                 let dx = value.translation.width
                 if dx > threshold {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    onComplete()
+                    if isCompleted, let onCaptureProof {
+                        onCaptureProof()
+                    } else {
+                        onComplete()
+                    }
                 } else if dx < -threshold {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     onRemove()
@@ -72,13 +86,15 @@ struct PlanSwipeRow<Content: View>: View {
     @ViewBuilder
     private var swipeBacking: some View {
         let isRight = offsetX >= 0
+        // A finished item's right-swipe captures proof — warm sun backing
+        // and a camera glyph instead of the green check.
+        let captureMode = isRight && isCompleted && onCaptureProof != nil
+        let fill: Color = captureMode ? Theme.sunOuter : (isRight ? Theme.alertGreen : Theme.alertRed)
+        let glyph = captureMode ? "camera.fill" : (isRight ? "checkmark.circle.fill" : "xmark.circle")
         RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
-            .fill(
-                (isRight ? Theme.alertGreen : Theme.alertRed)
-                    .opacity(Double(progress) * (isRight ? 0.9 : 0.75))
-            )
+            .fill(fill.opacity(Double(progress) * (isRight ? 0.9 : 0.75)))
             .overlay(alignment: isRight ? .leading : .trailing) {
-                Image(systemName: isRight ? "checkmark.circle.fill" : "xmark.circle")
+                Image(systemName: glyph)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 22)

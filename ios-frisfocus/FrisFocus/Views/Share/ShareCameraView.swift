@@ -29,6 +29,7 @@ struct ShareCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(Store.self) private var store
     @Environment(ProfileStore.self) private var profileStore
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// What's being shared — a day (or week), a milestone, or a
@@ -83,6 +84,8 @@ struct ShareCameraView: View {
 
     // Visual effects
     @State private var flashOpacity: Double = 0
+    /// The share-attribution concept lesson, fired once on first reach.
+    @State private var attributionLesson: WalkthroughLesson?
 
     @AppStorage("share.chipHint.seen") private var chipHintSeen: Bool = false
     @AppStorage("share.shutterHint.seen") private var shutterHintSeen: Bool = false
@@ -180,7 +183,16 @@ struct ShareCameraView: View {
         .onAppear {
             buildPages()
             Task { await camera.requestAccessAndStart() }
+            // Attribution — taught the first time the share surface is
+            // reached, after a beat so it doesn't fight the camera open.
+            if walkthrough.shouldFire(.shareAttribution) {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(700))
+                    if attributionLesson == nil { attributionLesson = .shareAttribution }
+                }
+            }
         }
+        .walkthroughLessonSheet($attributionLesson) { walkthrough.markSeen($0) }
         .onDisappear {
             pressTimerTask?.cancel()
             camera.stop()

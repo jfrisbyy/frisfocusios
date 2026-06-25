@@ -29,6 +29,7 @@ struct ContentView: View {
     @Environment(FriendGraphService.self) private var friendGraph
     @Environment(NotesSyncService.self) private var notesSync
     @Environment(SeasonSyncService.self) private var seasonSync
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
@@ -47,7 +48,7 @@ struct ContentView: View {
     /// choice flips `appMode` out of `.uninitialized`.
     private var introBinding: Binding<Bool> {
         Binding(
-            get: { store.needsFirstRunIntro },
+            get: { store.needsFirstRunIntro || store.accountSeamActive },
             set: { _ in }
         )
     }
@@ -80,7 +81,14 @@ struct ContentView: View {
             // First-launch welcome — covers the home until the user picks
             // a path. Non-dismissible: a choice must be made.
             .fullScreenCover(isPresented: introBinding, onDismiss: {
-                if store.needsSeasonSetup && !didSignInFromIntro { showCleanSeasonSetup = true }
+                if store.needsSeasonSetup && !didSignInFromIntro {
+                    showCleanSeasonSetup = true
+                } else if !didSignInFromIntro && store.appMode == .clean {
+                    // A fresh cold-start user has just saved their board and
+                    // account — teach the core gestures interactively before
+                    // they start tracking. (Returning sign-ins skip this.)
+                    startMechanicsTourIfFresh()
+                }
             }) {
                 FirstRunIntroView(
                     onStartDemo: { store.startDemo() }
@@ -264,6 +272,21 @@ struct ContentView: View {
                     }
                 }
             }
+    }
+}
+
+// MARK: - Mechanics tour kickoff
+
+extension ContentView {
+    /// Launch the Layer-A mechanics tour for a brand-new cold-start user,
+    /// flagging the quantity lesson only when their board actually has a
+    /// tiered/increment task to log.
+    fileprivate func startMechanicsTourIfFresh() {
+        let hasQuantity = store.todaysPlan.contains { item in
+            if case .task(let task) = item { return task.requiresQuantityLogging }
+            return false
+        }
+        walkthrough.startMechanicsTour(includesQuantity: hasQuantity)
     }
 }
 

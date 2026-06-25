@@ -27,7 +27,7 @@ struct FirstRunIntroView: View {
     @State private var phase: Phase = .welcome
     @State private var showSignIn: Bool = false
 
-    private enum Phase { case welcome, coldStart }
+    private enum Phase { case welcome, coldStart, account }
 
     var body: some View {
         @Bindable var auth = auth
@@ -47,11 +47,25 @@ struct FirstRunIntroView: View {
             case .coldStart:
                 ColdStartFlowView(
                     onComplete: { board, titles in
+                        // Save the board to the device now (flips appMode
+                        // to .clean and raises `accountSeamActive`, which
+                        // keeps this cover up), then walk the account seam.
                         store.commitColdStart(board: board, directionTitles: titles)
+                        advance(to: .account)
                     },
                     onBack: { advance(to: .welcome) }
                 )
                 .transition(.opacity)
+
+            case .account:
+                AccountSeamView(
+                    onFinish: {
+                        // Drop the cover → land on the live home with the
+                        // saved board, ready for the first check.
+                        store.accountSeamActive = false
+                    }
+                )
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.99)))
             }
         }
         .sheet(isPresented: $showSignIn) {

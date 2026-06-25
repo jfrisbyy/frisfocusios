@@ -23,7 +23,11 @@ struct HomeView: View {
     @Environment(MessageGraphService.self) private var messageGraph
     @Environment(GoldenHourService.self) private var goldenHour
     @Environment(FriendGraphService.self) private var friendGraph
+    @Environment(WalkthroughManager.self) private var walkthrough
     @State private var locationService = LocationService()
+    /// The contextual concept lesson currently presented on home
+    /// (day-shape, full day). One at a time, each fires once.
+    @State private var homeLesson: WalkthroughLesson?
     @State private var activeZone: HomeZone = .sun
     @State private var zoneFrames: [HomeZone: CGRect] = [:]
     /// Whether the Sun zone's season detail is unfolded inline. Owned
@@ -240,6 +244,26 @@ struct HomeView: View {
                     }
                 }
             }
+            // Mechanics tour: bring the Today plan into view on each
+            // gesture step so the real cards are there to act on.
+            .onChange(of: walkthrough.tourStep) { _, step in
+                guard step != nil else { return }
+                withAnimation(.easeInOut(duration: 0.5)) {
+                    scrollProxy.scrollTo(HomeZone.work.anchorID, anchor: .top)
+                }
+            }
+            // The check-off lesson advances on the real check; the
+            // home lessons fire as the day's shape becomes meaningful.
+            .onChange(of: store.coldStartProgress.done) { old, new in
+                handleTourCheck(old: old, new: new, proxy: scrollProxy)
+                maybeFireHomeLessons(done: new)
+            }
+            // Retiring the tour clears the parallel first-check banner.
+            .onChange(of: walkthrough.tourActive) { _, active in
+                if !active { store.coldStartCoaching = false }
+            }
+            .overlay { MechanicsTourOverlay() }
+            .walkthroughLessonSheet($homeLesson) { walkthrough.markSeen($0) }
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
                     // Time machine — the real home has transformed to a
@@ -253,8 +277,12 @@ struct HomeView: View {
                     }
 
                     // First-check coaching, only in the session right
-                    // after the cold-start board lands here.
-                    ColdStartCoachBanner()
+                    // after the cold-start board lands here. Suppressed
+                    // while the interactive mechanics tour is running so
+                    // the two never coach at once.
+                    if !walkthrough.tourActive {
+                        ColdStartCoachBanner()
+                    }
 
                     // Live friend-graph moments — a request just arrived,
                     // or someone accepted yours. Tap opens Friends.
@@ -353,6 +381,43 @@ struct HomeView: View {
 
     private var railTint: Color {
         activeZone.prefersDarkRail ? Theme.textPrimary : Theme.textCream
+    }
+
+    // MARK: - Mechanics tour + contextual lessons
+
+    /// The check-off lesson advances on the user's real first check: the
+    /// page glides up to reveal the sun that just rose (the hero moment),
+    /// holds a beat, then moves on to the swipe lesson. The quantity
+    /// lesson advances on the next logged amount.
+    private func handleTourCheck(old: Int, new: Int, proxy: ScrollViewProxy) {
+        guard walkthrough.tourActive, new > old else { return }
+        switch walkthrough.tourStep {
+        case .checkOff:
+            withAnimation(.easeInOut(duration: 0.55)) {
+                proxy.scrollTo(HomeZone.sun.anchorID, anchor: .top)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                walkthrough.advanceTour()
+            }
+        case .quantity:
+            walkthrough.advanceTour()
+        default:
+            break
+        }
+    }
+
+    /// Fire the home concept lessons just-in-time: the day-shape lesson a
+    /// few tasks in, the full-day note when the day is complete. Never
+    /// during the tour, and only one at a time.
+    private func maybeFireHomeLessons(done: Int) {
+        guard !walkthrough.tourActive, homeLesson == nil else { return }
+        let total = store.coldStartProgress.total
+        guard total > 0 else { return }
+        if done >= total, walkthrough.shouldFire(.fullDay) {
+            homeLesson = .fullDay
+        } else if done >= 2, done < total, walkthrough.shouldFire(.dayShape) {
+            homeLesson = .dayShape
+        }
     }
 
     // MARK: - Tap handling

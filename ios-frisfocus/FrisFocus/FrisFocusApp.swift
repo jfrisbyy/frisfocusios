@@ -41,6 +41,9 @@ struct FrisFocusApp: App {
     /// App-wide focus app-blocking (Screen Time shield) + the chosen
     /// blocklist, shared by solo and grove focus.
     @State private var focusBlocking = FocusBlockingService.shared
+    /// First-run teaching: the interactive mechanics tour + the
+    /// contextual concept lessons, with their once-each seen tracking.
+    @State private var walkthrough = WalkthroughManager()
 
     var body: some Scene {
         WindowGroup {
@@ -57,6 +60,7 @@ struct FrisFocusApp: App {
                 .environment(notesSync)
                 .environment(seasonSync)
                 .environment(focusBlocking)
+                .environment(walkthrough)
                 .environment(appDelegate.notifications)
                 .preferredColorScheme(.light)
                 .statusBarHidden(false)

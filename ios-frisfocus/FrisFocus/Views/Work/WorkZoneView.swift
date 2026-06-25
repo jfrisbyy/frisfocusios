@@ -18,6 +18,9 @@ import UIKit
 
 struct WorkZoneView: View {
     @Environment(Store.self) private var store
+    @Environment(WalkthroughManager.self) private var walkthrough
+    /// The finished task whose proof camera is open (swipe-to-capture).
+    @State private var proofTask: FFTask?
     @State private var showCaptureSheet: Bool = false
     @State private var showQuickAdd: Bool = false
     @State private var showWeekSchedule: Bool = false
@@ -105,6 +108,13 @@ struct WorkZoneView: View {
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
         }
+        .fullScreenCover(item: $proofTask) { task in
+            CaptureView(
+                mode: .generalPost,
+                initialTaskSticker: TaskStickerBlock(task: task, isChecked: true)
+            )
+            .environment(store)
+        }
         .sheet(isPresented: $showQuickAdd) {
             QuickAddToDaySheet()
                 .environment(store)
@@ -178,7 +188,9 @@ struct WorkZoneView: View {
         case .task(let task):
             PlanSwipeRow(
                 onComplete: { completeTaskViaSwipe(task) },
-                onRemove: { removeTaskFromToday(task) }
+                onRemove: { removeTaskFromToday(task) },
+                isCompleted: store.hasLogEntryToday(forTaskId: task.id),
+                onCaptureProof: { captureProof(for: task) }
             ) {
                 TaskCardView(task: task)
             }
@@ -217,6 +229,18 @@ struct WorkZoneView: View {
         guard !store.hasLogEntryToday(forTaskId: task.id) else { return }
         store.captureUndo("Completed \u{201C}\(task.title)\u{201D}")
         store.completeTask(task)
+    }
+
+    /// Swipe-right on a finished task: open the camera to capture proof.
+    /// During the mechanics tour, this performed gesture is what advances
+    /// the swipe-to-capture lesson.
+    private func captureProof(for task: FFTask) {
+        guard !store.isViewingPast else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if walkthrough.tourActive && walkthrough.tourStep == .swipeCapture {
+            walkthrough.advanceTour()
+        }
+        proofTask = task
     }
 
     /// Swipe-left on a task: take its today-pin off the plan.
