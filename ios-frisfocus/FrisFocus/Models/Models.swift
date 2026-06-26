@@ -803,6 +803,16 @@ struct FFTask: Codable, Identifiable {
     /// day this task is pinned. Drives the card's time chip and the
     /// weekly schedule's agenda ordering.
     var timeWindow: TimeWindow? = nil
+    /// Soft placement — a "vibe of when" used by the agenda day view.
+    /// Orthogonal to `timeWindow`: a task with a window is a hard anchor;
+    /// a task with only a `partOfDay` floats in that band; a task with
+    /// neither lives in the Anytime tray. Defaults to `.anytime` so
+    /// tasks persisted before this field decode unchanged.
+    var partOfDay: PartOfDay = .anytime
+    /// Set when this task was placed on a specific day by a day template,
+    /// so a later swap can clear exactly the template's stamped elements
+    /// while preserving manual additions. Nil for normal tasks.
+    var templateStamp: TemplateStamp? = nil
     var booster: BoosterRule? = nil
     var penalty: PenaltyRule? = nil
     /// The scoring shape (flat / tiered / quantity). Defaults to flat so
@@ -814,7 +824,7 @@ struct FFTask: Codable, Identifiable {
     // `booster` / `penalty` / `scoring` still hydrate. Missing keys fall
     // through to the property defaults.
     private enum CodingKeys: String, CodingKey {
-        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, booster, penalty, scoring
+        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, partOfDay, templateStamp, booster, penalty, scoring
     }
 
     init(
@@ -829,6 +839,8 @@ struct FFTask: Codable, Identifiable {
         oneOffPinDate: Date? = nil,
         skipDate: Date? = nil,
         timeWindow: TimeWindow? = nil,
+        partOfDay: PartOfDay = .anytime,
+        templateStamp: TemplateStamp? = nil,
         booster: BoosterRule? = nil,
         penalty: PenaltyRule? = nil,
         scoring: ScoringConfig = ScoringConfig()
@@ -844,6 +856,8 @@ struct FFTask: Codable, Identifiable {
         self.oneOffPinDate = oneOffPinDate
         self.skipDate = skipDate
         self.timeWindow = timeWindow
+        self.partOfDay = partOfDay
+        self.templateStamp = templateStamp
         self.booster = booster
         self.penalty = penalty
         self.scoring = scoring
@@ -862,6 +876,8 @@ struct FFTask: Codable, Identifiable {
         self.oneOffPinDate = try c.decodeIfPresent(Date.self, forKey: .oneOffPinDate)
         self.skipDate = try c.decodeIfPresent(Date.self, forKey: .skipDate)
         self.timeWindow = try c.decodeIfPresent(TimeWindow.self, forKey: .timeWindow)
+        self.partOfDay = try c.decodeIfPresent(PartOfDay.self, forKey: .partOfDay) ?? .anytime
+        self.templateStamp = try c.decodeIfPresent(TemplateStamp.self, forKey: .templateStamp)
         self.booster = try c.decodeIfPresent(BoosterRule.self, forKey: .booster)
         self.penalty = try c.decodeIfPresent(PenaltyRule.self, forKey: .penalty)
         self.scoring = try c.decodeIfPresent(ScoringConfig.self, forKey: .scoring) ?? ScoringConfig()
@@ -880,6 +896,8 @@ struct FFTask: Codable, Identifiable {
         try c.encodeIfPresent(oneOffPinDate, forKey: .oneOffPinDate)
         try c.encodeIfPresent(skipDate, forKey: .skipDate)
         try c.encodeIfPresent(timeWindow, forKey: .timeWindow)
+        try c.encode(partOfDay, forKey: .partOfDay)
+        try c.encodeIfPresent(templateStamp, forKey: .templateStamp)
         try c.encodeIfPresent(booster, forKey: .booster)
         try c.encodeIfPresent(penalty, forKey: .penalty)
         try c.encode(scoring, forKey: .scoring)
@@ -916,6 +934,11 @@ struct LogEntry: Codable, Identifiable {
     /// Set when this entry credits a completed `Milestone` (a large,
     /// one-time reward landing on the day it was achieved).
     var milestoneId: UUID? = nil
+    /// Set when this entry credits an honored `Bucket` (a time-bound,
+    /// content-open block). The bucket scores once for honoring the
+    /// block; a logged specific is recorded in `title`, not re-scored.
+    /// `nil` for everything else and entries persisted before buckets.
+    var bucketId: UUID? = nil
     /// Set when this entry credits one checked-off step of a
     /// "points per step" milestone, so unchecking can reverse exactly
     /// this credit. `nil` for everything else.

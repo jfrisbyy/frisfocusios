@@ -191,6 +191,25 @@ final class Store {
     /// several tasks (a category) and survive any single task's deletion.
     var boosters: [WeeklyBooster] = [] { didSet { markDirty(.boosters) } }
 
+    // MARK: - Agenda (S9 — buckets, templates, schedule config)
+
+    /// Time-bound, content-open blocks ("Movement block · 7–8"). They
+    /// resolve onto days like tasks and score once when honored.
+    var buckets: [Bucket] = [] { didSet { markDirty(.buckets) } }
+
+    /// Saved, reusable day-shapes. Stamped onto days (no live link).
+    var dayTemplates: [DayTemplate] = [] { didSet { markDirty(.dayTemplates) } }
+
+    /// Default-week template assignments (weekday → template).
+    var weekTemplateAssignments: [WeekTemplateAssignment] = [] { didSet { markDirty(.scheduleConfig) } }
+
+    /// Per-day template swaps (the holiday case), each reversible.
+    var daySwaps: [DaySwapRecord] = [] { didSet { markDirty(.scheduleConfig) } }
+
+    /// When true, the agenda day view is the user's default Today
+    /// landing instead of the flat list. Calm by default (false).
+    var agendaIsDefaultDayView: Bool = false { didSet { markDirty(.settings) } }
+
     // MARK: - Cadence link (Esengo)
 
     /// FrisFocus-side link records binding a Cadence routine (or an
@@ -423,6 +442,11 @@ final class Store {
         static let cadenceSurfacePointsSocially = "cadenceSurfacePointsSocially"
         static let reminderValueThreshold = "reminderValueThreshold"
         static let noteTagsEnabled = "noteTagsEnabled"
+        static let buckets = "buckets"
+        static let dayTemplates = "dayTemplates"
+        static let weekTemplateAssignments = "weekTemplateAssignments"
+        static let daySwaps = "daySwaps"
+        static let agendaIsDefaultDayView = "agendaIsDefaultDayView"
         static let dismissedEventGlances = "dismissedEventGlanceIds"
 
         // Legacy keys cleared by the DEBUG migration below.
@@ -590,6 +614,11 @@ final class Store {
             self.cadenceInviteDismissed = userDefaults.bool(forKey: Keys.cadenceInviteDismissed)
             self.cadenceSurfacePointsSocially = userDefaults.bool(forKey: Keys.cadenceSurfacePointsSocially)
             self.noteTagsEnabled = userDefaults.bool(forKey: Keys.noteTagsEnabled)
+            self.buckets = Store.loadArray(Keys.buckets) ?? []
+            self.dayTemplates = Store.loadArray(Keys.dayTemplates) ?? []
+            self.weekTemplateAssignments = Store.loadArray(Keys.weekTemplateAssignments) ?? []
+            self.daySwaps = Store.loadArray(Keys.daySwaps) ?? []
+            self.agendaIsDefaultDayView = userDefaults.bool(forKey: Keys.agendaIsDefaultDayView)
             if userDefaults.object(forKey: Keys.reminderValueThreshold) != nil {
                 self.reminderValueThreshold = userDefaults.integer(forKey: Keys.reminderValueThreshold)
             }
@@ -746,6 +775,7 @@ final class Store {
         case viewedStoryPostIds, pacts, pactCompletions, circleTaskRequests
         case focusSessions, sharedFocusBlocks, scheduledGroves
         case cadenceLinks, cadenceOutcomeFulfillments, consumedCadenceEventIds
+        case buckets, dayTemplates, scheduleConfig
         case settings
     }
 
@@ -858,12 +888,18 @@ final class Store {
         case .cadenceLinks: setJSON(cadenceLinks, forKey: Keys.cadenceLinks, encoder: encoder)
         case .cadenceOutcomeFulfillments: setJSON(cadenceOutcomeFulfillments, forKey: Keys.cadenceOutcomeFulfillments, encoder: encoder)
         case .consumedCadenceEventIds: setJSON(Array(consumedCadenceEventIds), forKey: Keys.consumedCadenceEventIds, encoder: encoder)
+        case .buckets: setJSON(buckets, forKey: Keys.buckets, encoder: encoder)
+        case .dayTemplates: setJSON(dayTemplates, forKey: Keys.dayTemplates, encoder: encoder)
+        case .scheduleConfig:
+            setJSON(weekTemplateAssignments, forKey: Keys.weekTemplateAssignments, encoder: encoder)
+            setJSON(daySwaps, forKey: Keys.daySwaps, encoder: encoder)
         case .settings:
             userDefaults.set(cadenceConnected, forKey: Keys.cadenceConnected)
             userDefaults.set(cadenceInviteDismissed, forKey: Keys.cadenceInviteDismissed)
             userDefaults.set(cadenceSurfacePointsSocially, forKey: Keys.cadenceSurfacePointsSocially)
             userDefaults.set(reminderValueThreshold, forKey: Keys.reminderValueThreshold)
             userDefaults.set(noteTagsEnabled, forKey: Keys.noteTagsEnabled)
+            userDefaults.set(agendaIsDefaultDayView, forKey: Keys.agendaIsDefaultDayView)
         }
     }
 
@@ -3200,6 +3236,9 @@ extension Store {
                 tasks[i].skipDate = nil
             }
         }
+
+        // Buckets follow the same one-off / skip sweep as tasks.
+        sweepStaleBucketFlags(asOf: today)
 
         // 2. Penalise yesterday's missed Must-Dos. Skipped on first
         //    launch — there's no "yesterday" to evaluate when the app

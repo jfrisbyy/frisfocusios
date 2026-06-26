@@ -23,7 +23,10 @@ struct WorkZoneView: View {
     @State private var proofTask: FFTask?
     @State private var showCaptureSheet: Bool = false
     @State private var showQuickAdd: Bool = false
-    @State private var showWeekSchedule: Bool = false
+    @State private var showAgenda: Bool = false
+    /// Auto-present the agenda once per session when the user has set it
+    /// as their default day view.
+    @State private var didAutoPresentAgenda: Bool = false
     @State private var showFocusStart: Bool = false
     @State private var showFocusMode: Bool = false
     @State private var showFocusGrove: Bool = false
@@ -88,7 +91,13 @@ struct WorkZoneView: View {
         .padding(.horizontal, Theme.pageHorizontalPadding)
         .frame(maxWidth: .infinity)
         .background(Theme.warmWheat)
-        .onAppear { store.needsYou.rolloverIfNeeded() }
+        .onAppear {
+            store.needsYou.rolloverIfNeeded()
+            if store.agendaIsDefaultDayView && !didAutoPresentAgenda && !store.isViewingPast {
+                didAutoPresentAgenda = true
+                showAgenda = true
+            }
+        }
         .confirmationDialog(
             "Clear today's plan?",
             isPresented: $showClearConfirm,
@@ -119,8 +128,8 @@ struct WorkZoneView: View {
             QuickAddToDaySheet()
                 .environment(store)
         }
-        .sheet(isPresented: $showWeekSchedule) {
-            WeekScheduleView()
+        .fullScreenCover(isPresented: $showAgenda) {
+            AgendaDayView(onSwitchToList: { showAgenda = false })
                 .environment(store)
         }
         .sheet(isPresented: $showFocusStart) {
@@ -294,13 +303,14 @@ struct WorkZoneView: View {
 
     // MARK: - Week schedule entry
 
-    /// Small calendar button beside FOCUS — opens the weekly schedule
-    /// page showing every task pinned to each day of the week.
+    /// Small calendar button beside FOCUS — opens the agenda day view
+    /// (bands, buckets, and the week strip). A list/agenda toggle inside
+    /// returns to this flat plan.
     @ViewBuilder
     private var weekScheduleButton: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showWeekSchedule = true
+            showAgenda = true
         } label: {
             Image(systemName: "calendar")
                 .font(.system(size: 12, weight: .semibold))
