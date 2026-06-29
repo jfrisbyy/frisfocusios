@@ -61,7 +61,7 @@ struct NoteEntryView: View {
             }
 
             if store.noteTagsEnabled && !note.tags.isEmpty {
-                NoteTagChipsView(tags: note.tags)
+                CollapsibleNoteTagsView(tags: note.tags)
                     .padding(.top, 2)
             }
         }
