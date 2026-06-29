@@ -60,11 +60,20 @@ struct SideRailView: View {
     /// finger keeps tracking even if it drifts left of the slim rail.
     private let scrubExpandedWidth: CGFloat = 110
     /// How far the finger must travel along the rail before scrub
-    /// engages. Small enough to feel like an instant grab, large enough
-    /// that a quick tap stays a tap (handled by the section Buttons) and
-    /// a stray micro-movement near the right edge doesn't hijack a
-    /// normal vertical scroll.
-    private let scrubEngageDistance: CGFloat = 8
+    /// engages. Deliberately generous so a quick tap stays a tap
+    /// (handled by the section Buttons) and a casual graze near the
+    /// right edge stays a normal vertical scroll — the rail only takes
+    /// over on an intentional drag.
+    private let scrubEngageDistance: CGFloat = 20
+    /// Only touches that START within this slim strip on the right edge
+    /// (the rail itself) can begin a scrub. A drag that begins further
+    /// left — over page content — is left alone so it scrolls normally.
+    private let grabZoneWidth: CGFloat = 44
+    /// The scrub must be clearly vertical to engage: the vertical travel
+    /// has to exceed the horizontal travel by this factor. A sideways or
+    /// diagonal motion (an ordinary scroll fling) no longer hijacks the
+    /// rail.
+    private let verticalDominanceRatio: CGFloat = 1.6
     /// Small vertical slop above/below the visible labels so the rail
     /// stays comfortable to grab — but no further. The rail's hit area
     /// used to span the entire screen height (the scrub backdrop is a
@@ -74,6 +83,11 @@ struct SideRailView: View {
     private let verticalHitSlop: CGFloat = 12
 
     @State private var isScrubbing: Bool = false
+    /// Latches true for the duration of a single drag once it has been
+    /// judged not-a-scrub (wrong origin or not vertical enough), so we
+    /// don't re-evaluate mid-gesture and accidentally grab a scroll that
+    /// later curves vertical.
+    @State private var gestureRejected: Bool = false
     @State private var railHeight: CGFloat = 0
     @State private var lastScrubZone: HomeZone?
     @State private var engageHaptic = UIImpactFeedbackGenerator(style: .medium)
@@ -132,6 +146,22 @@ struct SideRailView: View {
         DragGesture(minimumDistance: scrubEngageDistance, coordinateSpace: .local)
             .onChanged { value in
                 if !isScrubbing {
+                    if gestureRejected { return }
+
+                    // Must begin on the slim rail itself, not a wide
+                    // strip to its left over the page content.
+                    let startedOnRail = value.startLocation.x >= railWidth - grabZoneWidth
+                    // Must be a predominantly vertical scrub — sideways
+                    // or diagonal motion is left to the scroll view.
+                    let dx = abs(value.translation.width)
+                    let dy = abs(value.translation.height)
+                    let isVertical = dy > dx * verticalDominanceRatio
+
+                    guard startedOnRail, isVertical else {
+                        gestureRejected = true
+                        return
+                    }
+
                     isScrubbing = true
                     engageHaptic.prepare()
                     engageHaptic.impactOccurred()
@@ -154,6 +184,7 @@ struct SideRailView: View {
             .onEnded { _ in
                 isScrubbing = false
                 lastScrubZone = nil
+                gestureRejected = false
             }
     }
 
