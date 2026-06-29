@@ -570,6 +570,10 @@ struct CenteredSunView: View {
         }
         .frame(width: side, height: side)
         .clipShape(Circle())
+        // Flatten the stacked gradients + blurs into a single cached
+        // layer so the sun is rasterized once and simply slid as the
+        // page scrolls, rather than recomputing every blur as it moves.
+        .drawingGroup()
         .animation(.spring(response: 0.5, dampingFraction: 0.8), value: clamped)
         .accessibilityElement()
         .accessibilityLabel("Sun at \(Int((max(0, ratio) * 100).rounded())) percent of the daily goal")

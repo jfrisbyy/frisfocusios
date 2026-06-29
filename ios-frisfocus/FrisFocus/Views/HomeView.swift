@@ -28,21 +28,20 @@ struct HomeView: View {
     /// The contextual concept lesson currently presented on home
     /// (day-shape, full day). One at a time, each fires once.
     @State private var homeLesson: WalkthroughLesson?
-    @State private var activeZone: HomeZone = .sun
-    @State private var zoneFrames: [HomeZone: CGRect] = [:]
+    /// All scroll/zone bookkeeping lives here so updating the rail's
+    /// active zone + progress never invalidates the heavy page content.
+    @State private var scrollTracker = HomeScrollTracker()
     /// Whether the Sun zone's season detail is unfolded inline. Owned
     /// here so collapsing can scroll the zone back to the top of the
     /// screen. Never persisted — the home always launches compact.
     @State private var seasonExpanded: Bool = false
-    @State private var haptic = UIImpactFeedbackGenerator(style: .light)
     @State private var topSafeInset: CGFloat = 0
 
     // Continuous scrub support: bind the scroll view's position so the
-    // rail can drive it to an arbitrary offset, and track content vs.
-    // viewport height to map a 0...1 rail fraction onto a real y offset.
+    // rail can drive it to an arbitrary offset. Content vs. viewport
+    // heights (for the 0...1 rail fraction → y offset map) come from the
+    // scroll tracker, fed by `onScrollGeometryChange`.
     @State private var scrollPosition = ScrollPosition(edge: .top)
-    @State private var contentHeight: CGFloat = 0
-    @State private var viewportHeight: CGFloat = 0
 
     // Nav / sheet state
     @State private var showProfileSheet: Bool = false
@@ -58,7 +57,10 @@ struct HomeView: View {
     /// Auto-dismiss timer for the undo banner.
     @State private var undoDismissTask: Task<Void, Never>?
 
-    private let scrollSpace = "frisFocusScroll"
+    /// Coordinate space anchored to the scrolling content, so each
+    /// zone's measured top/height stays stable while the page scrolls
+    /// (the rail tracking reads these once rather than every frame).
+    private let contentSpace = "frisFocusContent"
 
     var body: some View {
         @Bindable var notifications = notifications
@@ -87,7 +89,7 @@ struct HomeView: View {
         }
         .onAppear {
             locationService.requestPermissionIfNeeded()
-            haptic.prepare()
+            scrollTracker.prepareHaptics()
             refreshTopSafeInset()
         }
         .fullScreenCover(item: $notifications.pendingRoute) { route in
@@ -174,35 +176,33 @@ struct HomeView: View {
                             .frame(height: 150)
                     }
                     .containerRelativeFrame(.horizontal)
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear
-                                .onAppear { contentHeight = proxy.size.height }
-                                .onChange(of: proxy.size.height) { _, h in contentHeight = h }
-                        }
-                    )
+                    .coordinateSpace(.named(contentSpace))
                 }
                 .scrollClipDisabled(false)
                 .scrollPosition($scrollPosition)
-                .coordinateSpace(.named(scrollSpace))
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear
-                            .onAppear { viewportHeight = proxy.size.height }
-                            .onChange(of: proxy.size.height) { _, h in viewportHeight = h }
-                    }
-                )
+                .onScrollGeometryChange(for: ScrollMetrics.self) { geo in
+                    ScrollMetrics(
+                        offsetY: geo.contentOffset.y,
+                        contentHeight: geo.contentSize.height,
+                        viewportHeight: geo.containerSize.height
+                    )
+                } action: { _, metrics in
+                    scrollTracker.updateScroll(
+                        offsetY: metrics.offsetY,
+                        contentHeight: metrics.contentHeight,
+                        viewportHeight: metrics.viewportHeight
+                    )
+                }
                 .background(Theme.warmWheat)
                 .ignoresSafeArea(edges: .top)
                 .onPreferenceChange(ZoneFramesPreferenceKey.self) { frames in
-                    zoneFrames = frames
-                    updateActiveZone()
+                    for (zone, frame) in frames {
+                        scrollTracker.updateZoneFrame(zone, top: frame.minY, height: frame.height)
+                    }
                 }
                 .overlay(alignment: .trailing) {
-                    SideRailView(
-                        activeZone: activeZone,
-                        progress: progressInActiveZone,
-                        tint: railTint,
+                    HomeRailContainer(
+                        tracker: scrollTracker,
                         onTap: { zone in
                             handleRailTap(zone: zone, proxy: scrollProxy)
                         },
@@ -332,35 +332,9 @@ struct HomeView: View {
             Color.clear
                 .preference(
                     key: ZoneFramesPreferenceKey.self,
-                    value: [zone: proxy.frame(in: .named(scrollSpace))]
+                    value: [zone: proxy.frame(in: .named(contentSpace))]
                 )
         }
-    }
-
-    /// Active zone = the latest one we've started scrolling into
-    /// (progress ≥ 0). Fires a light haptic on change.
-    private func updateActiveZone() {
-        var newActive: HomeZone = .sun
-        for zone in HomeZone.allCases {
-            guard let frame = zoneFrames[zone], frame.height > 0 else { continue }
-            // Top of viewport is y == 0 in scroll-space; as user scrolls
-            // down, each zone's minY decreases below 0.
-            let progress = -frame.minY / frame.height
-            if progress >= 0 {
-                newActive = zone
-            }
-        }
-
-        guard newActive != activeZone else { return }
-        haptic.impactOccurred()
-        haptic.prepare()
-        activeZone = newActive
-    }
-
-    private var progressInActiveZone: Double {
-        guard let frame = zoneFrames[activeZone], frame.height > 0 else { return 0 }
-        let raw = -frame.minY / frame.height
-        return max(0.0, min(1.0, Double(raw)))
     }
 
     /// Reads the actual key window's top safe-area inset. We do this
@@ -377,10 +351,6 @@ struct HomeView: View {
         if inset > 0 {
             topSafeInset = inset
         }
-    }
-
-    private var railTint: Color {
-        activeZone.prefersDarkRail ? Theme.textPrimary : Theme.textCream
     }
 
     // MARK: - Mechanics tour + contextual lessons
@@ -434,7 +404,7 @@ struct HomeView: View {
     /// page like a scrollbar thumb — set directly (no animation) so it
     /// follows the finger frame-for-frame across the full page.
     private func scrubTo(fraction: Double) {
-        let maxOffset = max(0, contentHeight - viewportHeight)
+        let maxOffset = max(0, scrollTracker.contentHeight - scrollTracker.viewportHeight)
         let targetY = CGFloat(max(0, min(1, fraction))) * maxOffset
         scrollPosition.scrollTo(y: targetY)
     }
@@ -459,6 +429,37 @@ struct HomeView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Scroll metrics
+
+/// The slice of scroll geometry the rail tracker needs. Equatable so
+/// `onScrollGeometryChange` only fires the action when it actually moves.
+private struct ScrollMetrics: Equatable {
+    let offsetY: CGFloat
+    let contentHeight: CGFloat
+    let viewportHeight: CGFloat
+}
+
+// MARK: - Rail container
+
+/// Thin wrapper that reads the scroll tracker's active zone + progress
+/// so ONLY the rail re-renders as you scroll — the heavy page content
+/// never sees these changes.
+private struct HomeRailContainer: View {
+    let tracker: HomeScrollTracker
+    let onTap: (HomeZone) -> Void
+    let onScrub: (Double) -> Void
+
+    var body: some View {
+        SideRailView(
+            activeZone: tracker.activeZone,
+            progress: tracker.progress,
+            tint: tracker.activeZone.prefersDarkRail ? Theme.textPrimary : Theme.textCream,
+            onTap: onTap,
+            onScrub: onScrub
+        )
     }
 }
 
