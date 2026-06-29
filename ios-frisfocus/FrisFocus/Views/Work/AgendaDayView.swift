@@ -56,6 +56,7 @@ struct AgendaDayView: View {
     @State private var showTemplateLibrary: Bool = false
     @State private var showSaveTemplate: Bool = false
     @State private var dropTarget: PartOfDay?
+    @State private var addToBand: PartOfDay?
 
     private var isToday: Bool { Calendar.current.isDateInToday(selectedDay) }
 
@@ -146,6 +147,10 @@ struct AgendaDayView: View {
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(item: $addToBand) { band in
+            AddToSectionSheet(band: band, day: selectedDay)
+                .environment(store)
+        }
     }
 
     // MARK: - Day header
@@ -235,10 +240,7 @@ struct AgendaDayView: View {
 
     @ViewBuilder
     private func bandSection(_ band: PartOfDay) -> some View {
-        let fixed = fixedTasks(in: band)
-        let bucketList = bucketsInBand(band)
-        let soft = softTasks(in: band)
-        let isEmpty = fixed.isEmpty && bucketList.isEmpty && soft.isEmpty
+        let refs = store.orderedBandRefs(band, on: selectedDay)
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
@@ -252,29 +254,22 @@ struct AgendaDayView: View {
                 Rectangle()
                     .fill(Theme.textPrimary.opacity(0.10))
                     .frame(height: 0.5)
+                sectionAddButton(band)
             }
 
-            if isEmpty {
+            if refs.isEmpty {
                 Text("open")
                     .font(.serifItalic(12))
                     .foregroundStyle(Theme.textPrimary.opacity(0.3))
                     .padding(.vertical, 2)
             } else {
                 VStack(spacing: 8) {
-                    ForEach(fixed) { task in
-                        FixedBlockRow(task: task, interactive: isToday) { complete(task) }
-                            .contextMenu { taskMenu(task) }
-                            .draggable(AgendaElementRef.task(task.id).transferString)
-                    }
-                    ForEach(bucketList) { bucket in
-                        BucketBlockRow(bucket: bucket) { fulfillBucket = bucket }
-                            .contextMenu { bucketMenu(bucket) }
-                            .draggable(AgendaElementRef.bucket(bucket.id).transferString)
-                    }
-                    ForEach(soft) { task in
-                        SoftTaskRow(task: task, band: band, interactive: isToday) { complete(task) }
-                            .contextMenu { taskMenu(task) }
-                            .draggable(AgendaElementRef.task(task.id).transferString)
+                    ForEach(refs, id: \.self) { ref in
+                        bandRow(ref, band: band)
+                            .draggable(ref.transferString)
+                            .dropDestination(for: String.self) { items, _ in
+                                handleRowDrop(items, before: ref, in: band)
+                            } isTargeted: { _ in }
                     }
                 }
             }
@@ -319,6 +314,7 @@ struct AgendaDayView: View {
                 Text("off the clock")
                     .font(.serifItalic(11))
                     .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                sectionAddButton(.anytime)
             }
 
             if chips.isEmpty {
@@ -331,6 +327,9 @@ struct AgendaDayView: View {
                     TrayChip(task: task, interactive: isToday) { complete(task) }
                         .contextMenu { taskMenu(task) }
                         .draggable(AgendaElementRef.task(task.id).transferString)
+                        .dropDestination(for: String.self) { items, _ in
+                            handleRowDrop(items, before: .task(task.id), in: .anytime)
+                        } isTargeted: { _ in }
                 }
             }
         }
@@ -485,26 +484,51 @@ struct AgendaDayView: View {
 
     // MARK: - Element queries
 
-    private func fixedTasks(in band: PartOfDay) -> [FFTask] {
-        store.tasksPinned(on: selectedDay)
-            .filter { $0.timeWindow != nil && PartOfDay.band(forMinutes: $0.timeWindow!.startMinutes) == band }
-            .sorted { ($0.timeWindow?.startMinutes ?? 0) < ($1.timeWindow?.startMinutes ?? 0) }
-    }
-
-    private func softTasks(in band: PartOfDay) -> [FFTask] {
-        store.tasksPinned(on: selectedDay)
-            .filter { $0.timeWindow == nil && $0.partOfDay == band }
-            .sorted { $0.title < $1.title }
-    }
-
+    /// The Anytime tray's time-less tasks, in manual order (or default).
     private func anytimeTasks() -> [FFTask] {
-        store.tasksPinned(on: selectedDay)
-            .filter { $0.timeWindow == nil && $0.partOfDay == .anytime }
-            .sorted { $0.title < $1.title }
+        store.orderedBandRefs(.anytime, on: selectedDay).compactMap { ref in
+            if case .task(let id) = ref { return store.tasks.first { $0.id == id } }
+            return nil
+        }
     }
 
-    private func bucketsInBand(_ band: PartOfDay) -> [Bucket] {
-        store.bucketsPinned(on: selectedDay).filter { $0.resolvedBand == band }
+    // MARK: - Row rendering
+
+    @ViewBuilder
+    private func bandRow(_ ref: AgendaElementRef, band: PartOfDay) -> some View {
+        switch ref {
+        case .task(let id):
+            if let task = store.tasks.first(where: { $0.id == id }) {
+                if task.timeWindow != nil {
+                    FixedBlockRow(task: task, interactive: isToday) { complete(task) }
+                        .contextMenu { taskMenu(task) }
+                } else {
+                    SoftTaskRow(task: task, band: band, interactive: isToday) { complete(task) }
+                        .contextMenu { taskMenu(task) }
+                }
+            }
+        case .bucket(let id):
+            if let bucket = store.buckets.first(where: { $0.id == id }) {
+                BucketBlockRow(bucket: bucket) { fulfillBucket = bucket }
+                    .contextMenu { bucketMenu(bucket) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sectionAddButton(_ band: PartOfDay) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            addToBand = band
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Theme.textPrimary.opacity(0.06)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add a task to \(band.displayName)")
     }
 
     // MARK: - Actions
@@ -527,19 +551,67 @@ struct AgendaDayView: View {
         }
     }
 
-    /// Resolve a dropped payload onto a band (or the tray). Sets the
-    /// element's soft placement; fixed-timed tasks keep their window.
+    /// True when a ref is anchored to a real time (a fixed task or a
+    /// timed bucket) — such items keep their time-band and can't be
+    /// dragged into a different band.
+    private func isTimeAnchored(_ ref: AgendaElementRef) -> Bool {
+        switch ref {
+        case .task(let id):   return store.tasks.first { $0.id == id }?.timeWindow != nil
+        case .bucket(let id): return store.buckets.first { $0.id == id }?.timeWindow != nil
+        }
+    }
+
+    /// The band a ref currently resolves into.
+    private func currentBand(of ref: AgendaElementRef) -> PartOfDay? {
+        switch ref {
+        case .task(let id):
+            guard let t = store.tasks.first(where: { $0.id == id }) else { return nil }
+            if let w = t.timeWindow { return PartOfDay.band(forMinutes: w.startMinutes) }
+            return t.partOfDay
+        case .bucket(let id):
+            return store.buckets.first { $0.id == id }?.resolvedBand
+        }
+    }
+
+    /// Move a ref into `band`, inserting it before `target` (or at the
+    /// end when `target` is nil). Sets soft placement for non-anchored
+    /// items and rewrites the band's manual order.
+    private func move(_ source: AgendaElementRef, before target: AgendaElementRef?, into band: PartOfDay) {
+        // A fixed-time item can't change band — only reorder within its own.
+        if isTimeAnchored(source), currentBand(of: source) != band { return }
+        if !isTimeAnchored(source) {
+            switch source {
+            case .task(let id):   store.setPartOfDay(band, forTaskId: id)
+            case .bucket(let id): store.setPartOfDay(band, forBucketId: id)
+            }
+        }
+        var refs = store.orderedBandRefs(band, on: selectedDay).filter { $0 != source }
+        if let target, target != source, let ti = refs.firstIndex(of: target) {
+            refs.insert(source, at: ti)
+        } else {
+            refs.append(source)
+        }
+        store.applyAgendaOrder(refs)
+    }
+
+    /// A row-level drop: insert the dragged ref just before this row.
+    private func handleRowDrop(_ items: [String], before target: AgendaElementRef, in band: PartOfDay) -> Bool {
+        guard let raw = items.first, let ref = AgendaElementRef(transferString: raw), ref != target else { return false }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+            move(ref, before: target, into: band)
+        }
+        return true
+    }
+
+    /// A section-level drop (empty area / append): move to the end of
+    /// the band's order. Fixed-timed tasks keep their window.
     private func handleDrop(_ items: [String], into band: PartOfDay) -> Bool {
         dropTarget = nil
         guard let raw = items.first, let ref = AgendaElementRef(transferString: raw) else { return false }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-            switch ref {
-            case .task(let id):
-                store.setPartOfDay(band, forTaskId: id)
-            case .bucket(let id):
-                store.setPartOfDay(band, forBucketId: id)
-            }
+            move(ref, before: nil, into: band)
         }
         return true
     }

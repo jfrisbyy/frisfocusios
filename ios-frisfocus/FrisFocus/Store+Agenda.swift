@@ -162,6 +162,92 @@ extension Store {
         persistAll()
     }
 
+    // MARK: - Band ordering (manual reorder)
+
+    /// Every element in a band on a day, as refs, in display order.
+    /// Items the user has manually reordered sort by their `agendaOrder`;
+    /// the rest fall back to the sensible default (fixed-timed by time,
+    /// buckets, then soft tasks by title). `.anytime` returns the tray's
+    /// time-less tasks.
+    func orderedBandRefs(_ band: PartOfDay, on day: Date) -> [AgendaElementRef] {
+        struct Entry {
+            let ref: AgendaElementRef
+            let order: Int?
+            let typeRank: Int
+            let timeKey: Int
+            let title: String
+        }
+        var entries: [Entry] = []
+
+        if band == .anytime {
+            for t in tasksPinned(on: day) where t.timeWindow == nil && t.partOfDay == .anytime {
+                entries.append(Entry(ref: .task(t.id), order: t.agendaOrder, typeRank: 2, timeKey: 0, title: t.title))
+            }
+        } else {
+            for t in tasksPinned(on: day) where t.timeWindow != nil
+                && PartOfDay.band(forMinutes: t.timeWindow!.startMinutes) == band {
+                entries.append(Entry(ref: .task(t.id), order: t.agendaOrder, typeRank: 0,
+                                     timeKey: t.timeWindow!.startMinutes, title: t.title))
+            }
+            for b in bucketsPinned(on: day) where b.resolvedBand == band {
+                entries.append(Entry(ref: .bucket(b.id), order: b.agendaOrder, typeRank: 1,
+                                     timeKey: b.timeWindow?.startMinutes ?? Int.max, title: b.title))
+            }
+            for t in tasksPinned(on: day) where t.timeWindow == nil && t.partOfDay == band {
+                entries.append(Entry(ref: .task(t.id), order: t.agendaOrder, typeRank: 2, timeKey: 0, title: t.title))
+            }
+        }
+
+        return entries.sorted { a, b in
+            if let x = a.order, let y = b.order, x != y { return x < y }
+            if a.order != nil && b.order == nil { return true }
+            if a.order == nil && b.order != nil { return false }
+            if a.typeRank != b.typeRank { return a.typeRank < b.typeRank }
+            if a.timeKey != b.timeKey { return a.timeKey < b.timeKey }
+            return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+        }.map(\.ref)
+    }
+
+    /// Write a fresh `0..<count` manual order onto the given refs, in the
+    /// order supplied. This is the single source of truth for a band's
+    /// arrangement after a drag — order persists on every day the items
+    /// appear, matching how sections already behave.
+    func applyAgendaOrder(_ refs: [AgendaElementRef]) {
+        for (i, ref) in refs.enumerated() {
+            switch ref {
+            case .task(let id):
+                if let idx = tasks.firstIndex(where: { $0.id == id }) { tasks[idx].agendaOrder = i }
+            case .bucket(let id):
+                if let idx = buckets.firstIndex(where: { $0.id == id }) { buckets[idx].agendaOrder = i }
+            }
+        }
+        persistAll()
+    }
+
+    /// Pin an existing task onto a day and drop it into a band at the end
+    /// of that band's current order. Time-anchored tasks keep their real
+    /// time (and thus their time-band); soft tasks take the band as their
+    /// `partOfDay`. Used by the per-section "+".
+    func pinTask(_ task: FFTask, intoBand band: PartOfDay, on day: Date) {
+        guard let idx = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        let cal = Calendar.current
+        if let skip = tasks[idx].skipDate, cal.isDate(skip, inSameDayAs: day) {
+            tasks[idx].skipDate = nil
+        }
+        if !tasks[idx].isPinnedFor(day) {
+            tasks[idx].oneOffPinDate = cal.startOfDay(for: day)
+        }
+        if tasks[idx].timeWindow == nil {
+            tasks[idx].partOfDay = band
+        }
+        let resolved = tasks[idx].timeWindow != nil
+            ? PartOfDay.band(forMinutes: tasks[idx].timeWindow!.startMinutes)
+            : band
+        var refs = orderedBandRefs(resolved, on: day).filter { $0 != .task(task.id) }
+        refs.append(.task(task.id))
+        applyAgendaOrder(refs)
+    }
+
     // MARK: - Soft placement (partOfDay)
 
     /// Set a task's soft placement (the band it floats in, or `.anytime`

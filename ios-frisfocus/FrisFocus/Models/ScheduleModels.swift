@@ -116,13 +116,16 @@ struct Bucket: Codable, Identifiable, Equatable {
     /// onto a specific day, so a later swap can clear exactly the
     /// template's elements while leaving manual additions alone.
     var templateStamp: TemplateStamp? = nil
+    /// Manual position within its agenda band, set when the user drags
+    /// to reorder. `nil` means the band uses its default order.
+    var agendaOrder: Int? = nil
     var createdAt: Date = Date()
 
     // Backward-compatible decode tolerant of any future-added keys.
     private enum CodingKeys: String, CodingKey {
         case id, title, category, pointValue, timeWindow, partOfDay,
              pinSchedule, oneOffPinDate, skipDate, candidateTitles,
-             templateStamp, createdAt
+             templateStamp, agendaOrder, createdAt
     }
 
     init(
@@ -137,6 +140,7 @@ struct Bucket: Codable, Identifiable, Equatable {
         skipDate: Date? = nil,
         candidateTitles: [String] = [],
         templateStamp: TemplateStamp? = nil,
+        agendaOrder: Int? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -150,6 +154,7 @@ struct Bucket: Codable, Identifiable, Equatable {
         self.skipDate = skipDate
         self.candidateTitles = candidateTitles
         self.templateStamp = templateStamp
+        self.agendaOrder = agendaOrder
         self.createdAt = createdAt
     }
 
@@ -166,6 +171,7 @@ struct Bucket: Codable, Identifiable, Equatable {
         self.skipDate = try c.decodeIfPresent(Date.self, forKey: .skipDate)
         self.candidateTitles = try c.decodeIfPresent([String].self, forKey: .candidateTitles) ?? []
         self.templateStamp = try c.decodeIfPresent(TemplateStamp.self, forKey: .templateStamp)
+        self.agendaOrder = try c.decodeIfPresent(Int.self, forKey: .agendaOrder)
         self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 
@@ -182,6 +188,7 @@ struct Bucket: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(skipDate, forKey: .skipDate)
         try c.encode(candidateTitles, forKey: .candidateTitles)
         try c.encodeIfPresent(templateStamp, forKey: .templateStamp)
+        try c.encodeIfPresent(agendaOrder, forKey: .agendaOrder)
         try c.encode(createdAt, forKey: .createdAt)
     }
 }
