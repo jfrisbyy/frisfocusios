@@ -56,6 +56,14 @@ struct TaskCardView: View {
     /// Primary ink — charcoal on paper, cream on the sky.
     private var ink: Color { onSky ? Theme.textCream : Theme.textPrimary }
 
+    /// A gentle cue for the Season view, which now lists the full library:
+    /// tasks that aren't on today's plan (and aren't already done today)
+    /// read a touch quieter so the "on today" set stands out. Only in the
+    /// on-sky season context — the homepage plan only shows pinned tasks.
+    private var isOffToday: Bool {
+        onSky && !task.isPinnedToday && !isCompleted
+    }
+
     /// Whether this task is worth at least the reminder threshold — drives
     /// the quiet high-value emphasis on the checkbox.
     private var isHighValue: Bool {
@@ -178,6 +186,7 @@ struct TaskCardView: View {
                     lineWidth: 0.5
                 )
         )
+        .opacity(isOffToday ? 0.62 : 1.0)
         .animation(.easeInOut(duration: 0.25), value: isCompleted)
         .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         .accessibilityElement(children: .combine)

@@ -331,7 +331,7 @@ struct SeasonInlineDetailView: View {
 
     private var titleStrip: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text("Today's tasks")
+            Text("Season tasks")
                 .font(.serif(20, weight: .medium))
                 .foregroundStyle(Theme.textCream)
 
@@ -345,17 +345,15 @@ struct SeasonInlineDetailView: View {
         .padding(.top, 18)
     }
 
+    /// Reads the whole season library — total tasks plus how many are
+    /// pinned for today — so clearing today's plan no longer makes the
+    /// header read "no tasks."
     private var titleStripStatus: String {
-        let pinned = store.planTasksToday
-        let dueTodos = store.dueTodosToday
-        let done = pinned.filter { store.hasLogEntryToday(forTaskId: $0.id) }.count
-            + dueTodos.filter(\.isCompleted).count
-        let open = pinned.count + dueTodos.count - done
-
-        var parts: [String] = []
-        if done > 0 { parts.append("\(done) done") }
-        if open > 0 { parts.append("\(open) open") }
-        if parts.isEmpty { return "no tasks pinned" }
+        let all = store.tasks
+        if all.isEmpty { return "no tasks yet" }
+        let onToday = all.filter(\.isPinnedToday).count
+        var parts: [String] = ["\(all.count) task\(all.count == 1 ? "" : "s")"]
+        if onToday > 0 { parts.append("\(onToday) on today") }
         return parts.joined(separator: " · ")
     }
 
@@ -781,22 +779,22 @@ struct SeasonInlineDetailView: View {
         }
     }
 
-    /// Categories outside the season's rubric that still have tasks
-    /// pinned today. Appended after the season's own categories so every
-    /// task on Today's Plan appears here too — nothing is silently
-    /// dropped just because its category isn't part of the season.
-    private var extraCategoriesWithPins: [Category] {
+    /// Categories outside the season's rubric that still hold tasks in
+    /// the library. Appended after the season's own categories so every
+    /// season task appears here — nothing is silently dropped just
+    /// because its category isn't part of the season's rubric.
+    private var extraCategoriesWithTasks: [Category] {
         let seasonSet = Set(seasonCategoriesInTierOrder)
         return Category.allCases.filter { cat in
             !seasonSet.contains(cat)
-                && store.planTasksToday.contains { $0.category == cat }
+                && store.tasks.contains { $0.category == cat }
         }
     }
 
     /// The full pill/section order: season categories first (by tier),
-    /// then any out-of-season categories with pinned tasks today.
+    /// then any out-of-season categories that still hold tasks.
     private var allDisplayCategories: [Category] {
-        seasonCategoriesInTierOrder + extraCategoriesWithPins
+        seasonCategoriesInTierOrder + extraCategoriesWithTasks
     }
 
     /// Categories to render right now, accounting for the category filter
@@ -812,16 +810,22 @@ struct SeasonInlineDetailView: View {
         return base.filter { !tasksForCategory($0).isEmpty }
     }
 
-    /// Pinned-for-today Tasks in `category`, optionally narrowed by the
-    /// active mode filters. Reads the Store's central `planTasksToday`
-    /// so this list always matches Today's Plan and the proof picker.
+    /// The full season library in `category`, optionally narrowed by the
+    /// active mode filters. Reads `store.tasks` (not `planTasksToday`) so
+    /// clearing today's plan never empties the season view — tasks pinned
+    /// for today lead, the rest of the season follows.
     private func tasksForCategory(_ category: Category) -> [FFTask] {
-        store.planTasksToday.filter { task in
+        let filtered = store.tasks.filter { task in
             guard task.category == category else { return false }
             if showOpenOnly, store.hasLogEntryToday(forTaskId: task.id) { return false }
             if showHighValueOnly, task.nominalValue < store.reminderValueThreshold { return false }
             return true
         }
+        // Tasks on today's plan sort ahead of the rest of the season so
+        // the "on today" set reads first within each category.
+        let onToday = filtered.filter(\.isPinnedToday)
+        let rest = filtered.filter { !$0.isPinnedToday }
+        return onToday + rest
     }
 
     private func seasonCategory(for category: Category) -> SeasonCategory? {
@@ -834,7 +838,7 @@ struct SeasonInlineDetailView: View {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let taskIds = Set(
-            store.planTasksToday
+            store.tasks
                 .filter { $0.category == category }
                 .map(\.id)
         )
