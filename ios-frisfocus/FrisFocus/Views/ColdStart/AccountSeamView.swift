@@ -2,18 +2,27 @@
 //  AccountSeamView.swift
 //  FrisFocus
 //
-//  The get-started seam, shown after the cold-start board is saved and
-//  before the person starts tracking. Three warm steps:
+//  The get-started seam, shown after the cold-start season is saved and
+//  before the person starts tracking. Four warm steps:
 //
-//    1. Save your start  — one-tap Apple / Google sign-in (required)
-//    2. Claim your name  — a friendly, can't-fail @handle (+ optional photo)
-//    3. Find your people — strictly opt-in contacts invite
+//    1. People card    — the invitation (choose your people, private by
+//                        default, nothing public); leads the seam.
+//    2. Save your start — one-tap Apple / Google sign-in that attaches the
+//                        season they just built (required).
+//    3. Claim your name — a friendly, can't-fail @handle (+ optional photo)
+//    4. Bring your people — three optional invite routes (share link,
+//                        username search, opt-in contacts).
 //
 //  The dawn sky carries through from the cold start: pre-dawn violet on
-//  the sign-in step warming to bright cream on the name and invite steps,
-//  with two suns rising together (friends' seasons side by side) as a
-//  quiet progress cue. On finish the parent drops the first-run cover and
-//  the person lands on their live home with their board.
+//  the people card + sign-in warming to bright cream on the name and
+//  invite steps, with two suns rising together (friends' seasons side by
+//  side) as a quiet progress cue. On finish the parent drops the
+//  first-run cover and the person lands on their live home.
+//
+//  "Not now" on the people card sets `skippedPeople`, so the seam hops
+//  straight from name-claim to home — invites stay reachable later from
+//  the People page. Bail-safety is preserved throughout: the season is
+//  already frozen locally before this seam appears.
 //
 
 import SwiftUI
@@ -27,12 +36,15 @@ struct AccountSeamView: View {
     @Environment(ProfileStore.self) private var profileStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var step: Step = .save
+    @State private var step: Step = .peopleCard
     /// True while we resolve whether a freshly signed-in person is a
     /// returning user (skip straight home) or new (walk the seam).
     @State private var resolving: Bool = false
+    /// Set when the person taps "Not now" on the people card — the seam
+    /// then skips the invite step and lands on home after name-claim.
+    @State private var skippedPeople: Bool = false
 
-    enum Step: Int { case save, name, people }
+    enum Step: Int { case peopleCard, save, name, invite }
 
     var body: some View {
         ZStack {
@@ -42,18 +54,30 @@ struct AccountSeamView: View {
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.6), value: sunProgress)
 
             switch step {
+            case .peopleCard:
+                PeopleCardStep(
+                    onContinue: { advance(to: .save) },
+                    onSkip: {
+                        skippedPeople = true
+                        advance(to: .save)
+                    }
+                )
+                .transition(stageTransition)
             case .save:
                 SaveYourStartStep(resolving: resolving)
                     .transition(stageTransition)
             case .name:
-                ClaimNameStep(onContinue: { advance(to: .people) })
+                ClaimNameStep(onContinue: {
+                    // Honor an earlier "Not now" — skip invites entirely.
+                    if skippedPeople { onFinish() } else { advance(to: .invite) }
+                })
                     .transition(stageTransition)
-            case .people:
-                FindPeopleStep(onFinish: onFinish)
+            case .invite:
+                BringPeopleStep(onFinish: onFinish)
                     .transition(stageTransition)
             }
         }
-        // Sign-in success on the first step: decide where to go.
+        // Sign-in success on the save step: decide where to go.
         .onChange(of: auth.user?.id) { _, newId in
             guard step == .save, let newId else { return }
             resolveAfterSignIn(userId: newId)
@@ -85,12 +109,13 @@ struct AccountSeamView: View {
     }
 
     private var sunProgress: Double {
-        Double(step.rawValue) / 2.0
+        Double(step.rawValue) / 3.0
     }
 
-    /// 0 = dark pre-dawn (sign-in), 1 = bright cream (name / invite).
+    /// 0 = dark pre-dawn (people card / sign-in), 1 = bright cream
+    /// (name / invite).
     private var warmth: Double {
-        step == .save ? 0 : 1
+        (step == .peopleCard || step == .save) ? 0 : 1
     }
 
     private var stageTransition: AnyTransition {
