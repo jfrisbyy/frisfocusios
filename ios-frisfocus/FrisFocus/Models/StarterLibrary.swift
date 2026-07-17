@@ -113,6 +113,29 @@ struct StarterTask: Identifiable, Equatable, Hashable {
     let focusAreaId: String
     /// 1 = surfaced first, 2 = revealed under "Browse more".
     let tier: Int
+    /// Optional sub-direction ("Basketball", "Running", …). Tasks tagged
+    /// with a sub-direction are surfaced only when that chip is picked on
+    /// the direction board; the value is the chip label. Content is data —
+    /// a fuller library can be swapped in without code changes.
+    let subDirection: String?
+
+    init(
+        id: String,
+        label: String,
+        blurb: String,
+        lifeArea: LibraryLifeArea,
+        focusAreaId: String,
+        tier: Int,
+        subDirection: String? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.blurb = blurb
+        self.lifeArea = lifeArea
+        self.focusAreaId = focusAreaId
+        self.tier = tier
+        self.subDirection = subDirection
+    }
 }
 
 // MARK: - The library
@@ -134,6 +157,25 @@ enum StarterLibrary {
 
     static func focusArea(_ id: String) -> StarterFocusArea? {
         focusAreas.first { $0.id == id }
+    }
+
+    // MARK: Sub-directions ("What's your thing?" chips)
+
+    /// Distinct sub-direction chip labels available for an area, in first
+    /// appearance order. Empty when the area has no sub-directions.
+    static func subDirections(for areaId: String) -> [String] {
+        var seen: [String] = []
+        for task in allTasks where task.focusAreaId == areaId {
+            if let sub = task.subDirection, !seen.contains(sub) {
+                seen.append(sub)
+            }
+        }
+        return seen
+    }
+
+    /// The drill set behind one sub-direction chip.
+    static func tasks(for areaId: String, subDirection: String) -> [StarterTask] {
+        allTasks.filter { $0.focusAreaId == areaId && $0.subDirection == subDirection }
     }
 
     /// Tier-1 starter set for an area, in broad-appeal order.
@@ -194,9 +236,45 @@ enum StarterLibrary {
 
     // MARK: All tasks
 
-    static let allTasks: [StarterTask] = healthFitness + faithSpirit + workBuilding
+    static let allTasks: [StarterTask] = healthFitness + fitnessSubs + faithSpirit + workBuilding
         + schoolLearning + mentalCalm + creativityCraft + moneyDiscipline
         + relationships + recoverySobriety + homeOrder
+
+    // MARK: Sub-direction drills
+    //
+    // Sample sub-direction sets for Health & Fitness — real drills that
+    // swap into the tray when a chip is picked. Content is data: a fuller
+    // library file (all areas) can replace this array without code changes.
+
+    private static let fitnessSubs: [StarterTask] = [
+        // Basketball
+        StarterTask(id: "fit-bball-shootaround", label: "Shootaround", blurb: "Get up shots, find your rhythm.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-form", label: "Form shooting", blurb: "Close to the rim, perfect the mechanics.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-ft", label: "Free throws", blurb: "Make your line before you leave.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-shots", label: "Get up your shots", blurb: "A set number, tracked.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-handle", label: "Ball handling", blurb: "Fifteen minutes, both hands.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-film", label: "Watch film or a breakdown", blurb: "Study the game.", lifeArea: .mindRest, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-cond", label: "Conditioning", blurb: "Sprints, suicides, stay in shape.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-finish", label: "Finishing at the rim", blurb: "Both hands, contact finishes.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-workout", label: "Full workout", blurb: "A complete on-court session.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+        StarterTask(id: "fit-bball-pickup", label: "Pickup runs", blurb: "Real reps against real bodies.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Basketball"),
+
+        // Running
+        StarterTask(id: "fit-run-easy", label: "Easy run", blurb: "Conversational pace, build the base.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Running"),
+        StarterTask(id: "fit-run-long", label: "Long run", blurb: "The weekly distance that counts.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Running"),
+        StarterTask(id: "fit-run-intervals", label: "Intervals / speed", blurb: "Track work, tempo, or hills.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Running"),
+        StarterTask(id: "fit-run-mobility", label: "Pre-run mobility", blurb: "Warm up so you keep running.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Running"),
+        StarterTask(id: "fit-run-strength", label: "Runner's strength", blurb: "Core, calves, glutes.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Running"),
+        StarterTask(id: "fit-run-recover", label: "Recovery / stretch", blurb: "Let the legs come back.", lifeArea: .recovery, focusAreaId: "fitness", tier: 1, subDirection: "Running"),
+
+        // Lifting
+        StarterTask(id: "fit-lift-push", label: "Push day", blurb: "Chest, shoulders, triceps.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Lifting"),
+        StarterTask(id: "fit-lift-pull", label: "Pull day", blurb: "Back and biceps.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Lifting"),
+        StarterTask(id: "fit-lift-legs", label: "Leg day", blurb: "The one you don't skip.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Lifting"),
+        StarterTask(id: "fit-lift-progress", label: "Progressive overload", blurb: "Add a little, log it.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Lifting"),
+        StarterTask(id: "fit-lift-warm", label: "Warm up properly", blurb: "Ramp sets before the work.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Lifting"),
+        StarterTask(id: "fit-lift-protein", label: "Hit your protein", blurb: "Feed the work you did.", lifeArea: .body, focusAreaId: "fitness", tier: 1, subDirection: "Lifting")
+    ]
 
     // MARK: 1. Health & Fitness
 

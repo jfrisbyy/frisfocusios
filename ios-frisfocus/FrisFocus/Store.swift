@@ -3853,17 +3853,18 @@ extension Store {
 
         let cal = Calendar.current
         let now = Date()
-        let perTaskPoints = 10
 
-        // Daily plan tasks — pinned daily, flat-scored, grouped by the
-        // suggested life-area's mapped category. Order is the ranking
-        // prior the season conversation can build on.
+        // Daily plan tasks — pinned daily, priced by the band + rank the
+        // person placed each card in (values are invisible; the sun
+        // carries them). Grouped by the suggested life-area's mapped
+        // category. Order is the ranking prior the season conversation
+        // can build on.
         var built: [FFTask] = []
         for item in board {
             built.append(FFTask(
                 title: item.label,
                 category: item.lifeArea.appCategory,
-                pointValue: perTaskPoints,
+                pointValue: max(1, item.value),
                 tier: .should,
                 pinSchedule: .daily
             ))
@@ -3880,7 +3881,11 @@ extension Store {
             ))
         }
 
-        let dailyGoal = max(perTaskPoints, built.count * perTaskPoints)
+        // Daily target = 60 % of the total value on the board. The sun
+        // ratio (today's earned points ÷ this target) then moves by
+        // visibly different amounts for different tasks.
+        let valueSum = board.reduce(0) { $0 + max(1, $1.value) }
+        let dailyGoal = max(1, Int((0.60 * Double(valueSum)).rounded()))
         let seasonName: String = {
             if directionTitles.count == 1, let only = directionTitles.first { return only }
             return "Your First Season"

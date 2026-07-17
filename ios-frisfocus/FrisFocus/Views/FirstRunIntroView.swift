@@ -27,7 +27,7 @@ struct FirstRunIntroView: View {
     @State private var phase: Phase = .welcome
     @State private var showSignIn: Bool = false
 
-    private enum Phase { case welcome, coldStart, account }
+    private enum Phase { case welcome, manifesto, coldStart, account }
 
     var body: some View {
         @Bindable var auth = auth
@@ -37,12 +37,19 @@ struct FirstRunIntroView: View {
                 ZStack {
                     DawnBackdrop(progress: 0).ignoresSafeArea()
                     WelcomePanel(
-                        onStart: { advance(to: .coldStart) },
+                        onStart: { advance(to: .manifesto) },
                         onDemo: onStartDemo,
                         onSignIn: { showSignIn = true }
                     )
                 }
                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.99)))
+
+            case .manifesto:
+                ManifestoView(
+                    onContinue: { advance(to: .coldStart) },
+                    onSkip: { advance(to: .coldStart) }
+                )
+                .transition(.opacity)
 
             case .coldStart:
                 ColdStartFlowView(

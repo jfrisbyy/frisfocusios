@@ -2,11 +2,13 @@
 //  DirectionBoardPage.swift
 //  FrisFocus
 //
-//  Screen 2 of the cold start — one rich page per chosen direction,
-//  walked one at a time. Everything happens on this single page: keep /
-//  drop, drag-to-rank, swipe-to-remove, press-and-hold to edit, add your
-//  own, and browse the deeper bench. Native List gives long-press
-//  drag-to-rank and swipe-to-remove with springy reflow for free.
+//  Screen 2 of the cold start — one page per chosen direction. Library
+//  tasks start UNPLACED in a tray; three labeled bands sit below. Dragging
+//  a card into a band is one gesture with two meanings: "this is on my
+//  board" AND "this is what it costs me". Cards left in the tray stay off
+//  the board. Within a band, top = takes the most out of you. A dim→bright
+//  weight rail runs down the left. No numbers anywhere — the sun carries
+//  the pricing.
 //
 
 import SwiftUI
@@ -19,6 +21,7 @@ struct DirectionBoardContainer: View {
     let onFinish: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showFloorAsk: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +41,16 @@ struct DirectionBoardContainer: View {
                 .padding(.horizontal, 20)
         }
         .safeAreaInset(edge: .top) { topBar.padding(.horizontal, 16).padding(.top, 6) }
+        .confirmationDialog(
+            "Anything here you'd still do on a rough day?",
+            isPresented: $showFloorAsk,
+            titleVisibility: .visible
+        ) {
+            Button("Let me add one") { /* stays on the page */ }
+            Button("Not this time", role: .cancel) { proceed() }
+        } message: {
+            Text("The \u{201C}\(ColdStartBand.floor.title)\u{201D} band keeps your sun above the horizon when everything else falls apart. Totally optional.")
+        }
     }
 
     private var topBar: some View {
@@ -65,32 +78,28 @@ struct DirectionBoardContainer: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                if let dir = viewModel.current {
-                    ZStack {
-                        Circle().fill(.white.opacity(0.2)).frame(width: 40, height: 40)
-                        Image(systemName: dir.symbol)
-                            .font(.system(size: 19, weight: .regular))
-                            .foregroundStyle(.white)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    EyebrowText(
-                        text: "DIRECTION \(viewModel.index + 1) OF \(viewModel.directions.count)",
-                        opacity: 0.8,
-                        color: Theme.textCream
-                    )
-                    Text(viewModel.current?.title ?? "")
-                        .font(.serif(24, weight: .semibold))
-                        .foregroundStyle(Theme.textCream)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+        HStack(spacing: 10) {
+            if let dir = viewModel.current {
+                ZStack {
+                    Circle().fill(.white.opacity(0.2)).frame(width: 40, height: 40)
+                    Image(systemName: dir.symbol)
+                        .font(.system(size: 19, weight: .regular))
+                        .foregroundStyle(.white)
                 }
             }
-            Text("Keep what fits. Drag to rank what matters most.")
-                .font(.serifItalic(14.5, weight: .regular))
-                .foregroundStyle(Theme.textCream.opacity(0.82))
+            VStack(alignment: .leading, spacing: 2) {
+                EyebrowText(
+                    text: "DIRECTION \(viewModel.index + 1) OF \(viewModel.directions.count)",
+                    opacity: 0.8,
+                    color: Theme.textCream
+                )
+                Text(viewModel.current?.title ?? "")
+                    .font(.serif(24, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 6)
@@ -99,9 +108,10 @@ struct DirectionBoardContainer: View {
 
     private var footer: some View {
         VStack(spacing: 10) {
-            Text("\(viewModel.keptCountCurrent) task\(viewModel.keptCountCurrent == 1 ? "" : "s") kept · ranked")
+            Text(hintLine)
                 .font(.sans(12.5, weight: .medium))
-                .foregroundStyle(Theme.textCream.opacity(0.78))
+                .foregroundStyle(Theme.textCream.opacity(0.72))
+                .animation(.easeInOut(duration: 0.25), value: viewModel.placedCountCurrent)
 
             HStack(spacing: 12) {
                 Button {
@@ -122,10 +132,10 @@ struct DirectionBoardContainer: View {
 
                 Button {
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    advance()
+                    onNext()
                 } label: {
                     HStack(spacing: 8) {
-                        Text(viewModel.isLastDirection ? "Start tracking" : nextLabel)
+                        Text(viewModel.isLastDirection ? "Start tracking" : "Next")
                             .font(.sans(16.5, weight: .semibold))
                         Image(systemName: viewModel.isLastDirection ? "sun.and.horizon.fill" : "arrow.right")
                             .font(.system(size: 14, weight: .semibold))
@@ -145,13 +155,23 @@ struct DirectionBoardContainer: View {
         .padding(.bottom, 8)
     }
 
-    private var nextLabel: String {
-        let next = viewModel.index + 1
-        if viewModel.directions.indices.contains(next) {
-            return "Next"
-        }
-        return "Next"
+    private var hintLine: String {
+        viewModel.placedCountCurrent == 0
+            ? "Drag what fits your life into a band"
+            : "Add more, or continue when it feels right"
     }
+
+    /// Next with the single, non-repeating floor nudge.
+    private func onNext() {
+        if viewModel.shouldAskAboutFloor() {
+            viewModel.markFloorAsked()
+            showFloorAsk = true
+            return
+        }
+        advance()
+    }
+
+    private func proceed() { advance() }
 
     private func advance() {
         if viewModel.isLastDirection {
@@ -196,44 +216,21 @@ struct DirectionBoardPage: View {
     @State private var showAddField: Bool = false
     @State private var newTaskText: String = ""
     @FocusState private var addFocused: Bool
+    @State private var dropTargetBand: ColdStartBand?
 
     var body: some View {
-        List {
-            Section {
-                ForEach(currentItems) { item in
-                    StarterTaskRow(
-                        item: item,
-                        rank: rank(of: item),
-                        onToggleKeep: {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                viewModel.toggleKeep(item.id)
-                            }
-                        },
-                        onEdit: { editingItem = item }
-                    )
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                }
-                .onMove { source, dest in
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    viewModel.move(from: source, to: dest)
-                }
-                .onDelete { offsets in
-                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                        viewModel.remove(at: offsets)
-                    }
-                }
-            } footer: {
-                actionRows
-                    .padding(.top, 6)
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 16) {
+                subDirectionChips
+                tray
+                prompt
+                bands
+                Color.clear.frame(height: 8)
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(Color.clear)
+        .scrollDismissesKeyboard(.interactively)
         .sheet(item: $editingItem) { item in
             StarterTaskEditSheet(viewModel: viewModel, item: item)
                 .presentationDetents([.height(440)])
@@ -246,79 +243,188 @@ struct DirectionBoardPage: View {
         }
     }
 
-    private var currentItems: [ColdStartViewModel.Item] {
-        viewModel.current?.items ?? []
-    }
+    // MARK: Sub-direction chips
 
-    private func rank(of item: ColdStartViewModel.Item) -> Int {
-        (currentItems.firstIndex(where: { $0.id == item.id }) ?? 0) + 1
-    }
+    @ViewBuilder
+    private var subDirectionChips: some View {
+        let subs = viewModel.availableSubDirections
+        if !subs.isEmpty || viewModel.current?.area != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What's your thing? Pick any — we'll swap in the real drills.")
+                    .font(.sans(12.5, weight: .medium))
+                    .foregroundStyle(Theme.textCream.opacity(0.78))
 
-    // MARK: Add + Browse rows
-
-    private var actionRows: some View {
-        VStack(spacing: 10) {
-            if showAddField {
-                HStack(spacing: 10) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 20, weight: .regular))
-                        .foregroundStyle(Theme.textCream.opacity(0.9))
-                    TextField("", text: $newTaskText, prompt: Text("Add your own task").foregroundColor(Theme.textCream.opacity(0.5)))
-                        .font(.sans(15, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
-                        .focused($addFocused)
-                        .submitLabel(.done)
-                        .onSubmit(commitAdd)
-                    Button("Add", action: commitAdd)
-                        .font(.sans(14, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Capsule().fill(Theme.textCream))
-                        .buttonStyle(.plain)
-                        .disabled(newTaskText.trimmingCharacters(in: .whitespaces).isEmpty)
+                ColdStartFlowLayout(spacing: 8) {
+                    ForEach(subs, id: \.self) { sub in
+                        chip(
+                            label: sub,
+                            selected: viewModel.isSubSelected(sub),
+                            icon: viewModel.isSubSelected(sub) ? "checkmark" : nil
+                        ) {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                viewModel.toggleSub(sub)
+                            }
+                        }
+                    }
+                    chip(label: "Something else", selected: false, icon: "plus") {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showAddField = true }
+                        addFocused = true
+                    }
                 }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.1))
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            } else {
-                actionButton(icon: "plus", label: "Add your own") {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showAddField = true }
-                    addFocused = true
-                }
-            }
 
-            actionButton(icon: "square.grid.2x2", label: "Browse more") {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showBrowseMore = true
+                if showAddField { addField }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
     }
 
-    private func actionButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
-                Text(label)
-                    .font(.sans(15, weight: .medium))
+    private var addField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "plus.circle.fill")
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(Theme.textCream.opacity(0.9))
+            TextField("", text: $newTaskText, prompt: Text("Add your own task").foregroundColor(Theme.textCream.opacity(0.5)))
+                .font(.sans(15, weight: .medium))
+                .foregroundStyle(Theme.textCream)
+                .focused($addFocused)
+                .submitLabel(.done)
+                .onSubmit(commitAdd)
+            Button("Add", action: commitAdd)
+                .font(.sans(14, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Capsule().fill(Theme.textCream))
+                .buttonStyle(.plain)
+                .disabled(newTaskText.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.1)))
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    // MARK: Tray
+
+    private var tray: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                EyebrowText(text: "IN THE TRAY", opacity: 0.65, color: Theme.textCream)
                 Spacer()
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showBrowseMore = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Browse more")
+                            .font(.sans(12.5, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.textCream.opacity(0.85))
+                }
+                .buttonStyle(.plain)
             }
-            .foregroundStyle(Theme.textCream.opacity(0.92))
-            .padding(.vertical, 14)
-            .padding(.horizontal, 14)
+
+            if viewModel.trayItems.isEmpty {
+                Text("Everything's placed. Nice — continue when ready.")
+                    .font(.sans(13, weight: .regular))
+                    .foregroundStyle(Theme.textCream.opacity(0.6))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 10)
+            } else {
+                ColdStartFlowLayout(spacing: 8) {
+                    ForEach(viewModel.trayItems) { item in
+                        TrayCard(item: item)
+                            .draggable(item.id) {
+                                TrayCard(item: item).opacity(0.9)
+                            }
+                            .onTapGesture { editingItem = item }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Theme.textCream.opacity(0.12), lineWidth: 1)
+        )
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first else { return false }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                viewModel.place(id, into: nil)
+            }
+            return true
+        }
+    }
+
+    // MARK: Prompt
+
+    private var prompt: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("When do you actually do these?")
+                .font(.serif(22, weight: .semibold))
+                .foregroundStyle(Theme.textCream)
+            Text("Drag what fits your life into a band. What's left behind stays off your board.")
+                .font(.serifItalic(14, weight: .regular))
+                .foregroundStyle(Theme.textCream.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 2)
+    }
+
+    // MARK: Bands
+
+    private var bands: some View {
+        VStack(spacing: 12) {
+            ForEach(ColdStartBand.allCases, id: \.self) { band in
+                BandView(
+                    band: band,
+                    items: viewModel.items(in: band),
+                    isTargeted: dropTargetBand == band,
+                    onDropOnBand: { id in
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            viewModel.place(id, into: band)
+                        }
+                    },
+                    onDropOnCard: { id, beforeId in
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            viewModel.place(id, into: band, before: beforeId)
+                        }
+                    },
+                    onTapCard: { item in editingItem = item }
+                )
+            }
+        }
+    }
+
+    // MARK: Chip helper
+
+    private func chip(label: String, selected: Bool, icon: String?, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                Text(label)
+                    .font(.sans(13.5, weight: .semibold))
+            }
+            .foregroundStyle(selected ? Theme.textPrimary : Theme.textCream)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
+                Capsule().fill(selected ? Theme.textCream : Color.white.opacity(0.1))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Theme.textCream.opacity(0.16), lineWidth: 1)
+                Capsule().strokeBorder(Theme.textCream.opacity(selected ? 0 : 0.22), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -328,7 +434,6 @@ struct DirectionBoardPage: View {
         let trimmed = newTaskText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let area = viewModel.current?.area
-        // Best-effort default grouping from the area's first task.
         let lifeArea = StarterLibrary.tier1(for: area?.id ?? "").first?.lifeArea ?? .work
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -339,72 +444,172 @@ struct DirectionBoardPage: View {
     }
 }
 
-// MARK: - Task row
+// MARK: - Band view
 
-private struct StarterTaskRow: View {
-    let item: ColdStartViewModel.Item
-    let rank: Int
-    let onToggleKeep: () -> Void
-    let onEdit: () -> Void
+private struct BandView: View {
+    let band: ColdStartBand
+    let items: [ColdStartViewModel.Item]
+    let isTargeted: Bool
+    let onDropOnBand: (String) -> Void
+    let onDropOnCard: (_ id: String, _ beforeId: String) -> Void
+    let onTapCard: (ColdStartViewModel.Item) -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Keep / drop toggle
-            Button(action: onToggleKeep) {
-                Image(systemName: item.kept ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22, weight: .regular))
-                    .foregroundStyle(item.kept ? Theme.alertGreen : Theme.textPrimary.opacity(0.3))
-            }
-            .buttonStyle(.plain)
+        HStack(alignment: .top, spacing: 10) {
+            // Weight rail — dim (floor) → bright (ideal).
+            Capsule()
+                .fill(Theme.sunCore.opacity(band.railWeight))
+                .frame(width: 4)
+                .frame(maxHeight: .infinity)
+                .padding(.vertical, 2)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.label)
-                    .font(.sans(15.5, weight: .semibold))
-                    .foregroundStyle(item.kept ? Theme.textPrimary : Theme.textTertiary)
-                    .strikethrough(!item.kept, color: Theme.textTertiary)
-                    .lineLimit(1)
-                if !item.blurb.isEmpty {
-                    Text(item.blurb)
-                        .font(.sans(12, weight: .regular))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                }
-                HStack(spacing: 5) {
-                    Circle().fill(item.lifeArea.tint).frame(width: 6, height: 6)
-                    Text(item.lifeArea.displayName)
-                        .font(.sans(10, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-                .padding(.top, 1)
-            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text(band.title)
+                    .font(.sans(13, weight: .bold))
+                    .foregroundStyle(Theme.textCream.opacity(0.9))
 
-            Spacer(minLength: 4)
-
-            // Weight rail — order = importance. Subtle grip hint.
-            VStack(spacing: 3) {
-                ForEach(0..<3, id: \.self) { _ in
-                    Capsule()
-                        .fill(Theme.textPrimary.opacity(0.18))
-                        .frame(width: 14, height: 2)
+                if items.isEmpty {
+                    Text("Drag a card here")
+                        .font(.sans(12.5, weight: .regular))
+                        .foregroundStyle(Theme.textCream.opacity(0.5))
+                        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                } else {
+                    VStack(spacing: 6) {
+                        ForEach(items) { item in
+                            BandCard(item: item)
+                                .draggable(item.id) { BandCard(item: item).opacity(0.9) }
+                                .onTapGesture { onTapCard(item) }
+                                .dropDestination(for: String.self) { ids, _ in
+                                    guard let id = ids.first else { return false }
+                                    onDropOnCard(id, item.id)
+                                    return true
+                                }
+                        }
+                    }
                 }
             }
-            .padding(.leading, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 11)
-        .padding(.horizontal, 14)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Theme.warmWheat.opacity(item.kept ? 0.96 : 0.6))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(isTargeted ? 0.16 : 0.08))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    Theme.textCream.opacity(items.isEmpty ? 0.16 : 0.28),
+                    style: StrokeStyle(lineWidth: 1.2, dash: items.isEmpty ? [6, 5] : [])
+                )
         )
-        .shadow(color: .black.opacity(0.06), radius: 5, y: 2)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onEdit)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(item.label). \(item.lifeArea.displayName). Rank \(rank).")
-        .accessibilityHint("Double-tap to edit. Swipe to remove.")
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first else { return false }
+            onDropOnBand(id)
+            return true
+        }
+    }
+}
+
+// MARK: - Cards
+
+private struct TrayCard: View {
+    let item: ColdStartViewModel.Item
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle().fill(item.lifeArea.tint).frame(width: 7, height: 7)
+            Text(item.label)
+                .font(.sans(14, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Theme.warmWheat)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+private struct BandCard: View {
+    let item: ColdStartViewModel.Item
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle().fill(item.lifeArea.tint).frame(width: 8, height: 8)
+            Text(item.label)
+                .font(.sans(14.5, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.3))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Theme.warmWheat)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
+    }
+}
+
+// MARK: - Flow layout
+
+/// A simple wrapping flow layout for chips and tray cards.
+struct ColdStartFlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: [[CGSize]] = [[]]
+        var x: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, !rows[rows.count - 1].isEmpty {
+                rows.append([])
+                x = 0
+            }
+            rows[rows.count - 1].append(size)
+            x += size.width + spacing
+        }
+        var height: CGFloat = 0
+        for row in rows {
+            let rowHeight = row.map(\.height).max() ?? 0
+            height += rowHeight
+        }
+        height += spacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let maxWidth = bounds.width
+        var x: CGFloat = bounds.minX
+        var y: CGFloat = bounds.minY
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x + size.width > bounds.minX + maxWidth, x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
