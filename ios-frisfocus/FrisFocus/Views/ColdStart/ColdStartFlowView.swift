@@ -13,8 +13,9 @@
 import SwiftUI
 
 struct ColdStartFlowView: View {
-    /// Commit the final board → the parent lands on home.
-    let onComplete: (_ board: [ColdStartFinalTask], _ directionTitles: [String]) -> Void
+    /// Commit the final board + capstone + season frame → the parent
+    /// lands on the live home with a complete, named season.
+    let onComplete: (_ result: ColdStartResult) -> Void
     /// Back out to the welcome panel.
     let onBack: () -> Void
 
@@ -22,7 +23,7 @@ struct ColdStartFlowView: View {
     @State private var viewModel = ColdStartViewModel()
     @State private var phase: Phase = .pick
 
-    private enum Phase { case pick, board }
+    private enum Phase { case pick, board, capstone, season }
 
     var body: some View {
         ZStack {
@@ -47,8 +48,33 @@ struct ColdStartFlowView: View {
                 DirectionBoardContainer(
                     viewModel: viewModel,
                     onBackToPick: { advance(to: .pick) },
-                    onFinish: {
-                        onComplete(viewModel.finalBoard(), viewModel.directionTitles)
+                    onFinish: { advance(to: .capstone) }
+                )
+                .transition(stageTransition)
+
+            case .capstone:
+                ColdStartCapstoneView(
+                    viewModel: viewModel,
+                    onBack: { advance(to: .board) },
+                    onContinue: { advance(to: .season) }
+                )
+                .transition(stageTransition)
+
+            case .season:
+                ColdStartSeasonCreateView(
+                    viewModel: viewModel,
+                    onBack: { advance(to: .capstone) },
+                    onCreate: {
+                        onComplete(
+                            ColdStartResult(
+                                board: viewModel.finalBoard(),
+                                directionTitles: viewModel.directionTitles,
+                                milestones: viewModel.cleanedMilestones,
+                                seasonName: viewModel.resolvedSeasonName,
+                                endMode: viewModel.seasonEndMode,
+                                endDate: viewModel.seasonEndMode == .date ? viewModel.seasonEndDate : nil
+                            )
+                        )
                     }
                 )
                 .transition(stageTransition)
@@ -56,14 +82,19 @@ struct ColdStartFlowView: View {
         }
     }
 
-    /// 0 at the pick screen → ramps toward 1 across the direction pages.
+    /// 0 at the pick screen → ramps toward 1 across the direction pages,
+    /// then holds high across the capstone and season-create beats.
     private var skyProgress: Double {
         switch phase {
         case .pick:
             return 0
         case .board:
             let total = max(1, viewModel.directions.count)
-            return 0.35 + 0.65 * (Double(viewModel.index) / Double(total))
+            return 0.35 + 0.5 * (Double(viewModel.index) / Double(total))
+        case .capstone:
+            return 0.9
+        case .season:
+            return 1
         }
     }
 
@@ -124,6 +155,19 @@ struct DawnBackdrop: View {
     }
 }
 
+/// The complete result of the cold start: a priced board, the chosen
+/// directions, the free-written milestones (north stars), and the
+/// season's name + end condition. Everything needed to freeze one real
+/// Season on landing.
+struct ColdStartResult {
+    let board: [ColdStartFinalTask]
+    let directionTitles: [String]
+    let milestones: [String]
+    let seasonName: String
+    let endMode: SeasonEndMode
+    let endDate: Date?
+}
+
 #Preview {
-    ColdStartFlowView(onComplete: { _, _ in }, onBack: {})
+    ColdStartFlowView(onComplete: { _ in }, onBack: {})
 }

@@ -53,11 +53,12 @@ struct FirstRunIntroView: View {
 
             case .coldStart:
                 ColdStartFlowView(
-                    onComplete: { board, titles in
-                        // Save the board to the device now (flips appMode
-                        // to .clean and raises `accountSeamActive`, which
-                        // keeps this cover up), then walk the account seam.
-                        store.commitColdStart(board: board, directionTitles: titles)
+                    onComplete: { result in
+                        // Freeze the complete season on the device now
+                        // (flips appMode to .clean and raises
+                        // `accountSeamActive`, which keeps this cover up),
+                        // then walk the account seam.
+                        store.commitColdStart(result)
                         advance(to: .account)
                     },
                     onBack: { advance(to: .welcome) }

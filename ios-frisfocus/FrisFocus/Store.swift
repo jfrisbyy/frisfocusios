@@ -3848,26 +3848,44 @@ extension Store {
     /// never auto-launches — it stays optional, ready to absorb this
     /// board later. Tasks score on an invisible flat default; no point
     /// number is shown until the season conversation assigns real values.
-    func commitColdStart(board: [ColdStartFinalTask], directionTitles: [String]) {
+    func commitColdStart(_ result: ColdStartResult) {
         wipeAllData()
 
         let cal = Calendar.current
         let now = Date()
+        let board = result.board
+        let seasonId = UUID()
+
+        // North stars — the person's free-written milestones, each stored
+        // at a hidden default value (real pricing/decomposition happens
+        // later in the season conversation). No user-visible number here.
+        let milestones: [Milestone] = result.milestones.map { title in
+            Milestone(
+                seasonId: seasonId,
+                weekNumber: 1,
+                title: title,
+                status: .upcoming,
+                pointValue: 25
+            )
+        }
 
         // Daily plan tasks — pinned daily, priced by the band + rank the
         // person placed each card in (values are invisible; the sun
         // carries them). Grouped by the suggested life-area's mapped
-        // category. Order is the ranking prior the season conversation
-        // can build on.
+        // category. A quiet keyword/category match tags a task toward a
+        // milestone it plausibly builds toward — no tray reshaping, no
+        // task derivation.
         var built: [FFTask] = []
         for item in board {
-            built.append(FFTask(
+            var task = FFTask(
                 title: item.label,
                 category: item.lifeArea.appCategory,
                 pointValue: max(1, item.value),
                 tier: .should,
                 pinSchedule: .daily
-            ))
+            )
+            task.milestoneLink = Store.milestoneLink(for: item, among: result.milestones)
+            built.append(task)
         }
 
         // Season categories from the board, first appearance = primary.
@@ -3886,31 +3904,71 @@ extension Store {
         // visibly different amounts for different tasks.
         let valueSum = board.reduce(0) { $0 + max(1, $1.value) }
         let dailyGoal = max(1, Int((0.60 * Double(valueSum)).rounded()))
-        let seasonName: String = {
-            if directionTitles.count == 1, let only = directionTitles.first { return only }
-            return "Your First Season"
+
+        // The season's ending, exactly as chosen — a date is never
+        // silently rounded to 30/60/90. Open-ended / milestone seasons
+        // keep a nominal length that display code hides (it branches on
+        // `endMode`).
+        let startOfToday = cal.startOfDay(for: now)
+        let resolvedEndDate: Date? = result.endMode == .date ? result.endDate : nil
+        let lengthDays: Int = {
+            guard result.endMode == .date, let end = result.endDate else { return 90 }
+            let days = cal.dateComponents([.day], from: startOfToday, to: cal.startOfDay(for: end)).day ?? 90
+            return max(1, days)
         }()
 
         var season = Store.emptySeason()
-        season.name = seasonName
-        season.startDate = cal.startOfDay(for: now)
+        season.id = seasonId
+        season.name = result.seasonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Season One" : result.seasonName
+        season.lengthDays = lengthDays
+        season.startDate = startOfToday
         season.startedAt = now
         season.dailyGoal = dailyGoal
         season.weeklyGoal = dailyGoal * 7
         season.categories = categories
-        season.endMode = .openEnded
+        season.milestones = milestones
+        season.endMode = result.endMode
+        season.endDate = resolvedEndDate
         season.intention = "Started with a clean board."
 
         currentSeason = season
         tasks = built
         appMode = .clean
         coldStartCoaching = true
+        MilestoneNudgeService.refresh(for: season)
         // Keep the first-run cover up: the account seam (sign-in → name →
         // invite) runs over the home before the person starts tracking.
         accountSeamActive = true
         persistAppMode()
         markAllDirty()
         flushPendingSaves()
+    }
+
+    /// A quiet, local association: does this board task plausibly build
+    /// toward one of the free-written milestones? Matches on shared
+    /// keyword tokens (>= 4 letters) between the task label and a
+    /// milestone line. Returns the milestone's own words, or nil when
+    /// nothing clearly relates. Never derives tasks or reshapes anything.
+    static func milestoneLink(for task: ColdStartFinalTask, among milestones: [String]) -> String? {
+        let stop: Set<String> = ["the", "and", "your", "with", "this", "that", "from", "into", "every", "some", "more", "finish", "reach", "start"]
+        func tokens(_ s: String) -> Set<String> {
+            Set(
+                s.lowercased()
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { $0.count >= 4 && !stop.contains($0) }
+            )
+        }
+        let taskTokens = tokens(task.label)
+        guard !taskTokens.isEmpty else { return nil }
+        for milestone in milestones {
+            let trimmed = milestone.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if !taskTokens.isDisjoint(with: tokens(trimmed)) {
+                return trimmed
+            }
+        }
+        return nil
     }
 
     /// Today's board progress for the first-check coaching line:

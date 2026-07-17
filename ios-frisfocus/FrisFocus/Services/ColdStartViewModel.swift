@@ -109,6 +109,79 @@ final class ColdStartViewModel {
     /// day?" nudge, so it never repeats.
     var floorAskedDirectionIds: Set<String> = []
 
+    // MARK: Capstone (Screen A) — free-written milestones (north stars)
+
+    /// The person's own words for what would make this season a win.
+    /// Never pre-filled from a library. Each becomes a north-star
+    /// milestone at a hidden default value on commit.
+    var milestones: [String] = []
+
+    // MARK: Season frame (Screen B)
+
+    /// The season's name. Empty defaults to "Season One" on commit.
+    var seasonName: String = ""
+    /// How the season ends. Open-ended is the calm default.
+    var seasonEndMode: SeasonEndMode = .openEnded
+    /// The chosen end date when `seasonEndMode == .date`. Never silently
+    /// rounded — it's exactly the date the person picked.
+    var seasonEndDate: Date = Calendar.current.date(byAdding: .day, value: 90, to: Date()) ?? Date()
+
+    /// True once the person has named at least one milestone — gates the
+    /// "when my milestones land" end option.
+    var hasMilestones: Bool { !cleanedMilestones.isEmpty }
+
+    /// Trimmed, non-empty milestone lines in entry order.
+    var cleanedMilestones: [String] {
+        milestones
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// The final season name, defaulting to "Season One" when left blank.
+    var resolvedSeasonName: String {
+        let trimmed = seasonName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Season One" : trimmed
+    }
+
+    // MARK: Ghost copy (locally flavored, zero LLM)
+
+    /// Rotating placeholder milestones that teach the SHAPE, flavored by
+    /// the chosen directions. Never inserted as real content.
+    var milestoneGhostExamples: [String] {
+        var out: [String] = []
+        for id in selectedAreaIds {
+            switch id {
+            case "fitness", "health": out += ["reach 180…", "run the 10K…", "deadlift 300…"]
+            case "work", "career", "business": out += ["launch it…", "land the client…", "ship the app…"]
+            case "school", "study": out += ["finish the certification…", "ace the finals…"]
+            case "faith", "spiritual": out += ["read it cover to cover…"]
+            case "money", "finance": out += ["clear the debt…", "save the first $5k…"]
+            case "creative", "art": out += ["finish the record…", "fill the sketchbook…"]
+            default: break
+            }
+        }
+        if out.isEmpty {
+            out = ["finish the certification…", "run the 10K…", "reach 180…", "launch it…"]
+        }
+        return out
+    }
+
+    /// Rotating placeholder season names, locally flavored.
+    var seasonNameGhostExamples: [String] {
+        var out: [String] = ["Season One"]
+        for id in selectedAreaIds {
+            switch id {
+            case "fitness", "health": out += ["The Comeback", "Summer of Discipline"]
+            case "work", "career", "business": out += ["Build Mode", "The Founder Sprint"]
+            case "school", "study": out += ["Lock In", "Finals Season"]
+            case "creative", "art": out += ["The Making", "Studio Season"]
+            default: break
+            }
+        }
+        if out.count == 1 { out += ["The Comeback", "Build Mode", "Summer of Discipline"] }
+        return out
+    }
+
     var selectionCount: Int { selectedAreaIds.count + customIntents.count }
     var canContinue: Bool { selectionCount > 0 }
 

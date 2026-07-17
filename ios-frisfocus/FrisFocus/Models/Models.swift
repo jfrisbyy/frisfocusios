@@ -824,12 +824,17 @@ struct FFTask: Codable, Identifiable {
     /// sensible default order (timed by time, the rest by title), so
     /// nothing changes for people who never reorder.
     var agendaOrder: Int? = nil
+    /// A quiet association to a north-star milestone this task plausibly
+    /// builds toward ("builds toward your 10K"), set at cold start by a
+    /// local keyword/category match. Purely a display hint — it never
+    /// changes scoring or the board. Nil for tasks with no clear link.
+    var milestoneLink: String? = nil
 
     // Backward-compatible decoding so persisted tasks predating
     // `booster` / `penalty` / `scoring` still hydrate. Missing keys fall
     // through to the property defaults.
     private enum CodingKeys: String, CodingKey {
-        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, partOfDay, templateStamp, booster, penalty, scoring, agendaOrder
+        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, partOfDay, templateStamp, booster, penalty, scoring, agendaOrder, milestoneLink
     }
 
     init(
@@ -849,7 +854,8 @@ struct FFTask: Codable, Identifiable {
         booster: BoosterRule? = nil,
         penalty: PenaltyRule? = nil,
         scoring: ScoringConfig = ScoringConfig(),
-        agendaOrder: Int? = nil
+        agendaOrder: Int? = nil,
+        milestoneLink: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -868,6 +874,7 @@ struct FFTask: Codable, Identifiable {
         self.penalty = penalty
         self.scoring = scoring
         self.agendaOrder = agendaOrder
+        self.milestoneLink = milestoneLink
     }
 
     init(from decoder: Decoder) throws {
@@ -889,6 +896,7 @@ struct FFTask: Codable, Identifiable {
         self.penalty = try c.decodeIfPresent(PenaltyRule.self, forKey: .penalty)
         self.scoring = try c.decodeIfPresent(ScoringConfig.self, forKey: .scoring) ?? ScoringConfig()
         self.agendaOrder = try c.decodeIfPresent(Int.self, forKey: .agendaOrder)
+        self.milestoneLink = try c.decodeIfPresent(String.self, forKey: .milestoneLink)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -910,6 +918,7 @@ struct FFTask: Codable, Identifiable {
         try c.encodeIfPresent(penalty, forKey: .penalty)
         try c.encode(scoring, forKey: .scoring)
         try c.encodeIfPresent(agendaOrder, forKey: .agendaOrder)
+        try c.encodeIfPresent(milestoneLink, forKey: .milestoneLink)
     }
 }
 
