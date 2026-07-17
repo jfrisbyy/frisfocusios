@@ -3,14 +3,9 @@
 //  FrisFocus
 //
 //  Zone 3 — the journal page on the homepage. Paper-cream background
-//  with ruled lines bleeding through. Header now sits beside a clear
-//  "+ New note" pill so capturing a thought is a single tap away. The
-//  zone title gets a thin warm-gold underline that ties it to the
-//  refined library typography below.
-//
-//  Tapping the header pushes the full Notes library; tapping any
-//  folder pill pushes the dedicated `FolderDetailView`. Individual
-//  entry rows handle their own navigation inside `NoteEntryView`.
+//  with ruled lines bleeding through and an inline, autosaving quick
+//  composer for low-friction capture. The full library remains behind
+//  the header, while folders stay off the homepage until users enter it.
 //
 
 import SwiftUI
@@ -19,12 +14,12 @@ import UIKit
 struct NoteZoneView: View {
     @Environment(Store.self) private var store
 
-    @State private var pushLibrary: Bool = false
-    @State private var pushedFolder: NoteFolder? = nil
+    @Binding var isQuickNoteOpen: Bool
 
-    /// Drives the New Note form sheet — opened by both the top-right
-    /// pill and the dashed "Add a thought" prompt below the entries.
-    @State private var showNewNoteForm: Bool = false
+    @State private var pushLibrary: Bool = false
+    @State private var pushExpandedNote: Bool = false
+    @State private var expandedNote: Note?
+    @State private var quickDraftNoteID: UUID?
 
     var body: some View {
         ZStack {
@@ -34,22 +29,34 @@ struct NoteZoneView: View {
                 headerBlock
                     .padding(.top, 28)
 
+                if isQuickNoteOpen {
+                    QuickNoteComposerView(
+                        isPresented: $isQuickNoteOpen,
+                        draftNoteID: $quickDraftNoteID,
+                        onExpand: expandQuickNote
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
                 entriesBlock
 
-                AddPromptView(action: openNewNote)
+                if !isQuickNoteOpen {
+                    AddPromptView(action: openQuickNote)
+                        .transition(.opacity)
+                }
 
-                folderPillsBlock
+                Spacer()
+                    .frame(height: 28)
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
         }
         .navigationDestination(isPresented: $pushLibrary) {
             NotesLibraryView()
         }
-        .navigationDestination(item: $pushedFolder) { folder in
-            FolderDetailView(folder: folder)
-        }
-        .sheet(isPresented: $showNewNoteForm) {
-            NewNoteFormView { }
+        .navigationDestination(isPresented: $pushExpandedNote) {
+            if let expandedNote {
+                NoteDetailEditView(note: expandedNote)
+            }
         }
     }
 
@@ -93,7 +100,7 @@ struct NoteZoneView: View {
 
     @ViewBuilder
     private var newNotePill: some View {
-        Button(action: openNewNote) {
+        Button(action: openQuickNote) {
             HStack(spacing: 5) {
                 Image(systemName: "plus")
                     .font(.system(size: 11, weight: .semibold))
@@ -118,35 +125,28 @@ struct NoteZoneView: View {
 
     @ViewBuilder
     private var entriesBlock: some View {
-        if store.todaysNotes.isEmpty {
-            EmptyNoteHintView(isPast: store.isViewingPast)
+        let visibleNotes = store.todaysNotes.filter { $0.id != quickDraftNoteID }
+
+        if visibleNotes.isEmpty {
+            if !isQuickNoteOpen {
+                Button(action: openQuickNote) {
+                    EmptyNoteHintView(isPast: store.isViewingPast)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(store.isViewingPast ? "Return to today and add a note" : "Add a note today")
+            }
         } else {
             VStack(alignment: .leading, spacing: 22) {
-                ForEach(store.todaysNotes) { note in
+                ForEach(visibleNotes) { note in
                     NoteEntryView(note: note)
-                    if note.id != store.todaysNotes.last?.id {
+                    if note.id != visibleNotes.last?.id {
                         Rectangle()
                             .fill(Theme.textPrimary.opacity(0.05))
                             .frame(height: 0.5)
                     }
                 }
             }
-        }
-    }
-
-    // MARK: - Folder pills
-
-    @ViewBuilder
-    private var folderPillsBlock: some View {
-        if !store.sortedFolders.isEmpty {
-            FolderTagsRowView(
-                folders: store.sortedFolders,
-                onSelect: handleFolderTap
-            )
-            .padding(.top, 4)
-            .padding(.bottom, 28)
-        } else {
-            Spacer().frame(height: 28)
         }
     }
 
@@ -157,20 +157,19 @@ struct NoteZoneView: View {
         pushLibrary = true
     }
 
-    private func openNewNote() {
+    private func openQuickNote() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        showNewNoteForm = true
+        if store.isViewingPast {
+            store.viewingDay = nil
+        }
+        withAnimation(.easeInOut(duration: 0.22)) {
+            isQuickNoteOpen = true
+        }
     }
 
-    /// Folder pill taps push to the folder's dedicated page now. The
-    /// trailing "all folders →" link still routes to the full library.
-    private func handleFolderTap(_ folder: NoteFolder?) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        if let folder {
-            pushedFolder = folder
-        } else {
-            pushLibrary = true
-        }
+    private func expandQuickNote(_ note: Note) {
+        expandedNote = note
+        pushExpandedNote = true
     }
 }
 
@@ -192,7 +191,7 @@ private struct EmptyNoteHintView: View {
 #Preview {
     NavigationStack {
         ScrollView {
-            NoteZoneView()
+            NoteZoneView(isQuickNoteOpen: .constant(false))
         }
         .environment(Store())
     }

@@ -35,6 +35,9 @@ struct HomeView: View {
     /// here so collapsing can scroll the zone back to the top of the
     /// screen. Never persisted — the home always launches compact.
     @State private var seasonExpanded: Bool = false
+    /// Inline journal composer state. Home owns it so a user-driven
+    /// scroll can dismiss the keyboard and settle the note zone closed.
+    @State private var isQuickNoteOpen: Bool = false
     @State private var topSafeInset: CGFloat = 0
 
     // Continuous scrub support: bind the scroll view's position so the
@@ -163,7 +166,7 @@ struct HomeView: View {
                             height: 30
                         )
 
-                        NoteZoneView()
+                        NoteZoneView(isQuickNoteOpen: $isQuickNoteOpen)
                             .id(HomeZone.note.anchorID)
                             .background(zoneTracker(.note))
 
@@ -180,6 +183,12 @@ struct HomeView: View {
                 }
                 .scrollClipDisabled(false)
                 .scrollPosition($scrollPosition)
+                .onScrollPhaseChange { _, newPhase in
+                    guard newPhase == .interacting, isQuickNoteOpen else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isQuickNoteOpen = false
+                    }
+                }
                 .onScrollGeometryChange(for: ScrollMetrics.self) { geo in
                     ScrollMetrics(
                         offsetY: geo.contentOffset.y,
