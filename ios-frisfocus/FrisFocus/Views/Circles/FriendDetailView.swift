@@ -128,9 +128,15 @@ struct FriendDetailView: View {
     }
 
     private var handle: String? { remoteProfile?.handle }
-    private var daysShownUp: Int { publishedCard?.lifetimeDays ?? 0 }
+    /// The friend's all-time counter — omitted entirely when it's
+    /// unavailable at their tier or would read "0 days shown up".
+    private var daysShownUp: Int? {
+        guard let days = publishedCard?.lifetimeDays, days > 0 else { return nil }
+        return days
+    }
     private var weekday: String { Date().formatted(.dateTime.weekday(.wide)) }
-    private var headerHeight: CGFloat { max(360, UIScreen.main.bounds.height * 0.42) }
+    /// Redline: header photo is 38% of screen height.
+    private var headerHeight: CGFloat { UIScreen.main.bounds.height * 0.38 }
 
     // MARK: - Body
 
@@ -140,15 +146,16 @@ struct FriendDetailView: View {
                 VStack(spacing: 0) {
                     header
 
+                    // Row center ≈ header bottom edge (44pt pill → -22).
                     actionRow
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .offset(y: -26)
-                        .padding(.bottom, -26)
+                        .offset(y: -22)
+                        .padding(.bottom, -22)
                         .zIndex(1)
 
                     journalBody
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 20)
+                        .padding(.top, 16)
 
                     Color.clear.frame(height: 130)
                 }
@@ -330,27 +337,29 @@ struct FriendDetailView: View {
                 strength: tier == .quiet ? 0.5 : (0.15 + 0.85 * min(1, ringRatio))
             )
 
-            HStack(alignment: .center, spacing: 13) {
+            // 14pt avatar→name gap keeps the name block clear of the
+            // halo (name starts at x = 22 + 86 + 14 = 122).
+            HStack(alignment: .center, spacing: 14) {
                 avatarButton
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(friend.displayName)
-                        .font(.serif(30, weight: .medium))
+                        .font(.serif(26, weight: .medium))
                         .foregroundStyle(Theme.textCream)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
-                        .shadow(color: .black.opacity(0.35), radius: 6, x: 0, y: 2)
+                        .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 1)
                     MirrorHandleLine(handle: handle, daysShownUp: daysShownUp)
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
-            .padding(.bottom, 42)
+            .padding(.bottom, 54)
         }
         .frame(height: headerHeight)
         .clipped()
         .overlay(alignment: .top) {
             topControls
-                .padding(.top, 54)
+                .padding(.top, 58)
                 .padding(.horizontal, Theme.pageHorizontalPadding)
         }
     }
@@ -389,9 +398,9 @@ struct FriendDetailView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.sans(16, weight: .semibold))
+                    .font(.sans(15, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 38, height: 38)
                     .background(
                         ZStack {
                             Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
@@ -413,7 +422,7 @@ struct FriendDetailView: View {
         } label: {
             SunRingAvatar(
                 ratio: ringRatio,
-                diameter: 110,
+                diameter: 86,
                 photoURL: friend.avatarURL,
                 initials: friend.initials,
                 fillColor: accent,
@@ -433,7 +442,7 @@ struct FriendDetailView: View {
     // MARK: - Action row (friend)
 
     private var actionRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 9) {
             friendPill
             MirrorActionCircle(
                 icon: "bubble.left.and.bubble.right.fill",
@@ -483,7 +492,7 @@ struct FriendDetailView: View {
     // MARK: - Journal body
 
     private var journalBody: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             statusSlot
 
             if tier != .quiet {
@@ -519,7 +528,7 @@ struct FriendDetailView: View {
     // MARK: Status + season
 
     private var statusSlot: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 11) {
             MirrorStatusLine(text: statusText)
             if let name = shortSeasonName {
                 MirrorSeasonPill(
@@ -592,7 +601,7 @@ struct FriendDetailView: View {
     // MARK: Categories
 
     private var categoriesBlock: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 18) {
             ForEach(categorySections, id: \.0) { pair in
                 MirrorCategorySection(
                     category: pair.0,
@@ -601,7 +610,6 @@ struct FriendDetailView: View {
                 )
             }
         }
-        .padding(.top, 4)
     }
 
     /// The friend's board grouped by category, resolved to their tier.
@@ -700,10 +708,10 @@ struct FriendDetailView: View {
         case nil:
             HStack(alignment: .center, spacing: 10) {
                 Image(systemName: "lock")
-                    .font(.sans(13, weight: .medium))
+                    .font(.sans(12, weight: .medium))
                     .foregroundStyle(Theme.textPrimary.opacity(0.4))
                 Text("Points are private — friends ask, you approve each one.")
-                    .font(.sans(13, weight: .regular))
+                    .font(.sans(12, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)

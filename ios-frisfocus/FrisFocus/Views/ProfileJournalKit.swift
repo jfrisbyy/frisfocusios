@@ -281,21 +281,29 @@ func makeWitnessLine(day: FriendDay, card: SeasonCard?) -> String? {
     }
 
     // A strong week — most of the last 7 days held real effort.
+    // Hard rule: never "N of N", fractions, or percentages — plain
+    // counts and sun language only.
     if bars.count >= 7 {
         let lastSeven = bars.suffix(7)
         let strong = lastSeven.filter { $0 >= 0.5 }.count
+        if strong >= 7 {
+            return "A strong week — every day full."
+        }
         if strong >= 5 {
-            return "A strong week — \(strong) of 7 days full."
+            return "A strong week — \(strong) full days."
         }
         let active = lastSeven.filter { $0 > 0 }.count
+        if active >= 7 {
+            return "Showed up every day this week."
+        }
         if active >= 6 {
-            return "Showed up \(active) of the last 7 days."
+            return "Showed up \(active) days this week."
         }
     }
 
     // A steady stretch.
     if day.rhythmDays >= 7 {
-        return "Showed up \(day.rhythmDays) of the last 10 days."
+        return "Showed up \(day.rhythmDays) days lately."
     }
 
     // Quiet honesty — only when truly quiet, never as a judgment.
@@ -390,9 +398,6 @@ struct DestinationsTimeline: View {
             }
             return "landed"
         }
-        if isCurrent, let done = milestone.stepsDone, let total = milestone.stepsTotal, total > 0 {
-            return "\(done) of \(total)"
-        }
         if let target = milestone.targetDate {
             return "by \(Self.milestoneTargetFormatter.string(from: target))"
         }
@@ -420,30 +425,34 @@ struct SeasonsBeforeRow: View {
     private var overflow: Int { max(0, chapters.count - visible.count) }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ForEach(visible) { chapter in
-                miniPoster(chapter)
-            }
-            if overflow > 0 {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    showAll = true
-                } label: {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Theme.duskDeep.opacity(0.85))
-                        Text("+\(overflow)")
-                            .font(.serif(22, weight: .medium))
-                            .foregroundStyle(Theme.textCream)
-                    }
-                    .frame(width: 86, height: 108)
-                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // 168pt square poster cards (r20) — horizontally scrollable so
+        // the overflow tile never clips at the page edge.
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(visible) { chapter in
+                    miniPoster(chapter)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(overflow) more past seasons")
+                if overflow > 0 {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showAll = true
+                    } label: {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .fill(Theme.duskDeep.opacity(0.85))
+                            Text("+\(overflow)")
+                                .font(.serif(24, weight: .medium))
+                                .foregroundStyle(Theme.textCream)
+                        }
+                        .frame(width: 96, height: 168)
+                        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(overflow) more past seasons")
+                }
             }
-            Spacer(minLength: 0)
         }
+        .scrollClipDisabled(false)
         .sheet(isPresented: $showAll) {
             AllChaptersSheet(chapters: chapters, showsMilestones: showsMilestones)
         }
@@ -476,20 +485,20 @@ struct SeasonsBeforeRow: View {
                 endPoint: .bottom
             )
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(chapter.name)
-                    .font(.serifItalic(13, weight: .medium))
+                    .font(.serifItalic(15, weight: .medium))
                     .foregroundStyle(Theme.textCream)
                     .lineLimit(1)
                 Text(chapter.ranDescription.replacingOccurrences(of: "ran ", with: ""))
-                    .font(.sans(10, weight: .regular))
+                    .font(.sans(11, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.8))
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 9)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 11)
         }
-        .frame(width: 122, height: 108)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(width: 168, height: 168)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(chapter.name), \(chapter.ranDescription)")
     }

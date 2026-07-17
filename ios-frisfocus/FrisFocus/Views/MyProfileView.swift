@@ -110,7 +110,15 @@ struct MyProfileView: View {
 
     private var weekday: String { Date().formatted(.dateTime.weekday(.wide)) }
 
-    private var headerHeight: CGFloat { max(360, UIScreen.main.bounds.height * 0.42) }
+    /// Redline: header photo is 38% of screen height.
+    private var headerHeight: CGFloat { UIScreen.main.bounds.height * 0.38 }
+
+    /// The real all-time counter — omitted entirely when it would
+    /// read "0 days shown up".
+    private var daysShownUp: Int? {
+        let days = store.lifetimeDaysShownUp
+        return days > 0 ? days : nil
+    }
 
     // MARK: - Body
 
@@ -120,15 +128,16 @@ struct MyProfileView: View {
                 VStack(spacing: 0) {
                     header
 
+                    // Row center ≈ header bottom edge (44pt pill → -22).
                     actionRow
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .offset(y: -26)
-                        .padding(.bottom, -26)
+                        .offset(y: -22)
+                        .padding(.bottom, -22)
                         .zIndex(1)
 
                     bodyContent
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 20)
+                        .padding(.top, 16)
 
                     Color.clear.frame(height: 130)
                 }
@@ -221,27 +230,29 @@ struct MyProfileView: View {
                 strength: 0.15 + 0.85 * min(1, todayRatio)
             )
 
-            HStack(alignment: .center, spacing: 13) {
+            // 14pt avatar→name gap keeps the name block clear of the
+            // halo (name starts at x = 22 + 86 + 14 = 122).
+            HStack(alignment: .center, spacing: 14) {
                 avatarButton
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(displayName)
-                        .font(.serif(30, weight: .medium))
+                        .font(.serif(26, weight: .medium))
                         .foregroundStyle(Theme.textCream)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
-                        .shadow(color: .black.opacity(0.35), radius: 6, x: 0, y: 2)
-                    MirrorHandleLine(handle: handle, daysShownUp: store.lifetimeDaysShownUp)
+                        .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 1)
+                    MirrorHandleLine(handle: handle, daysShownUp: daysShownUp)
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
-            .padding(.bottom, 42)
+            .padding(.bottom, 54)
         }
         .frame(height: headerHeight)
         .clipped()
         .overlay(alignment: .top) {
             topControls
-                .padding(.top, 54)
+                .padding(.top, 58)
                 .padding(.horizontal, Theme.pageHorizontalPadding)
         }
     }
@@ -265,7 +276,7 @@ struct MyProfileView: View {
         } label: {
             SunRingAvatar(
                 ratio: ringRatio,
-                diameter: 110,
+                diameter: 86,
                 photoURL: photoURL,
                 initials: initials,
                 fillColor: Theme.textPrimary,
@@ -295,19 +306,19 @@ struct MyProfileView: View {
                     .font(.sans(9, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
             }
-            .frame(width: 28, height: 28)
+            .frame(width: 26, height: 26)
             .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .offset(x: 0, y: -3)
+        .offset(x: 1, y: -1)
         .accessibilityLabel("Change your profile photo")
     }
 
     // MARK: - Action row (self)
 
     private var actionRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 9) {
             MirrorPrimaryPill(title: "Edit profile") {
                 showEditProfile = true
             }
@@ -320,7 +331,7 @@ struct MyProfileView: View {
     // MARK: - Body content
 
     private var bodyContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             statusSlot
 
             if previewTier != .quiet {
@@ -345,12 +356,12 @@ struct MyProfileView: View {
     // MARK: Status + season + seen-as
 
     private var statusSlot: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 11) {
             MirrorStatusLine(text: statusText, editable: true) {
                 moodDraft = store.currentSeason.moodLine ?? ""
                 showMoodEditor = true
             }
-            HStack(spacing: 10) {
+            HStack(spacing: 7) {
                 MirrorSeasonPill(seasonName: seasonName, dayNumber: store.currentSeasonDay, accent: accent)
                 SeenAsChip(tier: $previewTier)
                 Spacer(minLength: 0)
@@ -369,7 +380,7 @@ struct MyProfileView: View {
     // MARK: Categories
 
     private var categoriesBlock: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 18) {
             ForEach(categorySections, id: \.0) { pair in
                 MirrorCategorySection(
                     category: pair.0,
@@ -378,7 +389,6 @@ struct MyProfileView: View {
                 )
             }
         }
-        .padding(.top, 4)
     }
 
     /// Today's tasks grouped by category, preserving first-appearance
@@ -428,10 +438,10 @@ struct MyProfileView: View {
     private var pointsPrivacyRow: some View {
         HStack(alignment: .center, spacing: 10) {
             Image(systemName: "lock")
-                .font(.sans(13, weight: .medium))
+                .font(.sans(12, weight: .medium))
                 .foregroundStyle(Theme.textPrimary.opacity(0.4))
             Text("Points are private — friends ask, you approve each one.")
-                .font(.sans(13, weight: .regular))
+                .font(.sans(12, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)

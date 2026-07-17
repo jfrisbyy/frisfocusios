@@ -7,11 +7,11 @@
 //  differs between the two; everything else here is identical, so what
 //  a friend sees at a given tier is exactly what you preview.
 //
-//  The signature piece is `SunRingAvatar`: one avatar bubble whose RING
-//  is today's sun (glow/thickness/halo from `ratio = points ÷ target`)
-//  and whose FILL becomes a story preview when a story is active. Two
-//  signals, never conflated — the fill tells the story, the ring keeps
-//  the day. Reused everywhere a person's face appears.
+//  Every measurement follows the S4 redline (pt on a 390pt-wide
+//  device): avatar 86, ring 96 @ 3pt, halo footprint ≤ 114, total
+//  sun-ring footprint hard-capped at 116 (1.35× avatar); glass corner
+//  controls 38; primary pill 44; task rows 40 with 22pt checks;
+//  >5-task boxes fixed at 208 with an internal scroll.
 //
 //  Hard rule across this file: NO denominators, NO fractions, NO point
 //  values ever render. Only completions ("N today"), sun language, and
@@ -25,14 +25,19 @@ import UIKit
 
 /// The one avatar bubble used across the app. The ring is today's sun,
 /// computed from `ratio` (points ÷ target). Story presence is signalled
-/// by segment ticks + a base glyph and by swapping the FILL to a story
-/// preview — never by changing the ring's meaning.
+/// by segments cut into the ring stroke + a base glyph and by swapping
+/// the FILL to a story preview — never by changing the ring's meaning.
+///
+/// Anatomy at the default 86pt avatar (all values scale linearly):
+/// ring 96 @ 3pt stroke · halo ≤ 114 · rays ≤ 10pt ticks only at a
+/// full day · total footprint ≤ 116. The layout frame is the avatar
+/// circle alone (86), so a 14pt gap keeps neighbours clear of the halo.
 struct SunRingAvatar: View {
-    /// Today's sun ratio (points ÷ target). May exceed 1 — the halo
-    /// only flares fully at ≥ 1.
+    /// Today's sun ratio (points ÷ target). May exceed 1 — rays only
+    /// appear at ≥ 1.
     let ratio: Double
 
-    var diameter: CGFloat = 110
+    var diameter: CGFloat = 86
 
     // Fill
     var photoURL: URL? = nil
@@ -40,11 +45,11 @@ struct SunRingAvatar: View {
     var fillColor: Color = Theme.textPrimary
 
     // Story state
-    /// Number of story units (one segment tick each). 0 = no story.
+    /// Number of story units (one ring segment each). 0 = no story.
     var storyUnitCount: Int = 0
-    /// How many of those units have been viewed (dim ticks).
+    /// How many of those units have been viewed (dimmed segments).
     var viewedUnitCount: Int = 0
-    /// Latest story frame — replaces the fill while a story is unwatched.
+    /// Latest story frame — replaces the fill while a story is live.
     var storyPreviewURL: URL? = nil
 
     var reduceMotion: Bool = false
@@ -56,14 +61,17 @@ struct SunRingAvatar: View {
     private var hasStory: Bool { storyUnitCount > 0 }
     private var allViewed: Bool { hasStory && viewedUnitCount >= storyUnitCount }
     /// While a story is live the fill previews it — even once watched.
-    /// Watched state shows only through the dimmed segment ticks.
+    /// Watched state shows only through the dimmed ring segments.
     private var showsPreview: Bool { hasStory && storyPreviewURL != nil }
 
-    /// The crisp gold ring — a clean luminous band that thickens
-    /// slightly with the day.
-    private var ringWidth: CGFloat { diameter * (0.050 + 0.014 * clamped) }
-    /// The clear dark gap between the ring and the fill.
-    private var gapWidth: CGFloat { diameter * 0.038 }
+    /// Linear scale from the 86pt reference.
+    private var s: CGFloat { diameter / 86 }
+    /// Ring diameter: avatar + 10 (5pt outside the avatar edge).
+    private var ringDiameter: CGFloat { diameter + 10 * s }
+    private var ringStroke: CGFloat { 3 * s }
+    /// Halo footprint: avatar + 28 (extends max 14pt past the avatar).
+    private var haloDiameter: CGFloat { diameter + 28 * s }
+    private var rayLength: CGFloat { 10 * s }
 
     private var warm: Color { Color.lerpHSL(Color(hex: 0x9A6E33), Theme.sunWarm, t: clamped) }
     private var core: Color { Color.lerpHSL(Color(hex: 0xC79A55), Theme.sunCore, t: clamped) }
@@ -71,11 +79,12 @@ struct SunRingAvatar: View {
     var body: some View {
         ZStack {
             haloLayer
-            backingDisc
             fillLayer
             sunRing
-            if hasStory { segmentTicks }
+            if isFull { rayTicks }
         }
+        // The LAYOUT footprint stays the avatar circle; ring, halo and
+        // rays draw beyond it (≤ 1.35× avatar) without pushing siblings.
         .frame(width: diameter, height: diameter)
         .overlay(alignment: .bottom) {
             if hasStory { baseGlyph }
@@ -83,57 +92,29 @@ struct SunRingAvatar: View {
         .animation(.spring(response: 0.5, dampingFraction: 0.85), value: clamped)
     }
 
-    /// The dark disc behind the fill — it renders the clean dark gap
-    /// between the gold ring and the photo, per the mock's construction.
-    private var backingDisc: some View {
-        Circle()
-            .fill(Color(hex: 0x2A1B0C))
-            .frame(width: diameter - ringWidth, height: diameter - ringWidth)
-    }
-
-    // The outer glow — a soft warm halo breathing outward from the
-    // ring; it grows and warms with the day and flares at goal.
+    /// The soft warm halo — a radial glow held inside the 114pt
+    /// footprint, growing and warming with the day.
     private var haloLayer: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        stops: [
-                            .init(color: .clear, location: 0.28),
-                            .init(color: core.opacity(0.14 + 0.30 * clamped), location: 0.42),
-                            .init(color: Theme.sunOuter.opacity(0.06 + 0.20 * clamped), location: 0.62),
-                            .init(color: .clear, location: 1.0)
-                        ],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: diameter * (isFull ? 1.0 : 0.82)
-                    )
+        Circle()
+            .fill(
+                RadialGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.40),
+                        .init(color: core.opacity(0.12 + 0.26 * clamped + (isFull ? 0.10 : 0)), location: 0.68),
+                        .init(color: Theme.sunOuter.opacity(0.05 + 0.14 * clamped), location: 0.85),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: haloDiameter / 2
                 )
-                .frame(width: diameter * 2.0, height: diameter * 2.0)
-                .blur(radius: 6)
-
-            if isFull {
-                ForEach([-58.0, -29.0, 0.0, 29.0, 58.0], id: \.self) { angle in
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [core.opacity(0.7), .clear],
-                                startPoint: .bottom, endPoint: .top
-                            )
-                        )
-                        .frame(width: diameter * 0.05 + 1, height: diameter * 0.34)
-                        .blur(radius: 1.5)
-                        .offset(y: -diameter * 0.72)
-                        .rotationEffect(.degrees(angle))
-                }
-            }
-        }
-        .opacity(reduceMotion ? 1 : (shimmer ? 1 : 0.9))
+            )
+            .frame(width: haloDiameter, height: haloDiameter)
+            .opacity(reduceMotion ? 1 : (shimmer ? 1 : 0.92))
     }
 
     @ViewBuilder
     private var fillLayer: some View {
-        let inset = ringWidth + gapWidth
         Group {
             if showsPreview, let url = storyPreviewURL {
                 CachedImage(url: url) { image in
@@ -143,8 +124,9 @@ struct SunRingAvatar: View {
                 photoOrInitials
             }
         }
-        .frame(width: diameter - inset * 2, height: diameter - inset * 2)
+        .frame(width: diameter, height: diameter)
         .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 3 * s))
     }
 
     @ViewBuilder
@@ -162,62 +144,82 @@ struct SunRingAvatar: View {
         ZStack {
             Circle().fill(fillColor)
             Text(initials.isEmpty ? "?" : initials)
-                .font(.serif(diameter * 0.34, weight: .light))
+                .font(.serif(diameter * 0.4, weight: .light))
                 .foregroundStyle(Theme.textCream.opacity(0.95))
         }
     }
 
+    /// The 3pt sun-ring at 96pt. Continuous normally; when a story is
+    /// live it splits into one segment per story unit with 2pt gaps cut
+    /// into the stroke itself — viewed segments dim to 40%.
+    @ViewBuilder
     private var sunRing: some View {
-        Circle()
-            .strokeBorder(
-                LinearGradient(
-                    colors: [core, warm],
-                    startPoint: .top, endPoint: .bottom
-                ),
-                lineWidth: ringWidth
-            )
-            .opacity(0.55 + 0.45 * clamped)
-            .shadow(color: core.opacity(0.2 + (isFull ? 0.4 : 0.1)), radius: isFull ? 10 : 6)
-    }
-
-    /// Thin arc segments just outside the ring — one per story unit,
-    /// viewed ones dim. Signals story presence without touching the sun.
-    private var segmentTicks: some View {
-        let n = max(1, storyUnitCount)
-        let gap: CGFloat = n > 1 ? 0.045 : 0
-        let tickD = diameter + 9
-        return ZStack {
-            ForEach(0..<n, id: \.self) { i in
-                let start = CGFloat(i) / CGFloat(n) + gap / 2
-                let end = CGFloat(i + 1) / CGFloat(n) - gap / 2
-                Circle()
-                    .trim(from: start, to: end)
-                    .stroke(
-                        Theme.textCream.opacity(i < viewedUnitCount ? 0.28 : 0.95),
-                        style: StrokeStyle(lineWidth: 2.4, lineCap: .round)
-                    )
-                    .frame(width: tickD, height: tickD)
-                    .rotationEffect(.degrees(-90))
+        let base = 0.55 + 0.45 * clamped
+        if hasStory {
+            let n = max(1, storyUnitCount)
+            // 2pt gaps expressed as a fraction of the ring circumference.
+            let gapFrac = min(0.05, (2 * s) / (.pi * ringDiameter))
+            ZStack {
+                ForEach(0..<n, id: \.self) { i in
+                    Circle()
+                        .trim(
+                            from: CGFloat(i) / CGFloat(n) + gapFrac / 2,
+                            to: CGFloat(i + 1) / CGFloat(n) - gapFrac / 2
+                        )
+                        .stroke(
+                            ringGradient,
+                            style: StrokeStyle(lineWidth: ringStroke, lineCap: .butt)
+                        )
+                        .opacity(base * (i < viewedUnitCount ? 0.4 : 1.0))
+                        .rotationEffect(.degrees(-90))
+                }
             }
+            .frame(width: ringDiameter - ringStroke, height: ringDiameter - ringStroke)
+        } else {
+            Circle()
+                .strokeBorder(ringGradient, lineWidth: ringStroke)
+                .opacity(base)
+                .frame(width: ringDiameter, height: ringDiameter)
+                .shadow(color: core.opacity(isFull ? 0.45 : 0.2), radius: isFull ? 4 : 2)
         }
     }
 
+    private var ringGradient: LinearGradient {
+        LinearGradient(colors: [core, warm], startPoint: .top, endPoint: .bottom)
+    }
+
+    /// Rays at a full day only — short 2pt ticks on the ring, ≤ 10pt
+    /// long, keeping the total footprint inside the 116pt hard cap.
+    private var rayTicks: some View {
+        ForEach(0..<8, id: \.self) { i in
+            Capsule()
+                .fill(core.opacity(0.85))
+                .frame(width: 2 * s, height: rayLength)
+                .offset(y: -(ringDiameter / 2 + rayLength / 2))
+                .rotationEffect(.degrees(Double(i) * 45))
+        }
+    }
+
+    /// The 22pt glass play glyph at the ring's base center.
     private var baseGlyph: some View {
         ZStack {
-            Circle().fill(Theme.textPrimary)
+            Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
+            Circle().fill(Color.black.opacity(0.32))
             Image(systemName: allViewed ? "checkmark" : "play.fill")
-                .font(.system(size: diameter * 0.075, weight: .bold))
+                .font(.system(size: 8 * s, weight: .bold))
                 .foregroundStyle(Theme.textCream)
         }
-        .frame(width: diameter * 0.19, height: diameter * 0.19)
-        .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.6))
-        .offset(y: 3)
+        .frame(width: 22 * s, height: 22 * s)
+        .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+        // Centered on the ring's lowest point (5pt below the avatar frame).
+        .offset(y: 11 * s + 5 * s)
     }
 }
 
 // MARK: - Glass corner control
 
-/// A circular translucent-dark blurred control for the header corners.
+/// A 38pt circular translucent-dark blurred control for the header
+/// corners (icon 15pt).
 struct MirrorGlassControl: View {
     let icon: String
     var badge: Bool = false
@@ -231,21 +233,21 @@ struct MirrorGlassControl: View {
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: icon)
-                    .font(.sans(16, weight: .semibold))
+                    .font(.sans(15, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 38, height: 38)
                     .background(
                         ZStack {
                             Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
-                            Circle().fill(Color.black.opacity(0.30))
+                            Circle().fill(Color.black.opacity(0.32))
                         }
                     )
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8))
                 if badge {
                     Circle().fill(Theme.alertRed)
-                        .frame(width: 10, height: 10)
+                        .frame(width: 8, height: 8)
                         .overlay(Circle().strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
-                        .offset(x: 1, y: -1)
+                        .offset(x: -1, y: 1)
                 }
             }
             .contentShape(Circle())
@@ -258,7 +260,9 @@ struct MirrorGlassControl: View {
 // MARK: - Header background (full-bleed identity photo + fixed scrim)
 
 /// The full-bleed header — pure identity (photo or accent), NOT the
-/// season. A fixed bottom scrim always guarantees legible text.
+/// season. The fixed scrim is a bottom-anchored 190pt gradient
+/// (transparent → 52% warm-black at 55% → 72% at the bottom) so ANY
+/// photo keeps text legible.
 struct MirrorHeaderBackground: View {
     let headerURL: URL?
     let accent: Color
@@ -266,9 +270,10 @@ struct MirrorHeaderBackground: View {
     var strength: Double = 0.5
 
     private var clampedStrength: Double { min(1, max(0, strength)) }
+    private var warmBlack: Color { Color(hex: 0x140D06) }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             if let headerURL {
                 accent
                 Color.clear
@@ -295,17 +300,16 @@ struct MirrorHeaderBackground: View {
                 )
             }
 
-            // The always-on scrim: transparent up top, deepening to a
-            // warm near-black over the lower half. Any photo stays legible.
+            // The always-on 190pt bottom scrim.
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0.0),
-                    .init(color: .clear, location: 0.36),
-                    .init(color: Color(hex: 0x140D06).opacity(0.38), location: 0.64),
-                    .init(color: Color(hex: 0x140D06).opacity(0.78), location: 1.0)
+                    .init(color: warmBlack.opacity(0.52), location: 0.55),
+                    .init(color: warmBlack.opacity(0.72), location: 1.0)
                 ],
                 startPoint: .top, endPoint: .bottom
             )
+            .frame(height: 190)
             .allowsHitTesting(false)
         }
     }
@@ -314,7 +318,8 @@ struct MirrorHeaderBackground: View {
 // MARK: - Status line + season pill
 
 /// The single merged status slot — user-set or witness-authored, always
-/// identical styling. The pencil affordance only appears when editable.
+/// identical styling (italic serif 15.5). The 12pt pencil affordance
+/// only appears when editable.
 struct MirrorStatusLine: View {
     let text: String
     var editable: Bool = false
@@ -323,7 +328,7 @@ struct MirrorStatusLine: View {
     var body: some View {
         HStack(spacing: 7) {
             Text("“\(text)”")
-                .font(.serifItalic(17, weight: .regular))
+                .font(.serifItalic(15.5, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
             if editable, let onEdit {
@@ -332,7 +337,7 @@ struct MirrorStatusLine: View {
                     onEdit()
                 } label: {
                     Image(systemName: "pencil")
-                        .font(.sans(11, weight: .semibold))
+                        .font(.sans(12, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary.opacity(0.35))
                         .contentShape(Rectangle())
                 }
@@ -344,23 +349,24 @@ struct MirrorStatusLine: View {
     }
 }
 
-/// The quiet season pill — a category-colored dot, the season name, and
-/// the season's day count (season info, never a task denominator).
+/// The quiet 28pt season pill — a 7pt category-colored dot, the season
+/// name, and the season's day count (season info, never a task
+/// denominator).
 struct MirrorSeasonPill: View {
     let seasonName: String
     let dayNumber: Int?
     let accent: Color
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle().fill(accent).frame(width: 8, height: 8)
+        HStack(spacing: 7) {
+            Circle().fill(accent).frame(width: 7, height: 7)
             Text(dayNumber != nil ? "\(seasonName) · day \(dayNumber!)" : seasonName)
-                .font(.sans(13.5, weight: .bold))
+                .font(.sans(11, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary.opacity(0.78))
                 .lineLimit(1)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .frame(height: 28)
         .background(Capsule(style: .continuous).fill(Theme.textPrimary.opacity(0.08)))
         .overlay(Capsule(style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.05), lineWidth: 0.5))
     }
@@ -368,8 +374,9 @@ struct MirrorSeasonPill: View {
 
 // MARK: - The day block (sun + qualitative line + seven-sun horizon)
 
-/// The single rounded day card: today's sun, a qualitative line (never
-/// a count), and the seven-sun horizon strip.
+/// The single rounded day card (r18, 15pt v / 16pt h padding): today's
+/// sun (≤ 52×44 incl. glow, its own hairline underneath), a qualitative
+/// line (never a count), and the seven-sun horizon strip.
 struct MirrorDayBlock: View {
     let ratio: Double
     let weekday: String
@@ -381,27 +388,18 @@ struct MirrorDayBlock: View {
     var onTapDay: (Int) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(alignment: .center, spacing: 16) {
-                // Today's sun over its own short horizon hairline.
-                ZStack(alignment: .bottom) {
-                    Rectangle()
-                        .fill(Theme.textPrimary.opacity(0.18))
-                        .frame(width: 58, height: 1)
-                    CenteredSunView(ratio: ratio, maxDiameter: 34)
-                        .frame(width: 68, height: 60)
-                        .offset(y: 8)
-                }
-                .frame(width: 68, height: 66)
-                .clipped()
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .center, spacing: 14) {
+                todaySunGlyph
 
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(qualitativeDayLine(ratio: ratio))
-                        .font(.serif(20, weight: .medium))
+                        .font(.serif(16.5, weight: .medium))
                         .foregroundStyle(Theme.textPrimary.opacity(0.92))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
                     Text("\(weekday) · \(seasonName)")
-                        .font(.sans(13, weight: .regular))
+                        .font(.sans(11, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.5))
                         .lineLimit(1)
                 }
@@ -410,25 +408,40 @@ struct MirrorDayBlock: View {
 
             SevenSunHorizon(ratios: horizonRatios, accent: accent, onTapDay: onTapDay)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 15)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color(hex: 0xFFFBF1))
                 .shadow(color: Color.black.opacity(0.06), radius: 14, x: 0, y: 6)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Theme.textPrimary.opacity(0.05), lineWidth: 0.8)
         )
     }
+
+    /// Today's sun — total footprint including glow capped at 52×44,
+    /// with the hairline only under the glyph.
+    private var todaySunGlyph: some View {
+        ZStack(alignment: .bottom) {
+            Rectangle()
+                .fill(Theme.textPrimary.opacity(0.18))
+                .frame(width: 52, height: 1)
+            CenteredSunView(ratio: ratio, maxDiameter: 22)
+                .frame(width: 52, height: 44)
+                .offset(y: 6)
+        }
+        .frame(width: 52, height: 45, alignment: .bottom)
+        .clipped()
+    }
 }
 
-/// The iconic strip — the last 7 days as mini suns, each rising to its
-/// true height above its OWN short baseline segment (seven separate
-/// little horizons, per the mock). Today is slightly larger.
+/// The iconic strip — the last 7 days as mini suns above ONE continuous
+/// shared hairline (1pt @ 16%) running the full card width. Each sun's
+/// bottom offset above the hairline is ratio-scaled 2pt (empty) → 22pt
+/// (full) — a skyline, not a row. Today is 16pt with a 1.5pt outline.
 struct SevenSunHorizon: View {
     /// Oldest first, ending today. Up to 7.
     let ratios: [Double]
@@ -438,58 +451,105 @@ struct SevenSunHorizon: View {
     private var shown: [Double] { Array(ratios.suffix(7)) }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            HStack(alignment: .bottom, spacing: 8) {
-                ForEach(Array(shown.enumerated()), id: \.offset) { idx, r in
-                    let daysAgo = (shown.count - 1) - idx
-                    HorizonDayColumn(ratio: r, isToday: daysAgo == 0) {
-                        onTapDay(daysAgo)
+        VStack(alignment: .trailing, spacing: 6) {
+            ZStack(alignment: .bottom) {
+                // The ONE shared hairline, full card width.
+                Rectangle()
+                    .fill(Theme.textPrimary.opacity(0.16))
+                    .frame(height: 1)
+
+                HStack(alignment: .bottom, spacing: 0) {
+                    ForEach(Array(shown.enumerated()), id: \.offset) { idx, r in
+                        let daysAgo = (shown.count - 1) - idx
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            onTapDay(daysAgo)
+                        } label: {
+                            HorizonMiniSun(ratio: r, isToday: daysAgo == 0)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 52, alignment: .bottom)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(daysAgo == 0 ? "Today's sun" : "\(daysAgo) days ago")
                     }
-                    .frame(maxWidth: .infinity)
                 }
             }
-            .frame(height: 64)
+            .frame(height: 52)
 
             Text("last 7 days")
-                .font(.sans(11, weight: .regular))
+                .font(.sans(9.5, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.42))
         }
     }
 }
 
-/// One day of the horizon — a mini sun above its own short baseline.
-private struct HorizonDayColumn: View {
+/// One mini sun of the horizon — 13–16pt, glow scaled with its ratio,
+/// micro-rays (≤ 3pt) only at a full day, lifted 2→22pt above the
+/// shared hairline by its ratio.
+private struct HorizonMiniSun: View {
     let ratio: Double
     let isToday: Bool
-    let action: () -> Void
 
     private var clamped: Double { min(max(ratio, 0), 1) }
+    private var isFull: Bool { ratio >= 1.0 }
+    private var size: CGFloat { isToday ? 16 : 13 + 2 * clamped }
+    /// Bottom offset above the hairline: 2pt empty → 22pt full.
+    private var lift: CGFloat { 2 + 20 * clamped }
+
+    private var warm: Color { Color.lerpHSL(Color(hex: 0x9A6E33), Theme.sunWarm, t: clamped) }
+    private var core: Color { Color.lerpHSL(Color(hex: 0xC79A55), Theme.sunCore, t: clamped) }
 
     var body: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            action()
-        } label: {
-            GeometryReader { proxy in
-                let lift = max(0, proxy.size.height - 34)
-                ZStack(alignment: .bottom) {
-                    // The day's own little horizon.
-                    Rectangle()
-                        .fill(Theme.textPrimary.opacity(0.16))
-                        .frame(height: 1)
-                        .padding(.horizontal, 3)
+        ZStack {
+            // Glow scaled with the day.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        stops: [
+                            .init(color: core.opacity(0.10 + 0.35 * clamped), location: 0.25),
+                            .init(color: .clear, location: 1.0)
+                        ],
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: size * 1.1
+                    )
+                )
+                .frame(width: size * 2.2, height: size * 2.2)
 
-                    CenteredSunView(ratio: ratio, maxDiameter: isToday ? 19 : 16)
-                        .frame(width: 30, height: 30)
-                        .offset(y: -(2 + clamped * lift))
-                        .frame(maxWidth: .infinity)
+            // Micro-rays only at a full day, ≤ 3pt.
+            if isFull {
+                ForEach(0..<8, id: \.self) { i in
+                    Capsule()
+                        .fill(core.opacity(0.8))
+                        .frame(width: 1.2, height: 3)
+                        .offset(y: -(size / 2 + 2.5))
+                        .rotationEffect(.degrees(Double(i) * 45))
                 }
-                .frame(maxHeight: .infinity, alignment: .bottom)
             }
-            .contentShape(Rectangle())
+
+            // The disc.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [core, warm],
+                        center: UnitPoint(x: 0.45, y: 0.42),
+                        startRadius: 0,
+                        endRadius: size * 0.62
+                    )
+                )
+                .frame(width: size, height: size)
+                .opacity(0.55 + 0.45 * clamped)
+
+            // Today's 1.5pt outline.
+            if isToday {
+                Circle()
+                    .strokeBorder(Theme.textPrimary.opacity(0.35), lineWidth: 1.5)
+                    .frame(width: size + 7, height: size + 7)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(isToday ? "Today's sun" : "An earlier day")
+        .frame(width: size, height: size)
+        .offset(y: -lift)
     }
 }
 
@@ -522,9 +582,9 @@ struct MirrorTaskRow: Identifiable, Equatable {
     let isDone: Bool
 }
 
-/// A category on the (tier-visible) board — a header with a completion-
-/// only count and a box of up to 5 checked-first rows, scrolling within
-/// itself when there are more.
+/// A category on the (tier-visible) board — an 11pt tracked header with
+/// a completion-only count, 8pt above its box of checked-first 40pt
+/// rows, scrolling within itself when there are more than 5.
 struct MirrorCategorySection: View {
     let category: Category
     /// Already sorted checked-first by the caller.
@@ -537,21 +597,21 @@ struct MirrorCategorySection: View {
     private var doneCount: Int { rows.filter { $0.isDone }.count }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 9) {
-                Circle().fill(tint).frame(width: 9, height: 9)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle().fill(tint).frame(width: 8, height: 8)
                 Text(category.displayName.uppercased())
-                    .font(.sans(12, weight: .bold))
-                    .tracking(1.6)
+                    .font(.sans(11, weight: .bold))
+                    .tracking(1.4)
                     .foregroundStyle(Theme.textPrimary.opacity(0.62))
                 Spacer(minLength: 8)
                 if doneCount > 0 {
                     Text("\(doneCount) today")
-                        .font(.sans(13.5, weight: .bold))
+                        .font(.sans(11, weight: .semibold))
                         .foregroundStyle(tint)
                 } else {
                     Text("quiet so far")
-                        .font(.sans(13, weight: .regular))
+                        .font(.sans(11, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.38))
                 }
             }
@@ -564,47 +624,78 @@ struct MirrorCategorySection: View {
     }
 }
 
-/// The rounded card holding the rows. ≤ 5 → plain; > 5 → a fixed-height
-/// internal scroll region with a bottom fade + "N more · scroll" cue
-/// that both vanish once scrolled to the end.
+/// A snapshot of the inner scroll geometry, tracked to drive the fades
+/// and the live "N more" cue.
+nonisolated private struct MirrorScrollProbe: Equatable {
+    var offset: CGFloat = 0
+    var content: CGFloat = 0
+    var container: CGFloat = 0
+}
+
+/// The rounded r16 card holding the rows. ≤ 5 → plain box, height =
+/// rows × 40 + 8. > 5 → a fixed 208pt internal scroll region with a
+/// 26pt bottom fade + "N more · scroll" cue that vanish at the end,
+/// and an 18pt top fade once scrolled down.
 private struct MirrorCategoryBox: View {
     let rows: [MirrorTaskRow]
     let tint: Color
 
-    private let rowHeight: CGFloat = 52
+    private let rowHeight: CGFloat = 40
     private let maxRows: Int = 5
+    /// 5 × 40 + 8pt of vertical padding.
+    private let boxHeight: CGFloat = 208
+    private let cardColor: Color = Color(hex: 0xFFFBF1)
 
     @State private var atBottom: Bool = false
+    @State private var atTop: Bool = true
+    /// nil until the first geometry callback — the cue falls back to
+    /// the static below-the-fold count.
+    @State private var belowFold: Int? = nil
 
     private var overflowing: Bool { rows.count > maxRows }
-    private var boxHeight: CGFloat { rowHeight * CGFloat(maxRows) }
+    private var cueCount: Int { belowFold ?? max(0, rows.count - maxRows) }
 
     var body: some View {
         Group {
             if overflowing {
                 ScrollView(.vertical, showsIndicators: false) {
                     rowStack
-                        .onScrollGeometryChange(for: Bool.self) { geo in
-                            geo.contentOffset.y >= geo.contentSize.height - geo.containerSize.height - 6
-                        } action: { _, isAtBottom in
-                            atBottom = isAtBottom
+                        .padding(.vertical, 4)
+                        .onScrollGeometryChange(for: MirrorScrollProbe.self) { geo in
+                            MirrorScrollProbe(
+                                offset: geo.contentOffset.y,
+                                content: geo.contentSize.height,
+                                container: geo.containerSize.height
+                            )
+                        } action: { _, probe in
+                            let bottom = probe.offset >= probe.content - probe.container - 2
+                            let top = probe.offset <= 2
+                            // Rows fully or partly below the visible fold.
+                            let visibleBottom = probe.offset + probe.container - 4
+                            let below = max(0, rows.count - Int(visibleBottom / rowHeight))
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                atBottom = bottom
+                                atTop = top
+                                belowFold = below
+                            }
                         }
                 }
                 .frame(height: boxHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(alignment: .top) { topFade }
                 .overlay(alignment: .bottom) { fadeCue }
             } else {
                 rowStack
+                    .padding(.vertical, 4)
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 6)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(hex: 0xFFFBF1))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(cardColor)
                 .shadow(color: Color.black.opacity(0.04), radius: 10, x: 0, y: 4)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(Theme.textPrimary.opacity(0.05), lineWidth: 0.8)
         )
     }
@@ -618,25 +709,41 @@ private struct MirrorCategoryBox: View {
         }
     }
 
+    /// 18pt top fade once scrolled down.
+    @ViewBuilder
+    private var topFade: some View {
+        if !atTop {
+            LinearGradient(
+                colors: [cardColor.opacity(0.95), .clear],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 18)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    /// 26pt bottom fade + the live "N more · scroll" cue; both vanish
+    /// once scrolled to the end.
     @ViewBuilder
     private var fadeCue: some View {
         if !atBottom {
             ZStack(alignment: .bottom) {
                 LinearGradient(
-                    colors: [.clear, Color(hex: 0xFFFBF1)],
+                    colors: [.clear, cardColor.opacity(0.95)],
                     startPoint: .top, endPoint: .bottom
                 )
-                .frame(height: 40)
+                .frame(height: 26)
                 .allowsHitTesting(false)
 
-                HStack(spacing: 5) {
-                    Text("\(rows.count - maxRows) more · scroll")
-                        .font(.sans(12, weight: .medium))
+                HStack(spacing: 4) {
+                    Text("\(cueCount) more · scroll")
+                        .font(.sans(10, weight: .medium))
                     Image(systemName: "arrow.up.arrow.down")
-                        .font(.sans(9, weight: .bold))
+                        .font(.sans(8, weight: .bold))
                 }
-                .foregroundStyle(Theme.textPrimary.opacity(0.42))
-                .padding(.bottom, 6)
+                .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                .padding(.bottom, 4)
                 .allowsHitTesting(false)
             }
             .transition(.opacity)
@@ -644,36 +751,39 @@ private struct MirrorCategoryBox: View {
     }
 }
 
+/// One 40pt task row — 22pt rounded-square check (r7), 13.5pt label,
+/// 11pt check→label gap, 14pt side padding. Done rows fill the check
+/// in the category color and strike the label at 55% opacity.
 private struct MirrorTaskRowView: View {
     let row: MirrorTaskRow
     let tint: Color
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 11) {
             checkbox
             Text(row.title)
-                .font(.sans(16, weight: row.isDone ? .medium : .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(row.isDone ? 0.5 : 0.88))
+                .font(.sans(13.5, weight: row.isDone ? .medium : .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(row.isDone ? 0.55 : 0.88))
                 .strikethrough(row.isDone, color: Theme.textPrimary.opacity(0.45))
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .accessibilityLabel("\(row.title), \(row.isDone ? "done" : "open")")
     }
 
     private var checkbox: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
             .fill(row.isDone ? tint : Color.clear)
-            .frame(width: 26, height: 26)
+            .frame(width: 22, height: 22)
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(row.isDone ? Color.clear : Theme.textPrimary.opacity(0.22), lineWidth: 1.6)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(row.isDone ? Color.clear : Theme.textPrimary.opacity(0.22), lineWidth: 1.5)
             )
             .overlay {
                 if row.isDone {
                     Image(systemName: "checkmark")
-                        .font(.sans(13, weight: .bold))
+                        .font(.sans(11, weight: .bold))
                         .foregroundStyle(.white)
                 }
             }
@@ -682,7 +792,8 @@ private struct MirrorTaskRowView: View {
 
 // MARK: - Action row pieces
 
-/// The dark primary pill in the action row (Edit profile / Friends / Add).
+/// The dark 44pt primary pill in the action row (Edit profile /
+/// Friends / Add) — 13pt semibold label, full remaining width.
 struct MirrorPrimaryPill: View {
     let title: String
     var icon: String? = nil
@@ -695,18 +806,18 @@ struct MirrorPrimaryPill: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             action()
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 if isWorking {
                     ProgressView().controlSize(.small)
                         .tint(filled ? Theme.textCream : Theme.textPrimary)
                 } else if let icon {
-                    Image(systemName: icon).font(.sans(13, weight: .bold))
+                    Image(systemName: icon).font(.sans(11, weight: .bold))
                 }
-                Text(title).font(.sans(16, weight: .semibold))
+                Text(title).font(.sans(13, weight: .semibold))
             }
             .foregroundStyle(filled ? Theme.textCream : Theme.textPrimary.opacity(0.85))
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
+            .frame(height: 44)
             .background(
                 Capsule(style: .continuous)
                     .fill(filled ? Theme.textPrimary : Theme.textPrimary.opacity(0.06))
@@ -723,7 +834,8 @@ struct MirrorPrimaryPill: View {
     }
 }
 
-/// The round glass companion button in the action row (paint / chat).
+/// The 38pt round dark glass companion button in the action row
+/// (paint / chat), with an 8pt unread dot inside its top-right.
 struct MirrorActionCircle: View {
     let icon: String
     var badge: Bool = false
@@ -737,9 +849,9 @@ struct MirrorActionCircle: View {
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: icon)
-                    .font(.sans(16, weight: .semibold))
+                    .font(.sans(14, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
-                    .frame(width: 52, height: 52)
+                    .frame(width: 38, height: 38)
                     .background(
                         Circle()
                             .fill(Theme.textPrimary.opacity(0.92))
@@ -748,9 +860,9 @@ struct MirrorActionCircle: View {
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8))
                 if badge {
                     Circle().fill(Theme.alertRed)
-                        .frame(width: 11, height: 11)
-                        .overlay(Circle().strokeBorder(Color(hex: 0xFFFBF1), lineWidth: 1.5))
-                        .offset(x: 0, y: 0)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().strokeBorder(Color(hex: 0xFFFBF1), lineWidth: 1.2))
+                        .offset(x: -2, y: 2)
                 }
             }
             .contentShape(Circle())
@@ -762,8 +874,8 @@ struct MirrorActionCircle: View {
 
 // MARK: - "Seen as" chip (self only)
 
-/// The demoted tier-preview chip — a small bordered chip that opens a
-/// menu to preview Quiet / Open / Full.
+/// The demoted 28pt tier-preview chip — a small bordered chip that
+/// opens a menu to preview Quiet / Open / Full.
 struct SeenAsChip: View {
     @Binding var tier: VisibilityTier
 
@@ -786,17 +898,17 @@ struct SeenAsChip: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Image(systemName: "eye")
-                    .font(.sans(10, weight: .semibold))
+                    .font(.sans(9, weight: .semibold))
                 Text("Seen as: \(name(tier))")
-                    .font(.sans(12.5, weight: .semibold))
+                    .font(.sans(11, weight: .semibold))
                 Image(systemName: "chevron.down")
-                    .font(.sans(8, weight: .bold))
+                    .font(.sans(7, weight: .bold))
             }
             .foregroundStyle(Theme.textPrimary.opacity(0.65))
-            .padding(.horizontal, 11)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
             .background(Capsule(style: .continuous).fill(Theme.textPrimary.opacity(0.04)))
             .overlay(Capsule(style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.14), lineWidth: 0.8))
         }
@@ -806,33 +918,49 @@ struct SeenAsChip: View {
 
 // MARK: - Identity handle line
 
-/// The single stat line under the name: `@handle · N days shown up`
-/// (the number bold). Falls back to just the day count when no handle.
+/// The single stat line under the name (12pt @ 82% white):
+/// `@handle · N days shown up`, the number bold. When the counter is
+/// unavailable or zero the stat is OMITTED — never "0 days shown up".
 struct MirrorHandleLine: View {
     let handle: String?
-    let daysShownUp: Int
+    let daysShownUp: Int?
+
+    private var showsDays: Bool { (daysShownUp ?? 0) > 0 }
+    private var showsHandle: Bool { !(handle ?? "").isEmpty }
 
     var body: some View {
         Group {
-            if let handle, !handle.isEmpty {
-                handleText(handle) + boldDays() + Text(" days shown up")
-            } else {
+            if showsHandle, showsDays {
+                handleText(handle ?? "") + boldDays() + Text(" days shown up")
+            } else if showsHandle {
+                Text(prefixed(handle ?? ""))
+            } else if showsDays {
                 boldDays() + Text(" days shown up")
             }
         }
-        .font(.sans(13.5, weight: .regular))
-        .foregroundStyle(Theme.textCream.opacity(0.85))
+        .font(.sans(12, weight: .regular))
+        .foregroundStyle(Theme.textCream.opacity(0.82))
         .lineLimit(1)
         .minimumScaleFactor(0.8)
-        .accessibilityLabel("\(handle ?? ""), \(daysShownUp) days shown up")
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        var parts: [String] = []
+        if showsHandle { parts.append(prefixed(handle ?? "")) }
+        if showsDays { parts.append("\(daysShownUp ?? 0) days shown up") }
+        return parts.joined(separator: ", ")
+    }
+
+    private func prefixed(_ handle: String) -> String {
+        handle.hasPrefix("@") ? handle : "@\(handle)"
     }
 
     private func handleText(_ handle: String) -> Text {
-        let h = handle.hasPrefix("@") ? handle : "@\(handle)"
-        return Text("\(h) · ")
+        Text("\(prefixed(handle)) · ")
     }
 
     private func boldDays() -> Text {
-        Text("\(daysShownUp)").font(.sans(13.5, weight: .bold))
+        Text("\(daysShownUp ?? 0)").font(.sans(12, weight: .bold))
     }
 }
