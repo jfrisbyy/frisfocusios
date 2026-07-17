@@ -2,17 +2,15 @@
 //  MyProfileView.swift
 //  FrisFocus
 //
-//  The user's own profile — a faithful mirror of the editorial page
-//  friends see: the living header they designed (photo or crafted
-//  sky, breathing with today's real effort), "CURRENTLY IN" + the
-//  serif season name carved in, the floating identity card with the
-//  one number that matters, and the hairline journal body.
+//  The user's own profile — the mirror. A full-bleed identity header
+//  with the sun-ring avatar (its ring is today's sun), the merged
+//  status slot, the day block (sun + qualitative line + seven-sun
+//  horizon), the checked-first category boxes, and the record below.
+//  Self and friend views share this exact layout; only the action row
+//  differs (Edit profile + customize here).
 //
-//  Edit affordances live right on the page: a quiet "Edit header"
-//  chip on the hero opens the full-screen header studio, the camera
-//  disc on the avatar and the Edit profile pill open the edit screen,
-//  and the mood line is settable in a tap. The Quiet / Open / Full
-//  switcher previews exactly what each sharing tier reveals.
+//  Hard rule: NO denominators, fractions, or point values anywhere on
+//  this page — only completions, sun language, and qualitative copy.
 //
 
 import SwiftUI
@@ -31,12 +29,9 @@ struct MyProfileView: View {
     @State private var showAccount: Bool = false
     @State private var showMyStories: Bool = false
     @State private var showCheers: Bool = false
-    @State private var showWeekSheet: Bool = false
-    @State private var selectedDayId: Int = 0
     @State private var showMoodEditor: Bool = false
     @State private var moodDraft: String = ""
-    @State private var ringFill: Double = 0
-    @State private var storyRingPulse: Bool = false
+    @State private var dayRef: DayRef?
 
     /// Zoom-transition namespace — the story player grows out of the
     /// avatar and shrinks back into it on dismiss.
@@ -63,36 +58,55 @@ struct MyProfileView: View {
         return value.isEmpty ? "?" : value
     }
 
-    /// My signature color — the chosen season accent when set, else
-    /// the auto-assigned account accent, same as friends see it.
     private var accent: Color {
         if let chosen = store.currentSeason.accentHex { return Color(hex: chosen) }
         if let myId { return Color(hex: RemoteIDMapper.accentHex(forRemoteId: myId)) }
         return Theme.textPrimary
     }
 
-    // MARK: - Day
+    // MARK: - Day / sun
 
     private var day: FriendDay { store.myDay }
 
-    private var hasStories: Bool { store.hasActiveMyStories }
+    private var goal: Int { max(1, store.currentSeason.dailyGoal) }
 
-    /// The header's living light follows my real day.
-    private var headerStrength: Double {
-        0.15 + 0.85 * day.completionFraction
-    }
+    /// Today's true sun ratio (points ÷ target) — the number that drives
+    /// the home sun, and now the avatar ring, day block, and horizon.
+    private var todayRatio: Double { Double(day.todayLogged) / Double(goal) }
 
-    private var ringTarget: Double {
+    /// The sun-ring ratio resolved to the currently previewed tier — a
+    /// friend at that tier sees exactly this.
+    private var ringRatio: Double {
         switch previewTier {
-        case .full: return day.completionFraction
+        case .full: return todayRatio
         case .open: return day.momentum
         case .quiet: return 0
         }
     }
 
-    private var shortSeasonName: String {
+    private var horizonRatios: [Double] { Array(day.rhythmBars.suffix(7)) }
+
+    private var hasStories: Bool { store.hasActiveMyStories }
+    private var myStoryCount: Int { store.activeMyStories.count }
+    private var myViewedStoryCount: Int {
+        store.activeMyStories.filter { store.viewedStoryPostIds.contains($0.id) }.count
+    }
+    private var storyPreviewURL: URL? {
+        store.myStoryThumbMedia?.resolvedThumbnailURL ?? store.myStoryThumbMedia?.resolvedLocalURL
+    }
+
+    private var seasonName: String {
         store.currentSeason.name.replacingOccurrences(of: " Season", with: "")
     }
+
+    private var statusText: String {
+        if let mood = store.currentSeason.moodLine, !mood.isEmpty { return mood }
+        return makeWitnessLine(day: day, card: store.mySeasonCard) ?? "A quieter stretch — still here."
+    }
+
+    private var weekday: String { Date().formatted(.dateTime.weekday(.wide)) }
+
+    private var headerHeight: CGFloat { max(360, UIScreen.main.bounds.height * 0.42) }
 
     // MARK: - Body
 
@@ -100,24 +114,20 @@ struct MyProfileView: View {
         ZStack(alignment: .bottom) {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    hero
+                    header
 
-                    identityCard
-                        .padding(.horizontal, Theme.pageHorizontalPadding - 6)
-                        .offset(y: -52)
-                        .padding(.bottom, -52)
+                    actionRow
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .offset(y: -25)
+                        .padding(.bottom, -25)
                         .zIndex(1)
 
-                    journalBody
+                    bodyContent
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 26)
-                        .padding(.bottom, 24)
+                        .padding(.top, 20)
 
                     Color.clear.frame(height: 130)
                 }
-                // Pin the page to the scroll container's width so no
-                // child can ever stretch it wider than the screen and
-                // shove the whole layout sideways.
                 .containerRelativeFrame(.horizontal)
             }
             .background(Theme.warmWheat)
@@ -151,15 +161,30 @@ struct MyProfileView: View {
                     }
             }
         }
-        .sheet(isPresented: $showAccount) {
-            ProfileSheetView()
-        }
+        .sheet(isPresented: $showAccount) { ProfileSheetView() }
         .sheet(isPresented: $showCheers) {
-            CheerHistoryView()
-                .environment(store)
+            CheerHistoryView().environment(store)
         }
-        .sheet(isPresented: $showWeekSheet) {
-            WeekRhythmSheet(name: "Your", bars: day.rhythmBars, accent: accent)
+        .sheet(item: $dayRef) { ref in
+            NavigationStack {
+                ScrollView(.vertical, showsIndicators: false) {
+                    PastDaySnapshotView(date: ref.date)
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .padding(.vertical, 16)
+                        .environment(store)
+                }
+                .background(Theme.warmWheat)
+                .navigationTitle(ref.date.formatted(.dateTime.weekday(.wide).month().day()))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(Theme.warmWheat, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dayRef = nil }.foregroundStyle(Theme.textPrimary)
+                    }
+                }
+            }
+            .presentationDetents([.large])
         }
         .fullScreenCover(isPresented: $showHeaderStudio) {
             HeaderStudioView()
@@ -172,311 +197,289 @@ struct MyProfileView: View {
                 .navigationTransition(.zoom(sourceID: "myprofile-story", in: storyZoom))
                 .environment(store)
         }
-        .alert("Your mood line", isPresented: $showMoodEditor) {
-            TextField("e.g. resting this week", text: $moodDraft)
-            Button("Save") {
-                store.setMoodLine(moodDraft)
-            }
-            Button("Clear", role: .destructive) {
-                store.setMoodLine(nil)
-            }
+        .alert("Your status", isPresented: $showMoodEditor) {
+            TextField("e.g. rebuilding quietly", text: $moodDraft)
+            Button("Save") { store.setMoodLine(moodDraft) }
+            Button("Clear", role: .destructive) { store.setMoodLine(nil) }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("A small status under your intention, visible to friends until you change it.")
-        }
-        .onAppear {
-            animateRing()
-            if hasStories && !reduceMotion {
-                withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-                    storyRingPulse = true
-                }
-            }
-        }
-        .onChange(of: previewTier) { _, _ in animateRing() }
-    }
-
-    private func animateRing() {
-        if reduceMotion {
-            ringFill = ringTarget
-        } else {
-            withAnimation(.easeOut(duration: 0.9)) { ringFill = ringTarget }
+            Text("A short line under your name, visible to friends until you change it.")
         }
     }
 
-    // MARK: - Hero
+    // MARK: - Header
 
-    private var hero: some View {
+    private var header: some View {
         ZStack(alignment: .bottomLeading) {
-            ProfilePosterBackground(
-                coverId: store.currentSeason.coverId,
+            MirrorHeaderBackground(
                 headerURL: headerPhotoURL,
                 accent: accent,
-                strength: headerStrength
+                strength: 0.15 + 0.85 * min(1, todayRatio)
             )
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text("CURRENTLY IN")
-                    .font(.sans(9.5, weight: .semibold))
-                    .tracking(2.6)
-                    .foregroundStyle(Theme.textCream.opacity(0.6))
-                Text(shortSeasonName)
-                    .font(.serif(33, weight: .medium))
-                    .foregroundStyle(Theme.textCream)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.65)
-                    .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 2)
-                Text(store.seasonDayTextCaps)
-                    .font(.sans(10, weight: .medium))
-                    .tracking(1.8)
-                    .foregroundStyle(Theme.textCream.opacity(0.7))
+            HStack(alignment: .center, spacing: 15) {
+                avatarButton
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(displayName)
+                        .font(.serif(28, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .shadow(color: .black.opacity(0.35), radius: 6, x: 0, y: 2)
+                    MirrorHandleLine(handle: handle, daysShownUp: store.lifetimeDaysShownUp)
+                }
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
-            .padding(.bottom, 74)
+            .padding(.bottom, 40)
         }
-        .frame(height: 330)
+        .frame(height: headerHeight)
         .clipped()
         .overlay(alignment: .top) {
-            topBar
+            topControls
                 .padding(.top, 54)
                 .padding(.horizontal, Theme.pageHorizontalPadding)
         }
-        .overlay(alignment: .bottomTrailing) {
-            editHeaderChip
-                .padding(.trailing, Theme.pageHorizontalPadding)
-                .padding(.bottom, 74)
-        }
     }
 
-    /// The quiet edit affordance on the hero — opens the studio.
-    private var editHeaderChip: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showHeaderStudio = true
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "paintbrush.fill")
-                    .font(.sans(10, weight: .semibold))
-                Text("Edit header")
-                    .font(.sans(12, weight: .semibold))
-            }
-            .foregroundStyle(Theme.textCream)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Capsule(style: .continuous).fill(Color.black.opacity(0.30)))
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(Theme.textCream.opacity(0.3), lineWidth: 0.8)
-            )
-            .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Design your header")
-    }
-
-    private var topBar: some View {
-        HStack(spacing: 10) {
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    private var topControls: some View {
+        HStack {
+            MirrorGlassControl(icon: "xmark", label: "Close your profile") {
                 dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.sans(15, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-                    .frame(width: 38, height: 38)
-                    .background(Circle().fill(Color.black.opacity(0.28)))
-                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close your profile")
-
             Spacer()
-
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            MirrorGlassControl(icon: "gearshape.fill", label: "Account and settings") {
                 showAccount = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.sans(14, weight: .semibold))
-                    .foregroundStyle(Theme.textCream)
-                    .frame(width: 38, height: 38)
-                    .background(Circle().fill(Color.black.opacity(0.28)))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Account and settings")
-        }
-    }
-
-    // MARK: - Identity card
-
-    private var identityCard: some View {
-        ProfileIdentityCard(
-            name: displayName,
-            lifetimeDays: store.lifetimeDaysShownUp,
-            metaLine: handle ?? "This is you",
-            intention: store.currentSeason.intention,
-            moodLine: store.currentSeason.moodLine,
-            onMoodTap: {
-                moodDraft = store.currentSeason.moodLine ?? ""
-                showMoodEditor = true
-            }
-        ) {
-            avatarBlock
-        } extra: {
-            if hasStories {
-                Text("YOUR STORY · TAP YOUR PHOTO TO VIEW")
-                    .font(.sans(9, weight: .medium))
-                    .tracking(1.4)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
-            }
-        } pills: {
-            HStack(spacing: 10) {
-                IdentityPill(title: "Edit profile", icon: "square.and.pencil", filled: true) {
-                    showEditProfile = true
-                }
-                IdentityRoundButton(icon: "paintbrush.fill", label: "Design your header") {
-                    showHeaderStudio = true
-                }
             }
         }
     }
 
-    /// Avatar with the story ring and the small camera edit disc.
-    private var avatarBlock: some View {
+    private var avatarButton: some View {
         Button {
-            guard hasStories else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showMyStories = true
+            if hasStories { showMyStories = true } else { showEditProfile = true }
         } label: {
-            ZStack {
-                avatarImage
-                    .frame(width: 64, height: 64)
-                    .clipShape(Circle())
-                    .padding(5)
-                    .background(Circle().fill(Color(hex: 0xFFFBF1)))
-                    .overlay { storyRingOverlay }
-            }
+            SunRingAvatar(
+                ratio: ringRatio,
+                diameter: 92,
+                photoURL: photoURL,
+                initials: initials,
+                fillColor: Theme.textPrimary,
+                storyUnitCount: myStoryCount,
+                viewedUnitCount: myViewedStoryCount,
+                storyPreviewURL: storyPreviewURL,
+                reduceMotion: reduceMotion,
+                shimmer: hasStories && myViewedStoryCount < myStoryCount
+            )
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .matchedTransitionSource(id: "myprofile-story", in: storyZoom)
-        .accessibilityLabel(hasStories ? "Your story — tap to view" : "Your profile photo")
-        .overlay(alignment: .bottomTrailing) {
-            avatarCameraDisc
-        }
+        .overlay(alignment: .bottomTrailing) { cameraBadge }
+        .accessibilityLabel(hasStories ? "Your story — tap to view" : "Your profile photo — tap to change")
     }
 
-    @ViewBuilder
-    private var avatarImage: some View {
-        if let photoURL {
-            CachedImage(url: photoURL) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                initialsAvatar
-            }
-        } else {
-            initialsAvatar
-        }
-    }
-
-    private var initialsAvatar: some View {
-        ZStack {
-            Circle().fill(Theme.textPrimary)
-            Text(initials)
-                .font(.serif(23, weight: .medium))
-                .foregroundStyle(Theme.textCream)
-        }
-    }
-
-    @ViewBuilder
-    private var storyRingOverlay: some View {
-        if hasStories {
-            Circle()
-                .strokeBorder(
-                    AngularGradient(
-                        colors: [Theme.sunWarm, Theme.sunOuter, Theme.sunCore, Theme.sunWarm],
-                        center: .center
-                    ),
-                    lineWidth: 3
-                )
-                .opacity(reduceMotion ? 1 : (storyRingPulse ? 1 : 0.6))
-        } else {
-            Circle().strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 1)
-        }
-    }
-
-    /// The small charcoal camera disc on the avatar's corner — the
-    /// always-present photo edit affordance.
-    private var avatarCameraDisc: some View {
+    private var cameraBadge: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             showEditProfile = true
         } label: {
             ZStack {
-                Circle().fill(Theme.textPrimary)
+                Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
+                Circle().fill(Color.black.opacity(0.25))
                 Image(systemName: "camera.fill")
                     .font(.sans(9, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
             }
-            .frame(width: 24, height: 24)
-            .overlay(Circle().strokeBorder(Color(hex: 0xFFFBF1), lineWidth: 1.5))
+            .frame(width: 26, height: 26)
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .offset(x: 2, y: 2)
+        .offset(x: 1, y: -1)
         .accessibilityLabel("Change your profile photo")
     }
 
-    // MARK: - Journal body
+    // MARK: - Action row (self)
 
-    private var journalBody: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            tierPreviewBlock
+    private var actionRow: some View {
+        HStack(spacing: 12) {
+            MirrorPrimaryPill(title: "Edit profile", icon: "square.and.pencil") {
+                showEditProfile = true
+            }
+            MirrorActionCircle(icon: "paintbrush.fill", label: "Design your header") {
+                showHeaderStudio = true
+            }
+        }
+    }
 
-            todaySection
-                .padding(.top, 18)
+    // MARK: - Body content
+
+    private var bodyContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            statusSlot
 
             if previewTier != .quiet {
-                JournalHairline()
-                    .padding(.vertical, 18)
+                MirrorDayBlock(
+                    ratio: ringRatio,
+                    weekday: weekday,
+                    seasonName: seasonName,
+                    horizonRatios: horizonRatios,
+                    accent: accent,
+                    onTapDay: openDay
+                )
+
+                categoriesBlock
+            } else {
+                quietNote
+            }
+
+            recordBelow
+        }
+    }
+
+    // MARK: Status + season + seen-as
+
+    private var statusSlot: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            MirrorStatusLine(text: statusText, editable: true) {
+                moodDraft = store.currentSeason.moodLine ?? ""
+                showMoodEditor = true
+            }
+            HStack(spacing: 10) {
+                MirrorSeasonPill(seasonName: seasonName, dayNumber: store.currentSeasonDay, accent: accent)
+                SeenAsChip(tier: $previewTier)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var quietNote: some View {
+        Text("At the Quiet level, friends see only your season and this line — nothing about your day.")
+            .font(.serifItalic(14, weight: .regular))
+            .foregroundStyle(Theme.textPrimary.opacity(0.55))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 6)
+    }
+
+    // MARK: Categories
+
+    private var categoriesBlock: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            ForEach(categorySections, id: \.0) { pair in
+                MirrorCategorySection(
+                    category: pair.0,
+                    rows: pair.1,
+                    showsBox: previewTier == .full
+                )
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    /// Today's tasks grouped by category, preserving first-appearance
+    /// order, rows sorted checked-first.
+    private var categorySections: [(Category, [MirrorTaskRow])] {
+        var order: [Category] = []
+        var byCat: [Category: [MirrorTaskRow]] = [:]
+        for task in day.tasks {
+            if byCat[task.category] == nil { order.append(task.category) }
+            byCat[task.category, default: []].append(MirrorTaskRow(title: task.title, isDone: task.isDone))
+        }
+        return order.map { cat in
+            let rows = (byCat[cat] ?? []).sorted { $0.isDone && !$1.isDone }
+            return (cat, rows)
+        }
+    }
+
+    // MARK: Record below
+
+    private var recordBelow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if previewTier == .full {
+                JournalHairline().padding(.vertical, 18)
                 pointsPrivacyRow
             }
 
-            if let witness = makeWitnessLine(day: day, card: store.mySeasonCard) {
-                JournalHairline()
-                    .padding(.vertical, 18)
-                WitnessLineView(text: witness, accent: accent)
-            }
-
             if previewTier != .quiet, !store.mySeasonCard.milestones.isEmpty {
-                JournalHairline()
-                    .padding(.vertical, 18)
+                JournalHairline().padding(.vertical, 18)
                 destinationsSection
             }
 
             if !store.pastSeasons.isEmpty {
-                JournalHairline()
-                    .padding(.vertical, 18)
+                JournalHairline().padding(.vertical, 18)
                 seasonsBeforeSection
             }
 
-            JournalHairline()
-                .padding(.vertical, 18)
+            JournalHairline().padding(.vertical, 18)
             cheersRow
 
             if store.appMode == .demo {
-                JournalHairline()
-                    .padding(.vertical, 18)
+                JournalHairline().padding(.vertical, 18)
                 exitDemoRow
             }
         }
     }
 
-    // MARK: Exit demo
+    private var pointsPrivacyRow: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "lock")
+                .font(.sans(13, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            Text("Points are private — friends ask, you approve each one.")
+                .font(.sans(13, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
 
-    /// Reachable from the profile while exploring the sample sandbox —
-    /// mirrors the home pill. Dismisses the profile, then leaving the
-    /// demo (handled in ContentView) drops into guided season setup.
+    private var destinationsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            JournalSectionHeader(label: "THE SEASON’S DESTINATIONS")
+            DestinationsTimeline(
+                milestones: store.mySeasonCard.milestones,
+                accent: accent,
+                seasonStart: store.currentSeason.startDate
+            )
+        }
+    }
+
+    private var seasonsBeforeSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            JournalSectionHeader(label: "SEASONS BEFORE")
+            SeasonsBeforeRow(chapters: store.pastSeasons, showsMilestones: true)
+        }
+    }
+
+    private var cheersRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showCheers = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "hands.clap.fill")
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Cheers")
+                        .font(.sans(15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Every word that found you")
+                        .font(.serifItalic(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("View all cheers you’ve received and sent")
+    }
+
     private var exitDemoRow: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -513,245 +516,16 @@ struct MyProfileView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: Tier preview switcher
+    // MARK: - Actions
 
-    private var tierPreviewBlock: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            JournalSectionHeader(label: "AS A \(previewTier.tag) FRIEND SEES IT")
-
-            HStack(spacing: 8) {
-                ForEach(VisibilityTier.allCases, id: \.self) { tier in
-                    tierPill(tier)
-                }
-            }
-
-            Text(previewTier.detail)
-                .font(.serifItalic(12.5, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                .fixedSize(horizontal: false, vertical: true)
-        }
+    private func openDay(daysAgo: Int) {
+        let date = Calendar.current.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+        dayRef = DayRef(date: Calendar.current.startOfDay(for: date))
     }
+}
 
-    private func tierPill(_ tier: VisibilityTier) -> some View {
-        let isSelected = previewTier == tier
-        return Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.easeInOut(duration: 0.25)) { previewTier = tier }
-        } label: {
-            Text(tierName(tier))
-                .font(.sans(13, weight: .semibold))
-                .foregroundStyle(isSelected ? Theme.textCream : Theme.textPrimary.opacity(0.7))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(isSelected ? Theme.textPrimary : Theme.textPrimary.opacity(0.05))
-                )
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(Theme.textPrimary.opacity(isSelected ? 0 : 0.12), lineWidth: 0.5)
-                )
-                .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Preview as a \(tierName(tier)) friend")
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-    }
-
-    private func tierName(_ tier: VisibilityTier) -> String {
-        switch tier {
-        case .quiet: return "Quiet"
-        case .open: return "Open"
-        case .full: return "Full"
-        }
-    }
-
-    // MARK: TODAY
-
-    private var todaySection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            JournalSectionHeader(
-                label: "TODAY",
-                trailingTitle: previewTier != .quiet ? Date().formatted(.dateTime.weekday(.abbreviated)) : nil,
-                trailingAction: previewTier != .quiet ? { showWeekSheet = true } : nil
-            )
-
-            SunDayCard(days: sunDays, accent: accent, selectedId: $selectedDayId)
-                .animation(.easeInOut(duration: 0.25), value: previewTier)
-
-            if previewTier != .quiet {
-                DayTaskList(day: selectedSunDay, accent: accent)
-            }
-        }
-        .onChange(of: sunDays.count) { _, newCount in
-            if selectedDayId > newCount - 1 { selectedDayId = 0 }
-        }
-    }
-
-    /// The day currently selected in the card, for the list below.
-    private var selectedSunDay: SunDay {
-        let days = sunDays
-        return days.first { $0.id == selectedDayId } ?? days.last ?? days[0]
-    }
-
-    /// The card's days, oldest first ending today. Each day is built
-    /// tier-resolved from my own real records, so tapping a past sun
-    /// reveals that day's true score and the tasks I actually finished.
-    private var sunDays: [SunDay] {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        guard previewTier != .quiet else {
-            return [SunDay(id: 0, date: today, ratio: 0, headline: todayHeadline,
-                           subline: todaySubline, chips: [], scoreText: nil)]
-        }
-        let bars = day.rhythmBars
-        let n = bars.count
-        return bars.enumerated().map { idx, ratio in
-            let daysAgo = (n - 1) - idx
-            let date = cal.date(byAdding: .day, value: -daysAgo, to: today) ?? today
-            if daysAgo == 0 {
-                return SunDay(
-                    id: 0, date: date, ratio: ratio,
-                    headline: todayHeadline, subline: todaySubline,
-                    chips: todayChipItems, scoreText: "\(day.todayLogged) points"
-                )
-            }
-            return pastSunDay(daysAgo: daysAgo, date: date, ratio: ratio)
-        }
-    }
-
-    private var todayChipItems: [SunDayChip] {
-        switch previewTier {
-        case .full:
-            return day.tasks
-                .sorted { $0.isDone && !$1.isDone }
-                .map { SunDayChip(title: $0.title, isDone: $0.isDone, category: $0.category) }
-        case .open:
-            return day.categoryBreakdown.map {
-                SunDayChip(title: $0.category.displayName, isDone: $0.done > 0,
-                           category: $0.category, summaryDone: $0.done, summaryTotal: $0.total)
-            }
-        case .quiet:
-            return []
-        }
-    }
-
-    private func pastSunDay(daysAgo: Int, date: Date, ratio: Double) -> SunDay {
-        let score = store.score(on: date)
-        switch previewTier {
-        case .full:
-            let tasks = store.myCompletedTasks(on: date)
-            return SunDay(
-                id: daysAgo, date: date, ratio: ratio,
-                headline: dayHeadline(fraction: ratio, hasAnything: score > 0 || !tasks.isEmpty),
-                subline: tasks.isEmpty ? nil : "\(tasks.count) done",
-                chips: tasks.map { SunDayChip(title: $0.title, isDone: true, category: $0.category) },
-                scoreText: "\(score) points"
-            )
-        default:
-            return SunDay(
-                id: daysAgo, date: date, ratio: ratio,
-                headline: dayHeadline(fraction: ratio, hasAnything: score > 0),
-                subline: "the shape of this day",
-                chips: [], scoreText: "\(score) points"
-            )
-        }
-    }
-
-    private var todayHeadline: String {
-        switch previewTier {
-        case .full:
-            return store.forwardSentence
-        case .open:
-            return dayHeadline(fraction: day.momentum, hasAnything: !day.rhythmBars.isEmpty)
-        case .quiet:
-            return day.moodLine
-        }
-    }
-
-    private var todaySubline: String? {
-        switch previewTier {
-        case .full:
-            return daySubline(done: day.doneCount, total: day.totalCount)
-                ?? "nothing planned yet — friends would see an open day"
-        case .open:
-            return "the shape of your day — no task names"
-        case .quiet:
-            return "\(shortSeasonName) · day \(store.currentSeasonDay)"
-        }
-    }
-
-    // MARK: Points privacy
-
-    /// Points are private calibration — friends must ask and you
-    /// approve each one. Shown here so the preview reads honestly.
-    private var pointsPrivacyRow: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "lock")
-                .font(.sans(13, weight: .medium))
-                .foregroundStyle(Theme.textPrimary.opacity(0.4))
-            Text("Points are private — friends ask, you approve each one.")
-                .font(.sans(13, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.6))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-    }
-
-    // MARK: Destinations
-
-    private var destinationsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            JournalSectionHeader(label: "THE SEASON’S DESTINATIONS")
-            DestinationsTimeline(
-                milestones: store.mySeasonCard.milestones,
-                accent: accent,
-                seasonStart: store.currentSeason.startDate
-            )
-        }
-    }
-
-    // MARK: Seasons before
-
-    private var seasonsBeforeSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            JournalSectionHeader(label: "SEASONS BEFORE")
-            SeasonsBeforeRow(chapters: store.pastSeasons, showsMilestones: true)
-        }
-    }
-
-    // MARK: Cheers row
-
-    /// Doorway to the full cheer ledger — every word that ever found
-    /// you (and the ones you sent), beyond the day they landed.
-    private var cheersRow: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showCheers = true
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "hands.clap.fill")
-                    .font(.sans(15, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Cheers")
-                        .font(.sans(15, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("Every word that found you")
-                        .font(.serifItalic(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                }
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.sans(12, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("View all cheers you’ve received and sent")
-    }
+/// Identifiable wrapper so a tapped day can drive `.sheet(item:)`.
+struct DayRef: Identifiable {
+    let date: Date
+    var id: TimeInterval { date.timeIntervalSince1970 }
 }
