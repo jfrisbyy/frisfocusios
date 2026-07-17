@@ -141,9 +141,9 @@ Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outsid
   "weekly_target": 400,
   "categories": [
     {"name": "Fitness", "color_hint": "#D85A30", "tasks": [
-      {"name": "Gym session", "scoring_type": "binary", "value": 8},
-      {"name": "Sleep", "scoring_type": "tiered", "unit": "hours", "tiers": [{"threshold": 6, "points": 2}, {"threshold": 8, "points": 4}]},
-      {"name": "Pushups", "scoring_type": "increment", "unit": "pushups", "base_threshold": 200, "base_points": 3, "unit_size": 100, "points_per_unit": 1}
+      {"name": "Gym session", "scoring_type": "binary", "value": 8, "est_minutes": 60},
+      {"name": "Sleep", "scoring_type": "tiered", "unit": "hours", "tiers": [{"threshold": 6, "points": 2}, {"threshold": 8, "points": 4}], "est_minutes": 5},
+      {"name": "Pushups", "scoring_type": "increment", "unit": "pushups", "base_threshold": 200, "base_points": 3, "unit_size": 100, "points_per_unit": 1, "est_minutes": 15}
     ]}
   ],
   "negatives": [
@@ -156,11 +156,12 @@ Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outsid
 }
 
 RULES for the rubric JSON:
-- 2–6 categories; every category needs at least one task; each category color_hint is one of the hex values above.
+- 2–8 categories; every category needs at least one task; each category color_hint is one of the hex values above.
 - scoring_type is exactly one of: "binary" (use "value"), "tiered" (use "unit" + "tiers" array of {threshold, points}), "increment" (use "unit", "base_threshold", "base_points", "unit_size", "points_per_unit").
+- EVERY daily task also carries "est_minutes": your best-guess realistic minutes it takes to actually do (gym session ≈ 60, a 2-minute habit ≈ 2, a work block ≈ 90). This is used only for invisible internal calibration — never mentioned to the user.
 - negative_type is exactly one of: "per_instance" or "frequency_threshold" (the latter also needs "window": "weekly"|"monthly" and "free_count"). negative "value" is a POSITIVE magnitude (e.g. 3, not -3) — the app applies the minus.
 - weekly_boosters and weekly_penalties: "references" must EXACTLY match a daily task name.
-- Keep numbers human: tasks 1–10 (milestone-scale only via the milestones array, 20–150), negatives 2–8, boosters/penalties 5–25, milestones 20–150. Keep the rubric honest to what was discussed — never pad it with things the user didn't mention.`;
+- Keep numbers human: tasks 1–10 (milestone-scale only via the milestones array, 10–150), negatives 2–8, boosters/penalties 5–25, milestones 10–150. Keep the rubric honest to what was discussed — never pad it with things the user didn't mention.`;
 
 // ---------------------------------------------------------------------------
 // Reply shape + defensive parsing
@@ -177,6 +178,8 @@ interface WireTask {
   base_points?: number;
   unit_size?: number;
   points_per_unit?: number;
+  /** Model's realistic minutes-to-do estimate. Server-only calibration signal — never echoed back to the app. */
+  est_minutes?: number;
 }
 interface WireCategory { name: string; color_hint?: string; tasks: WireTask[] }
 interface WireNegative {
@@ -233,16 +236,48 @@ function parseModelJSON(text: string): WireReply | null {
 // ---------------------------------------------------------------------------
 // Calibration validator — auto-corrects an emitted rubric instead of
 // bouncing the user. Clamps values into the human range, caps categories
-// at 6 (the app's per-season category slots), guarantees every category
+// at 8 (the app's per-season category slots), guarantees every category
 // has a task, sorts tiers, and re-derives targets when they're implausible.
+//
+// Daily target validation used to compare the model's number against the
+// SUM of every possible task — a fantasy denominator, since nobody does all
+// of a busy board in one day (tasks compete for the same hours). Instead we
+// estimate a realistic day: a 0/1 knapsack over each task's estimated
+// minutes finds the best combination that actually fits inside a real
+// day's discretionary time, and the model's target is validated against
+// THAT ceiling. The model is trusted unless it's materially off. When no
+// duration estimates are present at all (older conversations, malformed
+// output), we fall back to a widened sum-of-values band instead of the
+// old too-narrow one.
 // ---------------------------------------------------------------------------
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)));
 
+/** ~4.5h of a real day's usable discretionary time. */
+const DISCRETIONARY_MINUTES = 270;
+
+/** 0/1 knapsack: max points achievable inside a real day's minutes budget. */
+function realisticMaxDay(tasks: { value: number; minutes: number }[], budget: number): number {
+  const dp = new Array(budget + 1).fill(0);
+  for (const t of tasks) {
+    const w = Math.max(1, Math.min(budget, Math.round(t.minutes)));
+    const v = t.value;
+    for (let m = budget; m >= w; m--) {
+      dp[m] = Math.max(dp[m], dp[m - w] + v);
+    }
+  }
+  return dp[budget];
+}
+
 function validateRubric(r: WireRubric): WireRubric {
+  // {value, minutes} per daily task, gathered alongside category mapping —
+  // feeds the knapsack only, never echoed back in the response.
+  const durationInputs: { value: number; minutes: number }[] = [];
+  let anyEstMinutesProvided = false;
+
   const categories = (r.categories ?? [])
     .filter((c) => c && typeof c.name === "string" && Array.isArray(c.tasks) && c.tasks.length > 0)
-    .slice(0, 6)
+    .slice(0, 8)
     .map((c) => ({
       name: c.name.trim().slice(0, 40) || "Area",
       color_hint: /^#[0-9A-Fa-f]{6}$/.test(c.color_hint ?? "") ? c.color_hint : "#7F77DD",
@@ -271,24 +306,46 @@ function validateRubric(r: WireRubric): WireRubric {
             task.points_per_unit = clamp(t.points_per_unit ?? 1, 1, 10);
             task.value = task.base_points;
           }
+          if (typeof t.est_minutes === "number" && Number.isFinite(t.est_minutes)) {
+            anyEstMinutesProvided = true;
+            durationInputs.push({ value: task.value ?? 3, minutes: clamp(t.est_minutes, 1, 240) });
+          } else {
+            durationInputs.push({ value: task.value ?? 3, minutes: 10 });
+          }
+          // est_minutes is a server-only calibration signal — not part of the
+          // returned task, so the wire shape matches the app's decode contract.
           return task;
         }),
     }))
     .filter((c) => c.tasks.length > 0);
 
-  // Headline points available in a typical day.
+  // Headline points available in a typical day (fallback denominator only).
   const dayTotal = categories.reduce(
     (sum, c) => sum + c.tasks.reduce((s, t) => s + (t.value ?? 3), 0),
     0,
   );
 
-  // A strong day ≈ 60–75% of everything. Re-derive when implausible.
   let daily = Math.round(r.daily_target ?? 0);
-  const lo = Math.max(5, Math.round(dayTotal * 0.45));
-  const hi = Math.max(lo, Math.round(dayTotal * 0.85));
-  if (!Number.isFinite(daily) || daily < lo || daily > hi) {
-    daily = Math.max(5, Math.round(dayTotal * 0.65));
+
+  if (anyEstMinutesProvided && durationInputs.length > 0) {
+    // The real fix: validate against the best combination of tasks that
+    // actually fit in a realistic day, not the sum of everything.
+    const maxDay = realisticMaxDay(durationInputs, DISCRETIONARY_MINUTES);
+    const expected = Math.max(5, Math.round(0.5 * maxDay));
+    const withinTrustWindow = expected > 0 && Math.abs(daily - expected) / expected <= 0.25;
+    if (!Number.isFinite(daily) || daily <= 0 || !withinTrustWindow) {
+      daily = expected;
+    }
+  } else {
+    // Stopgap fallback: no duration signal from the model at all — widen
+    // the old too-narrow band instead of assuming everything fits in a day.
+    const lo = Math.max(5, Math.round(dayTotal * 0.15));
+    const hi = Math.max(lo, Math.round(dayTotal * 0.90));
+    if (!Number.isFinite(daily) || daily < lo || daily > hi) {
+      daily = Math.max(5, Math.round(dayTotal * 0.5));
+    }
   }
+
   let weekly = Math.round(r.weekly_target ?? 0);
   if (!Number.isFinite(weekly) || weekly < daily * 4 || weekly > daily * 8) {
     weekly = daily * 6;
@@ -335,7 +392,7 @@ function validateRubric(r: WireRubric): WireRubric {
   const milestones = (r.milestones ?? [])
     .filter((m) => m && typeof m.name === "string" && m.name.trim().length > 0)
     .slice(0, 8)
-    .map((m) => ({ name: m.name.trim().slice(0, 80), value: clamp(m.value ?? 60, 20, 250) }));
+    .map((m) => ({ name: m.name.trim().slice(0, 80), value: clamp(m.value ?? 60, 10, 250) }));
 
   return {
     daily_target: daily,

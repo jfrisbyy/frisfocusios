@@ -295,7 +295,7 @@ struct RubricDraft: Equatable {
         dailyTarget = max(1, wire.dailyTarget)
         weeklyTarget = max(dailyTarget, wire.weeklyTarget)
 
-        for wireCategory in wire.categories.prefix(6) {
+        for wireCategory in wire.categories.prefix(8) {
             let category = DraftCategory(
                 name: wireCategory.name,
                 colorHex: wireCategory.colorHint ?? "#7F77DD"
