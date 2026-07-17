@@ -61,6 +61,11 @@ final class SeasonSyncService {
     @ObservationIgnored private var uploadedMedia: Set<String> = []
     /// Filenames currently downloading, so refreshes don't double-fetch.
     @ObservationIgnored private var activeDownloads: Set<String> = []
+    /// Hard startup gate: no slice may upload until we have reached and
+    /// finished restoring from the cloud backup at least once this
+    /// launch. Prevents a fresh install / rebuild from ever writing an
+    /// empty slate over real cloud content.
+    @ObservationIgnored private var restoreConfirmed = false
 
     private enum Keys {
         static let pendingSlices = "seasonSync.pendingSlices"
@@ -104,13 +109,23 @@ final class SeasonSyncService {
         store.seasonSync = self
         loadState()
 
-        // First sync for this account on this install: queue every
-        // slice so the existing local season migrates up (or, if the
-        // account already has a newer season, the pull below wins).
         let defaults = UserDefaults.standard
-        if !defaults.bool(forKey: Keys.initialPush(myUserId)) {
+        let isFirstSync = !defaults.bool(forKey: Keys.initialPush(myUserId))
+
+        // Startup guarantee: reach and finish restoring from the cloud
+        // backup before we are ever allowed to upload. Retries on
+        // failure so a network hiccup never makes us assume there's no
+        // data and blank the account out.
+        await restoreFromCloud()
+
+        // First sync for this account on this install: queue only the
+        // slices that actually have content so a real local season
+        // migrates up. Empty slices are never queued — an empty starting
+        // slate must never win over (or overwrite) the cloud backup we
+        // just restored.
+        if isFirstSync {
             let now = Date()
-            for slice in Self.allSlices {
+            for slice in Self.allSlices where !sliceIsEmpty(slice) {
                 pendingSlices.insert(slice)
                 if localStamps[slice] == nil { localStamps[slice] = now }
             }
@@ -118,7 +133,6 @@ final class SeasonSyncService {
             defaults.set(true, forKey: Keys.initialPush(myUserId))
         }
 
-        await pullRemote()
         await flushNow()
         // Make sure friends see the freshest season card even when no
         // slice needed flushing this launch.
@@ -149,11 +163,44 @@ final class SeasonSyncService {
 
     // MARK: Pull + merge
 
+    /// Reach the cloud backup and finish restoring before any upload is
+    /// allowed this launch. Retries a few times on failure; once a pull
+    /// succeeds the upload gate opens.
+    private func restoreFromCloud() async {
+        for attempt in 0..<5 {
+            if await pullRemote() { return }
+            try? await Task.sleep(for: .seconds(Double(attempt + 1)))
+        }
+        print("[SeasonSync] restore could not reach cloud after retries; uploads stay gated")
+    }
+
+    /// Whether a slice currently holds no real user data locally. Used
+    /// so a phantom empty slice can never be queued or uploaded.
+    private func sliceIsEmpty(_ slice: String) -> Bool {
+        guard let store else { return true }
+        switch slice {
+        case "season":
+            let s = store.currentSeason
+            return s.categories.isEmpty && s.milestones.isEmpty
+        case "pastSeasons": return store.pastSeasons.isEmpty
+        case "tasks": return store.tasks.isEmpty
+        case "todos": return store.todos.isEmpty
+        case "logEntries": return store.logEntries.isEmpty
+        case "boosters": return store.boosters.isEmpty
+        case "habitTrains": return store.habitTrains.isEmpty
+        case "avoidanceItems": return store.avoidanceItems.isEmpty
+        case "avoidanceOccurrences": return store.avoidanceOccurrences.isEmpty
+        default: return true
+        }
+    }
+
     /// Fetch the remote season and apply any slice whose remote stamp
     /// is newer than the local one. Local slices with newer stamps stay
-    /// queued for the next flush.
-    func pullRemote() async {
-        guard let myUserId, let store else { return }
+    /// queued for the next flush. Returns whether the cloud was reached
+    /// (so the caller can open the upload gate / retry).
+    @discardableResult
+    func pullRemote() async -> Bool {
+        guard let myUserId, let store else { return false }
         do {
             let rows: [SeasonSyncRow] = try await supabase
                 .from("season_sync")
@@ -192,8 +239,12 @@ final class SeasonSyncService {
                 downloadMissingMedia()
                 store.refreshMilestoneNudges()
             }
+            // Cloud reached and applied — the upload gate may open.
+            restoreConfirmed = true
+            return true
         } catch {
             print("[SeasonSync] pull failed: \(error)")
+            return false
         }
     }
 
@@ -274,12 +325,25 @@ final class SeasonSyncService {
     /// next launch / foreground retries them — offline edits survive.
     func flushNow() async {
         guard let myUserId, store != nil, !isFlushing else { return }
+        // Hard gate: never upload until the cloud restore is confirmed,
+        // so a fresh install / rebuild can't clobber the backup.
+        guard restoreConfirmed else {
+            print("[SeasonSync] flush skipped — cloud restore not yet confirmed")
+            return
+        }
         isFlushing = true
         defer { isFlushing = false }
 
         let touchesSeasonCard = !pendingSlices.isDisjoint(with: Self.seasonCardSlices)
 
         for slice in pendingSlices {
+            // Content-aware guard: an empty slice that was never touched
+            // by a real local mutation is a phantom empty (the reinstall
+            // case). Drop it rather than overwrite real cloud content.
+            if sliceIsEmpty(slice), localStamps[slice] == nil {
+                pendingSlices.remove(slice)
+                continue
+            }
             // The season slice carries the milestone media references —
             // make sure the files are up before the row points at them.
             if slice == "season" {

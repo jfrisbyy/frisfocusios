@@ -111,6 +111,9 @@ final class NotesSyncService {
     @ObservationIgnored private var uploadedMedia: Set<String> = []
     /// Filenames currently downloading, so refreshes don't double-fetch.
     @ObservationIgnored private var activeDownloads: Set<String> = []
+    /// Hard startup gate: no upload until we've reached and finished
+    /// restoring from the cloud backup at least once this launch.
+    @ObservationIgnored private var restoreConfirmed = false
 
     private enum Keys {
         static let pendingNotes = "notesSync.pendingNotes"
@@ -131,17 +134,24 @@ final class NotesSyncService {
         store.notesSync = self
         loadQueues()
 
+        let defaults = UserDefaults.standard
+        let isFirstSync = !defaults.bool(forKey: Keys.initialPush(myUserId))
+
+        // Startup guarantee: reach and finish restoring from the cloud
+        // backup before we are ever allowed to upload. Retries on
+        // failure so a network hiccup never blanks the journal out.
+        await restoreFromCloud()
+
         // First sync for this account on this install: queue every
         // local note + folder so existing journal history migrates up.
-        let defaults = UserDefaults.standard
-        if !defaults.bool(forKey: Keys.initialPush(myUserId)) {
+        // A fresh install has none, so nothing is queued.
+        if isFirstSync {
             pendingFolderIds.formUnion(store.folders.map(\.id))
             pendingNoteIds.formUnion(store.notes.map(\.id))
             persistQueues()
             defaults.set(true, forKey: Keys.initialPush(myUserId))
         }
 
-        await pullRemote()
         await flushNow()
     }
 
@@ -199,11 +209,24 @@ final class NotesSyncService {
 
     // MARK: Pull + merge
 
+    /// Reach the cloud backup and finish restoring before any upload is
+    /// allowed this launch. Retries a few times on failure; once a pull
+    /// succeeds the upload gate opens.
+    private func restoreFromCloud() async {
+        for attempt in 0..<5 {
+            if await pullRemote() { return }
+            try? await Task.sleep(for: .seconds(Double(attempt + 1)))
+        }
+        print("[NotesSync] restore could not reach cloud after retries; uploads stay gated")
+    }
+
     /// Fetch the remote journal and merge latest-wins into the Store.
     /// Remote rows pending a local delete are skipped; local rows with
-    /// newer stamps stay queued for the next flush.
-    func pullRemote() async {
-        guard let myUserId, let store else { return }
+    /// newer stamps stay queued for the next flush. Returns whether the
+    /// cloud was reached (so the caller can open the upload gate / retry).
+    @discardableResult
+    func pullRemote() async -> Bool {
+        guard let myUserId, let store else { return false }
         do {
             let folderRows: [FolderRow] = try await supabase
                 .from("note_folders")
@@ -260,8 +283,12 @@ final class NotesSyncService {
 
             persistQueues()
             if changed { store.persistAll() }
+            // Cloud reached and merged — the upload gate may open.
+            restoreConfirmed = true
+            return true
         } catch {
             print("[NotesSync] pull failed: \(error)")
+            return false
         }
     }
 
@@ -348,6 +375,12 @@ final class NotesSyncService {
     /// next launch / foreground retries them — offline edits survive.
     func flushNow() async {
         guard let myUserId, let store, !isFlushing else { return }
+        // Hard gate: never upload until the cloud restore is confirmed,
+        // so a fresh install / rebuild can't clobber the backup.
+        guard restoreConfirmed else {
+            print("[NotesSync] flush skipped — cloud restore not yet confirmed")
+            return
+        }
         isFlushing = true
         defer { isFlushing = false }
 
