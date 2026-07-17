@@ -32,7 +32,7 @@ struct SunRingAvatar: View {
     /// only flares fully at ≥ 1.
     let ratio: Double
 
-    var diameter: CGFloat = 96
+    var diameter: CGFloat = 110
 
     // Fill
     var photoURL: URL? = nil
@@ -55,10 +55,15 @@ struct SunRingAvatar: View {
     private var isFull: Bool { ratio >= 1.0 }
     private var hasStory: Bool { storyUnitCount > 0 }
     private var allViewed: Bool { hasStory && viewedUnitCount >= storyUnitCount }
-    private var showsPreview: Bool { hasStory && !allViewed && storyPreviewURL != nil }
+    /// While a story is live the fill previews it — even once watched.
+    /// Watched state shows only through the dimmed segment ticks.
+    private var showsPreview: Bool { hasStory && storyPreviewURL != nil }
 
-    /// Ring thickness grows from a thin ember to a blazing band.
-    private var ringWidth: CGFloat { 2.6 + 4.6 * clamped }
+    /// The crisp gold ring — a clean luminous band that thickens
+    /// slightly with the day.
+    private var ringWidth: CGFloat { diameter * (0.050 + 0.014 * clamped) }
+    /// The clear dark gap between the ring and the fill.
+    private var gapWidth: CGFloat { diameter * 0.038 }
 
     private var warm: Color { Color.lerpHSL(Color(hex: 0x9A6E33), Theme.sunWarm, t: clamped) }
     private var core: Color { Color.lerpHSL(Color(hex: 0xC79A55), Theme.sunCore, t: clamped) }
@@ -66,6 +71,7 @@ struct SunRingAvatar: View {
     var body: some View {
         ZStack {
             haloLayer
+            backingDisc
             fillLayer
             sunRing
             if hasStory { segmentTicks }
@@ -77,24 +83,34 @@ struct SunRingAvatar: View {
         .animation(.spring(response: 0.5, dampingFraction: 0.85), value: clamped)
     }
 
-    // The outer glow — grows and warms with the day; flares at goal.
+    /// The dark disc behind the fill — it renders the clean dark gap
+    /// between the gold ring and the photo, per the mock's construction.
+    private var backingDisc: some View {
+        Circle()
+            .fill(Color(hex: 0x2A1B0C))
+            .frame(width: diameter - ringWidth, height: diameter - ringWidth)
+    }
+
+    // The outer glow — a soft warm halo breathing outward from the
+    // ring; it grows and warms with the day and flares at goal.
     private var haloLayer: some View {
         ZStack {
             Circle()
                 .fill(
                     RadialGradient(
                         stops: [
-                            .init(color: core.opacity(0.10 + 0.34 * clamped), location: 0.35),
-                            .init(color: Theme.sunOuter.opacity(0.06 + 0.22 * clamped), location: 0.62),
+                            .init(color: .clear, location: 0.28),
+                            .init(color: core.opacity(0.14 + 0.30 * clamped), location: 0.42),
+                            .init(color: Theme.sunOuter.opacity(0.06 + 0.20 * clamped), location: 0.62),
                             .init(color: .clear, location: 1.0)
                         ],
                         center: .center,
                         startRadius: 0,
-                        endRadius: diameter * (isFull ? 0.95 : 0.72)
+                        endRadius: diameter * (isFull ? 1.0 : 0.82)
                     )
                 )
-                .frame(width: diameter * 1.9, height: diameter * 1.9)
-                .blur(radius: 5)
+                .frame(width: diameter * 2.0, height: diameter * 2.0)
+                .blur(radius: 6)
 
             if isFull {
                 ForEach([-58.0, -29.0, 0.0, 29.0, 58.0], id: \.self) { angle in
@@ -112,12 +128,12 @@ struct SunRingAvatar: View {
                 }
             }
         }
-        .opacity(reduceMotion ? 1 : (shimmer ? 1 : 0.85))
+        .opacity(reduceMotion ? 1 : (shimmer ? 1 : 0.9))
     }
 
     @ViewBuilder
     private var fillLayer: some View {
-        let inset = ringWidth + 3
+        let inset = ringWidth + gapWidth
         Group {
             if showsPreview, let url = storyPreviewURL {
                 CachedImage(url: url) { image in
@@ -146,22 +162,22 @@ struct SunRingAvatar: View {
         ZStack {
             Circle().fill(fillColor)
             Text(initials.isEmpty ? "?" : initials)
-                .font(.serif(diameter * 0.30, weight: .medium))
-                .foregroundStyle(Theme.textCream)
+                .font(.serif(diameter * 0.34, weight: .light))
+                .foregroundStyle(Theme.textCream.opacity(0.95))
         }
     }
 
     private var sunRing: some View {
         Circle()
             .strokeBorder(
-                AngularGradient(
-                    colors: [warm, core, Theme.sunOuter.opacity(0.9), core, warm],
-                    center: .center
+                LinearGradient(
+                    colors: [core, warm],
+                    startPoint: .top, endPoint: .bottom
                 ),
                 lineWidth: ringWidth
             )
-            .opacity(0.4 + 0.6 * clamped)
-            .shadow(color: core.opacity(isFull ? 0.55 : 0), radius: 8)
+            .opacity(0.55 + 0.45 * clamped)
+            .shadow(color: core.opacity(0.2 + (isFull ? 0.4 : 0.1)), radius: isFull ? 10 : 6)
     }
 
     /// Thin arc segments just outside the ring — one per story unit,
@@ -169,7 +185,7 @@ struct SunRingAvatar: View {
     private var segmentTicks: some View {
         let n = max(1, storyUnitCount)
         let gap: CGFloat = n > 1 ? 0.045 : 0
-        let tickD = diameter + 7
+        let tickD = diameter + 9
         return ZStack {
             ForEach(0..<n, id: \.self) { i in
                 let start = CGFloat(i) / CGFloat(n) + gap / 2
@@ -215,16 +231,16 @@ struct MirrorGlassControl: View {
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: icon)
-                    .font(.sans(15, weight: .semibold))
+                    .font(.sans(16, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 44, height: 44)
                     .background(
                         ZStack {
                             Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
-                            Circle().fill(Color.black.opacity(0.22))
+                            Circle().fill(Color.black.opacity(0.30))
                         }
                     )
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.8))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8))
                 if badge {
                     Circle().fill(Theme.alertRed)
                         .frame(width: 10, height: 10)
@@ -284,9 +300,9 @@ struct MirrorHeaderBackground: View {
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0.0),
-                    .init(color: .clear, location: 0.42),
-                    .init(color: Color(hex: 0x140D06).opacity(0.34), location: 0.68),
-                    .init(color: Color(hex: 0x140D06).opacity(0.72), location: 1.0)
+                    .init(color: .clear, location: 0.36),
+                    .init(color: Color(hex: 0x140D06).opacity(0.38), location: 0.64),
+                    .init(color: Color(hex: 0x140D06).opacity(0.78), location: 1.0)
                 ],
                 startPoint: .top, endPoint: .bottom
             )
@@ -307,8 +323,8 @@ struct MirrorStatusLine: View {
     var body: some View {
         HStack(spacing: 7) {
             Text("“\(text)”")
-                .font(.serifItalic(16, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.82))
+                .font(.serifItalic(17, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
             if editable, let onEdit {
                 Button {
@@ -336,17 +352,17 @@ struct MirrorSeasonPill: View {
     let accent: Color
 
     var body: some View {
-        HStack(spacing: 7) {
-            Circle().fill(accent).frame(width: 7, height: 7)
+        HStack(spacing: 8) {
+            Circle().fill(accent).frame(width: 8, height: 8)
             Text(dayNumber != nil ? "\(seasonName) · day \(dayNumber!)" : seasonName)
-                .font(.sans(13, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                .font(.sans(13.5, weight: .bold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.78))
                 .lineLimit(1)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Capsule(style: .continuous).fill(Theme.textPrimary.opacity(0.05)))
-        .overlay(Capsule(style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(Capsule(style: .continuous).fill(Theme.textPrimary.opacity(0.08)))
+        .overlay(Capsule(style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.05), lineWidth: 0.5))
     }
 }
 
@@ -365,17 +381,27 @@ struct MirrorDayBlock: View {
     var onTapDay: (Int) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 14) {
-                CenteredSunView(ratio: ratio, maxDiameter: 34)
-                    .frame(width: 66, height: 66)
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(alignment: .center, spacing: 16) {
+                // Today's sun over its own short horizon hairline.
+                ZStack(alignment: .bottom) {
+                    Rectangle()
+                        .fill(Theme.textPrimary.opacity(0.18))
+                        .frame(width: 58, height: 1)
+                    CenteredSunView(ratio: ratio, maxDiameter: 34)
+                        .frame(width: 68, height: 60)
+                        .offset(y: 8)
+                }
+                .frame(width: 68, height: 66)
+                .clipped()
+
+                VStack(alignment: .leading, spacing: 5) {
                     Text(qualitativeDayLine(ratio: ratio))
-                        .font(.serif(19, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.9))
+                        .font(.serif(20, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.92))
                         .fixedSize(horizontal: false, vertical: true)
                     Text("\(weekday) · \(seasonName)")
-                        .font(.sans(12.5, weight: .regular))
+                        .font(.sans(13, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.5))
                         .lineLimit(1)
                 }
@@ -384,23 +410,25 @@ struct MirrorDayBlock: View {
 
             SevenSunHorizon(ratios: horizonRatios, accent: accent, onTapDay: onTapDay)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color(hex: 0xFFFBF1))
-                .shadow(color: Color.black.opacity(0.07), radius: 14, x: 0, y: 6)
+                .shadow(color: Color.black.opacity(0.06), radius: 14, x: 0, y: 6)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.05), lineWidth: 0.8)
         )
     }
 }
 
-/// The iconic strip — the last 7 days as mini suns at their true height
-/// above a shared hairline. Today is slightly larger and outlined.
+/// The iconic strip — the last 7 days as mini suns, each rising to its
+/// true height above its OWN short baseline segment (seven separate
+/// little horizons, per the mock). Today is slightly larger.
 struct SevenSunHorizon: View {
     /// Oldest first, ending today. Up to 7.
     let ratios: [Double]
@@ -410,50 +438,58 @@ struct SevenSunHorizon: View {
     private var shown: [Double] { Array(ratios.suffix(7)) }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            GeometryReader { proxy in
-                let count = max(1, shown.count)
-                let slot = proxy.size.width / CGFloat(count)
-                let lift = proxy.size.height - 30
-                ZStack(alignment: .bottom) {
-                    Rectangle()
-                        .fill(Theme.textPrimary.opacity(0.12))
-                        .frame(height: 0.8)
-                        .padding(.bottom, 8)
-
-                    ForEach(Array(shown.enumerated()), id: \.offset) { idx, r in
-                        let daysAgo = (shown.count - 1) - idx
-                        let clamped = min(max(r, 0), 1)
-                        let isToday = daysAgo == 0
-                        Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            onTapDay(daysAgo)
-                        } label: {
-                            CenteredSunView(ratio: r, maxDiameter: isToday ? 20 : 17)
-                                .frame(width: 34, height: 34)
-                                .overlay {
-                                    if isToday {
-                                        Circle().strokeBorder(accent.opacity(0.6), lineWidth: 1.4)
-                                            .frame(width: 30, height: 30)
-                                    }
-                                }
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .position(
-                            x: slot * (CGFloat(idx) + 0.5),
-                            y: lift - clamped * lift + 6
-                        )
-                        .accessibilityLabel(isToday ? "Today's sun" : "\(daysAgo) days ago")
+        VStack(alignment: .trailing, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { idx, r in
+                    let daysAgo = (shown.count - 1) - idx
+                    HorizonDayColumn(ratio: r, isToday: daysAgo == 0) {
+                        onTapDay(daysAgo)
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
-            .frame(height: 72)
+            .frame(height: 64)
 
             Text("last 7 days")
-                .font(.sans(10, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                .font(.sans(11, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.42))
         }
+    }
+}
+
+/// One day of the horizon — a mini sun above its own short baseline.
+private struct HorizonDayColumn: View {
+    let ratio: Double
+    let isToday: Bool
+    let action: () -> Void
+
+    private var clamped: Double { min(max(ratio, 0), 1) }
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            GeometryReader { proxy in
+                let lift = max(0, proxy.size.height - 34)
+                ZStack(alignment: .bottom) {
+                    // The day's own little horizon.
+                    Rectangle()
+                        .fill(Theme.textPrimary.opacity(0.16))
+                        .frame(height: 1)
+                        .padding(.horizontal, 3)
+
+                    CenteredSunView(ratio: ratio, maxDiameter: isToday ? 19 : 16)
+                        .frame(width: 30, height: 30)
+                        .offset(y: -(2 + clamped * lift))
+                        .frame(maxWidth: .infinity)
+                }
+                .frame(maxHeight: .infinity, alignment: .bottom)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isToday ? "Today's sun" : "An earlier day")
     }
 }
 
@@ -501,24 +537,25 @@ struct MirrorCategorySection: View {
     private var doneCount: Int { rows.filter { $0.isDone }.count }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Circle().fill(tint).frame(width: 8, height: 8)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                Circle().fill(tint).frame(width: 9, height: 9)
                 Text(category.displayName.uppercased())
-                    .font(.sans(11, weight: .bold))
-                    .tracking(1.2)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    .font(.sans(12, weight: .bold))
+                    .tracking(1.6)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.62))
                 Spacer(minLength: 8)
                 if doneCount > 0 {
                     Text("\(doneCount) today")
-                        .font(.sans(12, weight: .semibold))
-                        .foregroundStyle(tint.darkenedForLabel)
+                        .font(.sans(13.5, weight: .bold))
+                        .foregroundStyle(tint)
                 } else {
                     Text("quiet so far")
-                        .font(.sans(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.35))
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.38))
                 }
             }
+            .padding(.horizontal, 2)
 
             if showsBox, !rows.isEmpty {
                 MirrorCategoryBox(rows: rows, tint: tint)
@@ -534,7 +571,7 @@ private struct MirrorCategoryBox: View {
     let rows: [MirrorTaskRow]
     let tint: Color
 
-    private let rowHeight: CGFloat = 46
+    private let rowHeight: CGFloat = 52
     private let maxRows: Int = 5
 
     @State private var atBottom: Bool = false
@@ -559,15 +596,16 @@ private struct MirrorCategoryBox: View {
                 rowStack
             }
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 6)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color(hex: 0xFFFBF1))
+                .shadow(color: Color.black.opacity(0.04), radius: 10, x: 0, y: 4)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.06), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.05), lineWidth: 0.8)
         )
     }
 
@@ -591,14 +629,14 @@ private struct MirrorCategoryBox: View {
                 .frame(height: 40)
                 .allowsHitTesting(false)
 
-                HStack(spacing: 4) {
-                    Text("\(rows.count - maxRows) more")
-                        .font(.sans(11, weight: .semibold))
+                HStack(spacing: 5) {
+                    Text("\(rows.count - maxRows) more · scroll")
+                        .font(.sans(12, weight: .medium))
                     Image(systemName: "arrow.up.arrow.down")
                         .font(.sans(9, weight: .bold))
                 }
-                .foregroundStyle(Theme.textPrimary.opacity(0.4))
-                .padding(.bottom, 5)
+                .foregroundStyle(Theme.textPrimary.opacity(0.42))
+                .padding(.bottom, 6)
                 .allowsHitTesting(false)
             }
             .transition(.opacity)
@@ -611,12 +649,12 @@ private struct MirrorTaskRowView: View {
     let tint: Color
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             checkbox
             Text(row.title)
-                .font(.sans(15, weight: row.isDone ? .medium : .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(row.isDone ? 0.55 : 0.85))
-                .strikethrough(row.isDone, color: Theme.textPrimary.opacity(0.4))
+                .font(.sans(16, weight: row.isDone ? .medium : .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(row.isDone ? 0.5 : 0.88))
+                .strikethrough(row.isDone, color: Theme.textPrimary.opacity(0.45))
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
@@ -625,17 +663,17 @@ private struct MirrorTaskRowView: View {
     }
 
     private var checkbox: some View {
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(row.isDone ? tint : Color.clear)
-            .frame(width: 22, height: 22)
+            .frame(width: 26, height: 26)
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(row.isDone ? Color.clear : Theme.textPrimary.opacity(0.22), lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(row.isDone ? Color.clear : Theme.textPrimary.opacity(0.22), lineWidth: 1.6)
             )
             .overlay {
                 if row.isDone {
                     Image(systemName: "checkmark")
-                        .font(.sans(12, weight: .bold))
+                        .font(.sans(13, weight: .bold))
                         .foregroundStyle(.white)
                 }
             }
@@ -664,11 +702,11 @@ struct MirrorPrimaryPill: View {
                 } else if let icon {
                     Image(systemName: icon).font(.sans(13, weight: .bold))
                 }
-                Text(title).font(.sans(15, weight: .semibold))
+                Text(title).font(.sans(16, weight: .semibold))
             }
             .foregroundStyle(filled ? Theme.textCream : Theme.textPrimary.opacity(0.85))
             .frame(maxWidth: .infinity)
-            .frame(height: 50)
+            .frame(height: 52)
             .background(
                 Capsule(style: .continuous)
                     .fill(filled ? Theme.textPrimary : Theme.textPrimary.opacity(0.06))
@@ -700,14 +738,19 @@ struct MirrorActionCircle: View {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: icon)
                     .font(.sans(16, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.8))
-                    .frame(width: 50, height: 50)
-                    .background(Circle().fill(Theme.textPrimary.opacity(0.06)))
-                    .overlay(Circle().strokeBorder(Theme.textPrimary.opacity(0.14), lineWidth: 1))
+                    .foregroundStyle(Theme.textCream)
+                    .frame(width: 52, height: 52)
+                    .background(
+                        Circle()
+                            .fill(Theme.textPrimary.opacity(0.92))
+                            .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 3)
+                    )
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8))
                 if badge {
                     Circle().fill(Theme.alertRed)
-                        .frame(width: 10, height: 10)
-                        .offset(x: -2, y: 2)
+                        .frame(width: 11, height: 11)
+                        .overlay(Circle().strokeBorder(Color(hex: 0xFFFBF1), lineWidth: 1.5))
+                        .offset(x: 0, y: 0)
                 }
             }
             .contentShape(Circle())

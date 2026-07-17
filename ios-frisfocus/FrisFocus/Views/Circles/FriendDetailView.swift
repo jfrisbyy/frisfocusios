@@ -92,9 +92,12 @@ struct FriendDetailView: View {
     private var viewedStoryUnitCount: Int {
         friendStoryPosts.filter { store.viewedStoryPostIds.contains($0.id) }.count
     }
+    /// The latest story frame, falling back through every available
+    /// copy — thumbnail, saved file, then the uploaded cloud copy — so
+    /// the avatar preview reliably appears while a story is live.
     private var storyPreviewURL: URL? {
         let media = store.storyThumbMedia(forFriendId: friend.id)
-        return media?.resolvedThumbnailURL ?? media?.resolvedLocalURL
+        return media?.resolvedThumbnailURL ?? media?.resolvedLocalURL ?? media?.remoteURL
     }
 
     private var headerPhotoURL: URL? {
@@ -139,8 +142,8 @@ struct FriendDetailView: View {
 
                     actionRow
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .offset(y: -25)
-                        .padding(.bottom, -25)
+                        .offset(y: -26)
+                        .padding(.bottom, -26)
                         .zIndex(1)
 
                     journalBody
@@ -327,11 +330,11 @@ struct FriendDetailView: View {
                 strength: tier == .quiet ? 0.5 : (0.15 + 0.85 * min(1, ringRatio))
             )
 
-            HStack(alignment: .center, spacing: 15) {
+            HStack(alignment: .center, spacing: 13) {
                 avatarButton
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(friend.displayName)
-                        .font(.serif(28, weight: .medium))
+                        .font(.serif(30, weight: .medium))
                         .foregroundStyle(Theme.textCream)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -341,7 +344,7 @@ struct FriendDetailView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
-            .padding(.bottom, 40)
+            .padding(.bottom, 42)
         }
         .frame(height: headerHeight)
         .clipped()
@@ -386,16 +389,16 @@ struct FriendDetailView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.sans(15, weight: .semibold))
+                    .font(.sans(16, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 44, height: 44)
                     .background(
                         ZStack {
                             Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
-                            Circle().fill(Color.black.opacity(0.22))
+                            Circle().fill(Color.black.opacity(0.30))
                         }
                     )
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.8))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8))
                     .contentShape(Circle())
             }
             .accessibilityLabel("More options")
@@ -410,7 +413,7 @@ struct FriendDetailView: View {
         } label: {
             SunRingAvatar(
                 ratio: ringRatio,
-                diameter: 92,
+                diameter: 110,
                 photoURL: friend.avatarURL,
                 initials: friend.initials,
                 fillColor: accent,
@@ -480,7 +483,7 @@ struct FriendDetailView: View {
     // MARK: - Journal body
 
     private var journalBody: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             statusSlot
 
             if tier != .quiet {
@@ -589,7 +592,7 @@ struct FriendDetailView: View {
     // MARK: Categories
 
     private var categoriesBlock: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             ForEach(categorySections, id: \.0) { pair in
                 MirrorCategorySection(
                     category: pair.0,

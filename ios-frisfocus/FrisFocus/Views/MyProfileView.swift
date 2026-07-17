@@ -91,8 +91,12 @@ struct MyProfileView: View {
     private var myViewedStoryCount: Int {
         store.activeMyStories.filter { store.viewedStoryPostIds.contains($0.id) }.count
     }
+    /// The latest story frame, falling back through every available
+    /// copy — thumbnail, saved file, then the uploaded cloud copy — so
+    /// the avatar preview reliably appears while a story is live.
     private var storyPreviewURL: URL? {
-        store.myStoryThumbMedia?.resolvedThumbnailURL ?? store.myStoryThumbMedia?.resolvedLocalURL
+        let media = store.myStoryThumbMedia
+        return media?.resolvedThumbnailURL ?? media?.resolvedLocalURL ?? media?.remoteURL
     }
 
     private var seasonName: String {
@@ -118,8 +122,8 @@ struct MyProfileView: View {
 
                     actionRow
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .offset(y: -25)
-                        .padding(.bottom, -25)
+                        .offset(y: -26)
+                        .padding(.bottom, -26)
                         .zIndex(1)
 
                     bodyContent
@@ -217,11 +221,11 @@ struct MyProfileView: View {
                 strength: 0.15 + 0.85 * min(1, todayRatio)
             )
 
-            HStack(alignment: .center, spacing: 15) {
+            HStack(alignment: .center, spacing: 13) {
                 avatarButton
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(displayName)
-                        .font(.serif(28, weight: .medium))
+                        .font(.serif(30, weight: .medium))
                         .foregroundStyle(Theme.textCream)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -231,7 +235,7 @@ struct MyProfileView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.pageHorizontalPadding)
-            .padding(.bottom, 40)
+            .padding(.bottom, 42)
         }
         .frame(height: headerHeight)
         .clipped()
@@ -248,7 +252,7 @@ struct MyProfileView: View {
                 dismiss()
             }
             Spacer()
-            MirrorGlassControl(icon: "gearshape.fill", label: "Account and settings") {
+            MirrorGlassControl(icon: "sun.max.fill", label: "Account and settings") {
                 showAccount = true
             }
         }
@@ -261,7 +265,7 @@ struct MyProfileView: View {
         } label: {
             SunRingAvatar(
                 ratio: ringRatio,
-                diameter: 92,
+                diameter: 110,
                 photoURL: photoURL,
                 initials: initials,
                 fillColor: Theme.textPrimary,
@@ -291,12 +295,12 @@ struct MyProfileView: View {
                     .font(.sans(9, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
             }
-            .frame(width: 26, height: 26)
+            .frame(width: 28, height: 28)
             .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .offset(x: 1, y: -1)
+        .offset(x: 0, y: -3)
         .accessibilityLabel("Change your profile photo")
     }
 
@@ -304,7 +308,7 @@ struct MyProfileView: View {
 
     private var actionRow: some View {
         HStack(spacing: 12) {
-            MirrorPrimaryPill(title: "Edit profile", icon: "square.and.pencil") {
+            MirrorPrimaryPill(title: "Edit profile") {
                 showEditProfile = true
             }
             MirrorActionCircle(icon: "paintbrush.fill", label: "Design your header") {
@@ -316,7 +320,7 @@ struct MyProfileView: View {
     // MARK: - Body content
 
     private var bodyContent: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 20) {
             statusSlot
 
             if previewTier != .quiet {
@@ -365,7 +369,7 @@ struct MyProfileView: View {
     // MARK: Categories
 
     private var categoriesBlock: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             ForEach(categorySections, id: \.0) { pair in
                 MirrorCategorySection(
                     category: pair.0,
