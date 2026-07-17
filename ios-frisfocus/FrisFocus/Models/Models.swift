@@ -759,6 +759,13 @@ struct Season: Codable, Identifiable {
     /// The owner-chosen signature color hex. Nil → the auto-assigned
     /// account accent.
     var accentHex: String?
+    /// True while this season was built by the 60-second cold start and
+    /// hasn't yet been graduated through the season conversation. The
+    /// invitation card shows only while this holds; the conversation edits
+    /// this same season in place (never spawns a parallel one) and clears
+    /// the flag on completion. Optional-with-default so persisted seasons
+    /// decode cleanly (legacy seasons read as false — fully realized).
+    var isProvisional: Bool = false
     /// A short "why this season" line shown under the season title.
     var intention: String?
     /// A small owner-set status under the intention on the profile
@@ -829,12 +836,17 @@ struct FFTask: Codable, Identifiable {
     /// local keyword/category match. Purely a display hint — it never
     /// changes scoring or the board. Nil for tasks with no clear link.
     var milestoneLink: String? = nil
+    /// True when the person added this task in their own words during the
+    /// cold start (flagged in the placement tray). Feeds the "you know what
+    /// matters" invitation observation; never shown as a badge. Defaults
+    /// false so tasks persisted before this field decode unchanged.
+    var isCustom: Bool = false
 
     // Backward-compatible decoding so persisted tasks predating
     // `booster` / `penalty` / `scoring` still hydrate. Missing keys fall
     // through to the property defaults.
     private enum CodingKeys: String, CodingKey {
-        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, partOfDay, templateStamp, booster, penalty, scoring, agendaOrder, milestoneLink
+        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, partOfDay, templateStamp, booster, penalty, scoring, agendaOrder, milestoneLink, isCustom
     }
 
     init(
@@ -855,7 +867,8 @@ struct FFTask: Codable, Identifiable {
         penalty: PenaltyRule? = nil,
         scoring: ScoringConfig = ScoringConfig(),
         agendaOrder: Int? = nil,
-        milestoneLink: String? = nil
+        milestoneLink: String? = nil,
+        isCustom: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -875,6 +888,7 @@ struct FFTask: Codable, Identifiable {
         self.scoring = scoring
         self.agendaOrder = agendaOrder
         self.milestoneLink = milestoneLink
+        self.isCustom = isCustom
     }
 
     init(from decoder: Decoder) throws {
@@ -897,6 +911,7 @@ struct FFTask: Codable, Identifiable {
         self.scoring = try c.decodeIfPresent(ScoringConfig.self, forKey: .scoring) ?? ScoringConfig()
         self.agendaOrder = try c.decodeIfPresent(Int.self, forKey: .agendaOrder)
         self.milestoneLink = try c.decodeIfPresent(String.self, forKey: .milestoneLink)
+        self.isCustom = try c.decodeIfPresent(Bool.self, forKey: .isCustom) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -919,6 +934,7 @@ struct FFTask: Codable, Identifiable {
         try c.encode(scoring, forKey: .scoring)
         try c.encodeIfPresent(agendaOrder, forKey: .agendaOrder)
         try c.encodeIfPresent(milestoneLink, forKey: .milestoneLink)
+        try c.encode(isCustom, forKey: .isCustom)
     }
 }
 

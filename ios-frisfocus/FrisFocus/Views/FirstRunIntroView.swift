@@ -26,8 +26,14 @@ struct FirstRunIntroView: View {
 
     @State private var phase: Phase = .welcome
     @State private var showSignIn: Bool = false
+    /// The directions-only envelope captured when the person forks into
+    /// the conversation from the direction pick.
+    @State private var forkContext: ColdStartContext?
+    /// True while a fork is waiting on sign-in (the conversation needs an
+    /// account); on success we drop straight into it.
+    @State private var pendingFork: Bool = false
 
-    private enum Phase { case welcome, manifesto, coldStart, account }
+    private enum Phase { case welcome, manifesto, coldStart, forkSetup, account }
 
     var body: some View {
         @Bindable var auth = auth
@@ -61,7 +67,31 @@ struct FirstRunIntroView: View {
                         store.commitColdStart(result)
                         advance(to: .account)
                     },
-                    onBack: { advance(to: .welcome) }
+                    onBack: { advance(to: .welcome) },
+                    onTalkItThrough: { context in
+                        forkContext = context
+                        // The conversation needs an account; if they're not
+                        // signed in yet, gate on sign-in, then fork.
+                        if auth.user?.id != nil {
+                            advance(to: .forkSetup)
+                        } else {
+                            pendingFork = true
+                            showSignIn = true
+                        }
+                    }
+                )
+                .transition(.opacity)
+
+            case .forkSetup:
+                // The season conversation, warm-started with their chosen
+                // directions. On finish it has built their one real season
+                // in place — hand off to the account seam like the board path.
+                SeasonSetupFlowView(
+                    coldStartContext: forkContext,
+                    onFinished: {
+                        store.finalizeConversationColdStart()
+                        advance(to: .account)
+                    }
                 )
                 .transition(.opacity)
 
@@ -83,7 +113,13 @@ struct FirstRunIntroView: View {
                 .presentationDragIndicator(.visible)
         }
         .onChange(of: auth.user?.id) { _, newId in
-            if newId != nil { showSignIn = false }
+            if newId != nil {
+                showSignIn = false
+                if pendingFork {
+                    pendingFork = false
+                    advance(to: .forkSetup)
+                }
+            }
         }
         .alert("Sign in failed", isPresented: $auth.showError) {
             Button("OK") {}

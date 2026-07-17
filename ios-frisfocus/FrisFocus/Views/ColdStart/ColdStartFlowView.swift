@@ -18,6 +18,9 @@ struct ColdStartFlowView: View {
     let onComplete: (_ result: ColdStartResult) -> Void
     /// Back out to the welcome panel.
     let onBack: () -> Void
+    /// The day-1 fork: hand the chosen directions to the season
+    /// conversation instead of building the board by hand.
+    let onTalkItThrough: (_ context: ColdStartContext) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel = ColdStartViewModel()
@@ -40,6 +43,14 @@ struct ColdStartFlowView: View {
                     onContinue: {
                         viewModel.build()
                         advance(to: .board)
+                    },
+                    onTalkItThrough: {
+                        onTalkItThrough(
+                            .directionsOnly(
+                                directions: viewModel.selectedDirectionTitles,
+                                subDirections: []
+                            )
+                        )
                     }
                 )
                 .transition(stageTransition)
@@ -169,5 +180,5 @@ struct ColdStartResult {
 }
 
 #Preview {
-    ColdStartFlowView(onComplete: { _ in }, onBack: {})
+    ColdStartFlowView(onComplete: { _ in }, onBack: {}, onTalkItThrough: { _ in })
 }

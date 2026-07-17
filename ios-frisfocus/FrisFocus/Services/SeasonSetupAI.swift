@@ -30,6 +30,20 @@ nonisolated enum SeasonSetupAIError: LocalizedError {
 
 private nonisolated struct SetupRequestBody: Encodable, Sendable {
     let messages: [AIMessage]
+    /// The warm-start envelope. Omitted from the JSON when nil so legacy
+    /// (cold) conversations send exactly what they always did.
+    let coldStartContext: ColdStartContext?
+
+    enum CodingKeys: String, CodingKey {
+        case messages
+        case coldStartContext = "cold_start_context"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(messages, forKey: .messages)
+        try container.encodeIfPresent(coldStartContext, forKey: .coldStartContext)
+    }
 }
 
 private nonisolated struct SetupErrorBody: Decodable, Sendable {
@@ -42,8 +56,13 @@ enum SeasonSetupAI {
     }
 
     /// Send the running history; receive the next assistant turn. An empty
-    /// history asks the model to open the conversation.
-    nonisolated static func send(history: [AIMessage]) async throws -> SetupWireEnvelope {
+    /// history asks the model to open the conversation. An optional
+    /// `coldStartContext` warm-starts the chat — pass it on the opening
+    /// turn so the model references what the person already chose/built.
+    nonisolated static func send(
+        history: [AIMessage],
+        coldStartContext: ColdStartContext? = nil
+    ) async throws -> SetupWireEnvelope {
         guard let token = KeychainHelper.get("access_token"), !token.isEmpty else {
             throw SeasonSetupAIError.notSignedIn
         }
@@ -53,7 +72,9 @@ enum SeasonSetupAI {
         request.setValue(Config.EXPO_PUBLIC_SUPABASE_ANON_KEY, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120
-        request.httpBody = try JSONEncoder().encode(SetupRequestBody(messages: history))
+        request.httpBody = try JSONEncoder().encode(
+            SetupRequestBody(messages: history, coldStartContext: coldStartContext)
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw SeasonSetupAIError.badResponse }

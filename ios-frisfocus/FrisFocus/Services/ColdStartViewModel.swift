@@ -185,6 +185,18 @@ final class ColdStartViewModel {
     var selectionCount: Int { selectedAreaIds.count + customIntents.count }
     var canContinue: Bool { selectionCount > 0 }
 
+    /// Human-readable direction titles for the warm-start envelope (the
+    /// day-1 "talk it through" fork). Chosen focus areas first, then any
+    /// free-text intents in their own words.
+    var selectedDirectionTitles: [String] {
+        var out: [String] = []
+        for id in selectedAreaIds {
+            if let area = StarterLibrary.focusArea(id) { out.append(area.title) }
+        }
+        out += customIntents
+        return out
+    }
+
     func isSelected(_ areaId: String) -> Bool { selectedAreaIds.contains(areaId) }
 
     func toggleArea(_ areaId: String) {

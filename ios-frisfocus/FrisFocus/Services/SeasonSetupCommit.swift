@@ -207,4 +207,157 @@ extension Store {
         republishSeasonCardNow()
         return season
     }
+
+    /// Graduate a PROVISIONAL cold-start season by editing it IN PLACE.
+    ///
+    /// The season conversation, when reached by a cold-start user (via the
+    /// invitation card, settings resume, or season detail), refines the
+    /// season they already have — it must NEVER archive-and-replace it, or
+    /// a parallel "first" season would appear. So this keeps the same
+    /// season id, start date, `startedAt`, and cover, preserves the whole
+    /// log history and the sun's continuity, replaces the board with the
+    /// conversation's priced tasks, and clears `isProvisional` (the
+    /// invitation card retires the instant this lands).
+    @discardableResult
+    func editProvisionalSeason(
+        from draft: RubricDraft,
+        name: String,
+        endMode: SeasonEndMode,
+        endDate: Date?
+    ) -> Season {
+        let seasonId = currentSeason.id
+        let slots: [Category] = [.spiritual, .fitness, .health, .work, .creative, .apartment]
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: currentSeason.startDate)
+
+        let resolvedEndDate: Date? = endMode == .date ? endDate : nil
+        let lengthDays: Int = {
+            guard endMode == .date, let endDate else { return currentSeason.lengthDays }
+            let days = cal.dateComponents([.day], from: startOfToday, to: cal.startOfDay(for: endDate)).day ?? 90
+            return max(1, days)
+        }()
+
+        var slotByDraftId: [UUID: Category] = [:]
+        var seasonCategories: [SeasonCategory] = []
+        for (index, draftCategory) in draft.categories.prefix(slots.count).enumerated() {
+            let slot = slots[index]
+            slotByDraftId[draftCategory.id] = slot
+            let tier: CategoryTier = index < 2 ? .primary : (index < 4 ? .support : .quiet)
+            seasonCategories.append(
+                SeasonCategory(
+                    category: slot,
+                    tier: tier,
+                    customName: draftCategory.name,
+                    customColorHex: draftCategory.colorHex
+                )
+            )
+        }
+        if seasonCategories.isEmpty {
+            seasonCategories = currentSeason.categories.isEmpty
+                ? [SeasonCategory(category: .health, tier: .primary)]
+                : currentSeason.categories
+        }
+
+        let milestones: [Milestone] = draft.milestones.map { m in
+            Milestone(
+                seasonId: seasonId,
+                weekNumber: 1,
+                title: m.name,
+                status: .upcoming,
+                pointValue: m.value
+            )
+        }
+
+        var newTasks: [FFTask] = []
+        var taskIdByName: [String: UUID] = [:]
+        for draftTask in draft.tasks {
+            guard let slot = slotByDraftId[draftTask.categoryId] else { continue }
+            let scoring: ScoringConfig
+            switch draftTask.shape {
+            case .flat:
+                scoring = ScoringConfig()
+            case .tiered:
+                scoring = ScoringConfig(type: .tiered, unit: draftTask.unit, tiers: draftTask.tiers)
+            case .quantity:
+                scoring = ScoringConfig(
+                    type: .quantity,
+                    unit: draftTask.unit,
+                    baseThreshold: draftTask.baseThreshold,
+                    basePoints: draftTask.basePoints,
+                    unitSize: max(1, draftTask.unitSize),
+                    pointsPerUnit: draftTask.pointsPerUnit
+                )
+            }
+            var task = FFTask(
+                title: draftTask.name,
+                category: slot,
+                pointValue: max(1, draftTask.value),
+                pinSchedule: .none,
+                scoring: scoring
+            )
+            if let floor = draft.weeklyPenalties.first(where: {
+                $0.referenceName.caseInsensitiveCompare(draftTask.name) == .orderedSame
+            }) {
+                task.penalty = PenaltyRule(
+                    enabled: true,
+                    timesThreshold: floor.threshold,
+                    condition: .lessThan,
+                    penaltyPoints: floor.value
+                )
+            }
+            taskIdByName[draftTask.name.lowercased()] = task.id
+            newTasks.append(task)
+        }
+
+        let newNegatives: [AvoidanceItem] = draft.negatives.map { negative in
+            AvoidanceItem(
+                name: negative.name,
+                pointsPerOccurrence: max(1, negative.value),
+                seasonId: seasonId,
+                negativeType: negative.shape,
+                window: negative.window,
+                freeCount: negative.shape == .frequencyThreshold ? max(0, negative.freeCount) : 0
+            )
+        }
+
+        let fallbackCategory = seasonCategories.first?.category ?? .health
+        let newBoosters: [WeeklyBooster] = draft.boosters.map { booster in
+            let reference: BoosterReference
+            if let taskId = taskIdByName[booster.referenceName.lowercased()] {
+                reference = .task(taskId)
+            } else {
+                reference = .category(fallbackCategory)
+            }
+            return WeeklyBooster(
+                seasonId: seasonId,
+                name: booster.name,
+                reference: reference,
+                threshold: max(1, booster.threshold),
+                period: .week,
+                bonusPoints: max(1, booster.value)
+            )
+        }
+
+        // Edit in place — same season id, dates, and cover; the log history
+        // and the sun's progress carry through untouched.
+        var season = currentSeason
+        season.name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? season.name : name
+        season.lengthDays = max(1, lengthDays)
+        season.dailyGoal = max(1, draft.dailyTarget)
+        season.weeklyGoal = max(1, draft.weeklyTarget)
+        season.categories = seasonCategories
+        season.milestones = milestones
+        season.endMode = endMode
+        season.endDate = resolvedEndDate
+        season.isProvisional = false
+
+        currentSeason = season
+        tasks = newTasks
+        avoidanceItems = newNegatives
+        boosters = newBoosters
+        persistAll()
+        MilestoneNudgeService.refresh(for: season)
+        republishSeasonCardNow()
+        return season
+    }
 }

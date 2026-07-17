@@ -35,6 +35,29 @@ interface ChatMessage {
   content: string;
 }
 
+// The warm-start envelope the app may send alongside the history. Any
+// subset may be present; the whole field is omitted for legacy/cold runs.
+interface ColdStartBoardItem {
+  label?: string;
+  band?: string;
+  band_rank?: number;
+  value?: number;
+  is_custom?: boolean;
+}
+interface ColdStartLogSummary {
+  task?: string;
+  completions?: number;
+  days_active?: number;
+}
+interface ColdStartContext {
+  directions?: string[];
+  sub_directions?: string[];
+  board?: ColdStartBoardItem[];
+  north_stars?: string[];
+  logs?: ColdStartLogSummary[];
+  days_active?: number;
+}
+
 // ---------------------------------------------------------------------------
 // The setup brain (witness-model). Stable string — OpenRouter/Anthropic
 // prompt caching keys off the identical prefix, so repeated turns are cheap.
@@ -115,6 +138,15 @@ TONE
 Keep every turn SHORT and conversational — a few sentences at most. One question/suggestion per turn. Mirror their words back; use their own words for item names. Never say "rubric/points system/AI" to the user. No emoji, no bullet lists, no clinical tone, never saccharine. The only allowed longer turn is the closing recap.
 
 This is the start of a conversation — your FIRST message opens it (the user hasn't said anything yet). Greet warmly, set the ~10-15 minute expectation, and ask your opening question about what season of life they're in and who they're trying to become.
+
+PART W — WARM START (when a cold-start context block is provided)
+Sometimes a CONTEXT block precedes this conversation describing what the person already chose and built in a 60-second onboarding: focus directions, sub-directions, a starter board (tasks they placed into effort bands, with an invisible value each), free-written milestones ("north stars"), and a short log of what they've actually been doing. When that block is present you are NOT starting cold — do the opposite of a generic opener:
+- Open by REFLECTING back what they already told you. Name their directions and a board item or north star in your first message so it's obvious you were paying attention.
+- Treat their placed board as their own first draft of difficulty: a task they put in the "ideal"/heaviest band is hard-for-them (higher points); "floor" band items are their low-effort anchors (near the 1-point floor). Use this instead of re-asking what you can already infer.
+- If logs show a task done many days running, acknowledge it as an existing strength; if a whole direction is untouched, gently dig into whether it still fits. If north stars exist, make sure each gets BOTH a daily/weekly practice AND a priced milestone destination.
+- Skip questions the context already answers; spend the conversation DEEPENING (difficulty, negatives, gaps, foundations) rather than re-collecting. Directions-only context (the "talk it through" fork) still means start warm — reflect the directions, then build from there.
+- Never read raw numbers, bands, or the word "context" back to the user; weave it in naturally.
+The context block is INFORMATIONAL — the user has not "said" it. Your first message is still the opener.
 
 OUTPUT FORMAT — ABSOLUTE RULE (the app parses this exactly)
 Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outside the JSON. Shape:
@@ -462,8 +494,9 @@ Deno.serve(async (req) => {
       return json({ error: "Season setup AI is not configured yet (missing OPENROUTER_API_KEY secret)" }, 503);
     }
 
-    const body = (await req.json()) as { messages?: ChatMessage[] };
+    const body = (await req.json()) as { messages?: ChatMessage[]; cold_start_context?: ColdStartContext };
     const history = Array.isArray(body.messages) ? body.messages : [];
+    const coldStartBrief = formatColdStartContext(body.cold_start_context);
     if (history.length > MAX_MESSAGES) {
       return json({ error: "Conversation too long" }, 400);
     }
@@ -480,8 +513,13 @@ Deno.serve(async (req) => {
 
     const messages: { role: string; content: string }[] = [
       { role: "system", content: SYSTEM_PROMPT },
-      ...history,
     ];
+    // Warm start: inject the cold-start context as a system-side block
+    // BEFORE the history so the model reflects it in the opener.
+    if (coldStartBrief) {
+      messages.push({ role: "system", content: coldStartBrief });
+    }
+    messages.push(...history);
     // An empty history means "open the conversation" — give the model a
     // user-side nudge so providers that require a user turn don't reject it.
     if (history.length === 0) {
@@ -549,6 +587,48 @@ Deno.serve(async (req) => {
     return json({ error: "Internal server error" }, 500);
   }
 });
+
+/** Render the cold-start envelope into a compact briefing for the model,
+ *  or "" when there's nothing meaningful to say (so cold runs are untouched). */
+function formatColdStartContext(ctx: ColdStartContext | undefined): string {
+  if (!ctx || typeof ctx !== "object") return "";
+  const lines: string[] = [];
+
+  const directions = (ctx.directions ?? []).filter((d) => typeof d === "string" && d.trim().length > 0).slice(0, 12);
+  if (directions.length > 0) lines.push(`Directions they chose: ${directions.join(", ")}.`);
+
+  const subs = (ctx.sub_directions ?? []).filter((s) => typeof s === "string" && s.trim().length > 0).slice(0, 12);
+  if (subs.length > 0) lines.push(`Sub-directions: ${subs.join(", ")}.`);
+
+  const board = (ctx.board ?? []).filter((b) => b && typeof b.label === "string" && b.label.trim().length > 0).slice(0, 40);
+  if (board.length > 0) {
+    const byBand: Record<string, string[]> = { ideal: [], normal: [], floor: [] };
+    for (const item of board) {
+      const band = (item.band === "ideal" || item.band === "normal" || item.band === "floor") ? item.band : "normal";
+      const label = item.is_custom ? `${item.label!.trim()} (their own)` : item.label!.trim();
+      byBand[band].push(label);
+    }
+    lines.push("Starter board they placed (heaviest to lightest effort):");
+    if (byBand.ideal.length > 0) lines.push(`  Ideal-day (hard for them): ${byBand.ideal.join(", ")}.`);
+    if (byBand.normal.length > 0) lines.push(`  Normal-day: ${byBand.normal.join(", ")}.`);
+    if (byBand.floor.length > 0) lines.push(`  Even-on-a-bad-day (low-effort anchors): ${byBand.floor.join(", ")}.`);
+  }
+
+  const northStars = (ctx.north_stars ?? []).filter((n) => typeof n === "string" && n.trim().length > 0).slice(0, 12);
+  if (northStars.length > 0) lines.push(`Milestones they named (their words): ${northStars.map((n) => `"${n.trim()}"`).join(", ")}.`);
+
+  const logs = (ctx.logs ?? []).filter((l) => l && typeof l.task === "string" && (l.completions ?? 0) > 0).slice(0, 20);
+  if (logs.length > 0) {
+    const parts = logs.map((l) => `${l.task!.trim()} x${l.completions}${(l.days_active ?? 0) > 1 ? ` over ${l.days_active} days` : ""}`);
+    lines.push(`What they've actually been doing: ${parts.join("; ")}.`);
+  }
+  if (typeof ctx.days_active === "number" && ctx.days_active > 0) {
+    lines.push(`Days active so far: ${ctx.days_active}.`);
+  }
+
+  if (lines.length === 0) return "";
+  return `COLD-START CONTEXT (informational — the user has NOT said this; warm-start per PART W, never read numbers/bands aloud):\n${lines.join("\n")}`;
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

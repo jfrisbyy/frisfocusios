@@ -14,6 +14,12 @@ struct SeasonSetupFlowView: View {
     /// When true, the flow drops straight into the saved conversation
     /// instead of showing the begin screen (used by the settings resume).
     var startInResume: Bool = false
+    /// The warm-start envelope. When present the conversation opens with
+    /// context (directions, board, north stars, logs) instead of cold.
+    var coldStartContext: ColdStartContext? = nil
+    /// Called instead of `dismiss()` when the flow is hosted inline (the
+    /// day-1 fork), so the parent can advance its own sequence.
+    var onFinished: (() -> Void)? = nil
 
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -58,7 +64,13 @@ struct SeasonSetupFlowView: View {
                     taskCount: store.tasks.count,
                     categoryCount: store.currentSeason.categories.count,
                     milestoneCount: store.currentSeason.milestones.count,
-                    onSeeToday: { dismiss() }
+                    onSeeToday: {
+                        if let onFinished {
+                            onFinished()
+                        } else {
+                            dismiss()
+                        }
+                    }
                 )
                 .transition(stageTransition)
             }
@@ -68,6 +80,7 @@ struct SeasonSetupFlowView: View {
         .onAppear {
             guard !didStart else { return }
             didStart = true
+            viewModel.coldStartContext = coldStartContext
             if startInResume, SeasonSetupResumeStore.hasSaved {
                 viewModel.resume()
             }

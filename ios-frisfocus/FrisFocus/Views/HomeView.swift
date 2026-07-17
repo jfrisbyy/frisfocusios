@@ -39,6 +39,13 @@ struct HomeView: View {
     /// scroll can dismiss the keyboard and settle the note zone closed.
     @State private var isQuickNoteOpen: Bool = false
     @State private var topSafeInset: CGFloat = 0
+    /// Invitation card: observation kinds the person has quieted for this
+    /// season (loaded once, updated on dismiss). Drives the pull-not-push
+    /// nudge into the deeper season conversation.
+    @State private var invitationDismissed: Set<SeasonInvitationKind> = []
+    /// True while the warm-started season conversation is presented from
+    /// the invitation card (opened with the FULL season envelope).
+    @State private var showSeasonConversation: Bool = false
 
     // Continuous scrub support: bind the scroll view's position so the
     // rail can drive it to an arbitrary offset. Content vs. viewport
@@ -119,7 +126,14 @@ struct HomeView: View {
             CircleEventDetailView(eventId: target.eventId)
                 .environment(store)
         }
-        .onAppear { store.refreshRecurringEvents() }
+        .fullScreenCover(isPresented: $showSeasonConversation) {
+            SeasonSetupFlowView(coldStartContext: store.makeSeasonSetupContext())
+                .environment(store)
+        }
+        .onAppear {
+            store.refreshRecurringEvents()
+            invitationDismissed = SeasonInvitationStore.dismissedKinds(for: store.currentSeason.id)
+        }
     }
 
     /// Unread direct messages — live from the app-wide messaging
@@ -328,6 +342,23 @@ struct HomeView: View {
                         UndoBanner(text: message)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
+
+                    // Invitation into the deeper season conversation —
+                    // only when local logic has something specific to say,
+                    // and never during the mechanics tour.
+                    if !walkthrough.tourActive,
+                       store.viewingDay == nil,
+                       let invitation = store.seasonInvitation(excluding: invitationDismissed) {
+                        SeasonInvitationCard(
+                            invitation: invitation,
+                            onTap: {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                showSeasonConversation = true
+                            },
+                            onDismiss: { dismissInvitation(invitation) }
+                        )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
                 .padding(.top, max(topSafeInset, 12) + 6)
             }
@@ -416,6 +447,17 @@ struct HomeView: View {
         let maxOffset = max(0, scrollTracker.contentHeight - scrollTracker.viewportHeight)
         let targetY = CGFloat(max(0, min(1, fraction))) * maxOffset
         scrollPosition.scrollTo(y: targetY)
+    }
+
+    // MARK: - Season invitation
+
+    /// Quiet this observation for good and remember it, so the card only
+    /// ever returns with a different, sharper one (or retires).
+    private func dismissInvitation(_ invitation: SeasonInvitation) {
+        SeasonInvitationStore.dismiss(invitation.kind, for: store.currentSeason.id)
+        withAnimation(.easeInOut(duration: 0.25)) {
+            invitationDismissed.insert(invitation.kind)
+        }
     }
 
     // MARK: - Shake to undo

@@ -14,6 +14,9 @@ struct DirectionPickView: View {
     @Bindable var viewModel: ColdStartViewModel
     let onBack: () -> Void
     let onContinue: () -> Void
+    /// Secondary, quieter route: hand the chosen directions to the season
+    /// conversation instead of building the board by hand.
+    let onTalkItThrough: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown: Bool = false
@@ -148,6 +151,26 @@ struct DirectionPickView: View {
             .buttonStyle(.plain)
             .disabled(!viewModel.canContinue)
             .animation(.easeInOut(duration: 0.25), value: viewModel.canContinue)
+
+            // The fork — quieter, secondary, only once something's chosen.
+            // The board path above stays visually primary.
+            if viewModel.canContinue {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onTalkItThrough()
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("Rather talk it through?")
+                            .font(.sans(14, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textCream.opacity(0.72))
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
+            }
         }
         .padding(.bottom, 8)
     }

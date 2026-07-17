@@ -3882,7 +3882,8 @@ extension Store {
                 category: item.lifeArea.appCategory,
                 pointValue: max(1, item.value),
                 tier: .should,
-                pinSchedule: .daily
+                pinSchedule: .daily,
+                isCustom: item.isCustom
             )
             task.milestoneLink = Store.milestoneLink(for: item, among: result.milestones)
             built.append(task)
@@ -3931,6 +3932,10 @@ extension Store {
         season.endMode = result.endMode
         season.endDate = resolvedEndDate
         season.intention = "Started with a clean board."
+        // Built by the cold start — the deeper conversation will graduate
+        // (edit) this exact season in place rather than spawn a new one,
+        // and the home invitation card shows only while this holds.
+        season.isProvisional = true
 
         currentSeason = season
         tasks = built
@@ -3939,6 +3944,21 @@ extension Store {
         MilestoneNudgeService.refresh(for: season)
         // Keep the first-run cover up: the account seam (sign-in → name →
         // invite) runs over the home before the person starts tracking.
+        accountSeamActive = true
+        persistAppMode()
+        markAllDirty()
+        flushPendingSaves()
+    }
+
+    /// Finalize a day-1 "talk it through" fork: the conversation has just
+    /// built the person's first, real season locally (already signed in
+    /// for the chat), so move the app out of `.uninitialized` and hand off
+    /// to the account seam — mirroring the board path's landing. Bail-safe:
+    /// the season is already frozen before this runs.
+    func finalizeConversationColdStart() {
+        guard appMode == .uninitialized else { return }
+        appMode = .clean
+        coldStartCoaching = true
         accountSeamActive = true
         persistAppMode()
         markAllDirty()

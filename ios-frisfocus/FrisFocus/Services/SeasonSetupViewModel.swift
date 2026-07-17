@@ -64,6 +64,11 @@ final class SeasonSetupViewModel {
     /// Optional spoken replies — never forced; off by default.
     var speakReplies: Bool = false
 
+    /// The warm-start envelope, set by the flow before `begin()`. Sent on
+    /// the OPENING turn only (the running history carries the context
+    /// forward after that), so the conversation never starts cold.
+    var coldStartContext: ColdStartContext?
+
     // MARK: Outputs carried forward
 
     private(set) var draft: RubricDraft?
@@ -204,7 +209,15 @@ final class SeasonSetupViewModel {
     /// After this, daily scoring is local math — no further AI calls.
     func lockIn(store: Store, name: String, endMode: SeasonEndMode, endDate: Date?) {
         guard let draft else { return }
-        store.startSeason(from: draft, name: name, endMode: endMode, endDate: endDate)
+        // One-season rule: a cold-start user's provisional season is edited
+        // IN PLACE (same id, dates, and log history) rather than replaced,
+        // so the conversation never spawns a parallel first season.
+        // Everyone else freezes a brand-new season as before.
+        if store.currentSeason.isProvisional {
+            store.editProvisionalSeason(from: draft, name: name, endMode: endMode, endDate: endDate)
+        } else {
+            store.startSeason(from: draft, name: name, endMode: endMode, endDate: endDate)
+        }
         SeasonSetupResumeStore.clear()
         stage = .begins
     }
@@ -235,8 +248,12 @@ final class SeasonSetupViewModel {
             attempt.append(.user(userText))
         }
 
+        // The envelope rides only on the opener; once the model's first
+        // (context-aware) turn is in history, replaying it keeps context.
+        let contextForTurn = attempt.isEmpty ? coldStartContext : nil
+
         do {
-            let envelope = try await SeasonSetupAI.send(history: attempt)
+            let envelope = try await SeasonSetupAI.send(history: attempt, coldStartContext: contextForTurn)
             // Commit history only on success so a retry replays cleanly.
             history = attempt
             history.append(.assistant(envelope.raw))
