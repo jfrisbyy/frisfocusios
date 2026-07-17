@@ -21,7 +21,6 @@ struct WorkZoneView: View {
     @Environment(WalkthroughManager.self) private var walkthrough
     /// The finished task whose proof camera is open (swipe-to-capture).
     @State private var proofTask: FFTask?
-    @State private var showCaptureSheet: Bool = false
     @State private var showQuickAdd: Bool = false
     @State private var showAgenda: Bool = false
     /// Auto-present the agenda once per session when the user has set it
@@ -110,12 +109,6 @@ struct WorkZoneView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This removes everything from today. Your tasks and to-dos stay safe in your library.")
-        }
-        .sheet(isPresented: $showCaptureSheet) {
-            CaptureSheetView()
-                .presentationDetents([.fraction(0.45)])
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(28)
         }
         .fullScreenCover(item: $proofTask) { task in
             CaptureView(
@@ -402,7 +395,7 @@ struct WorkZoneView: View {
 
     private func openCaptureSheet() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        showCaptureSheet = true
+        showQuickAdd = true
     }
 
     // MARK: - Quick add
