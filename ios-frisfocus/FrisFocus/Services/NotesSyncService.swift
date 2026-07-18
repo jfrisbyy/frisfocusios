@@ -241,6 +241,7 @@ final class NotesSyncService {
                 .execute()
                 .value
 
+            print("[NotesSync] pull for user=\(myUserId): \(folderRows.count) folder(s), \(noteRows.count) note(s)")
             var changed = false
 
             for row in folderRows {

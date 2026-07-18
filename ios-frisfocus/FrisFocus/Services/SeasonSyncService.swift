@@ -85,6 +85,10 @@ final class SeasonSyncService {
     /// launch. Prevents a fresh install / rebuild from ever writing an
     /// empty slate over real cloud content.
     @ObservationIgnored private var restoreConfirmed = false
+    /// Slices the last cloud pull found to hold real (non-empty) content.
+    /// Used as a live guard so an empty local slice can never be flushed
+    /// over a cloud slice that still has data.
+    @ObservationIgnored private var cloudNonEmptySlices: Set<String> = []
 
     private enum Keys {
         static let pendingSlices = "seasonSync.pendingSlices"
@@ -237,11 +241,24 @@ final class SeasonSyncService {
                 .execute()
                 .value
 
+            print("[SeasonSync] pull for user=\(myUserId): \(rows.count) row(s)")
             var appliedSeason = false
+            cloudNonEmptySlices = []
             for row in rows {
                 let remoteStamp = SyncDates.parse(row.updatedAt)
                 let localStamp = localStamps[row.sliceKey] ?? .distantPast
-                guard remoteStamp > localStamp else { continue }
+                let remoteEmpty = remotePayloadIsEmpty(slice: row.sliceKey, payload: row.payload)
+                let localEmpty = sliceIsEmpty(row.sliceKey)
+                if !remoteEmpty { cloudNonEmptySlices.insert(row.sliceKey) }
+                print("[SeasonSync] slice=\(row.sliceKey) bytes=\(row.payload.utf8.count) remoteEmpty=\(remoteEmpty) localEmpty=\(localEmpty) remoteStamp=\(row.updatedAt) localStamp=\(localStamp)")
+
+                // Empty never wins: apply the cloud copy when it is newer
+                // by stamp, OR whenever the local slice is empty and the
+                // cloud still holds real content — so a stale local stamp
+                // (left by an earlier build that marked empty data as
+                // "changed now") can never block restoring real data.
+                let shouldApply = (remoteStamp > localStamp) || (localEmpty && !remoteEmpty)
+                guard shouldApply else { continue }
 
                 suppressedSlices.insert(row.sliceKey)
                 let applied = apply(slice: row.sliceKey, payload: row.payload)
@@ -251,10 +268,13 @@ final class SeasonSyncService {
                 suppressedSlices.remove(row.sliceKey)
 
                 if applied {
-                    localStamps[row.sliceKey] = remoteStamp
+                    // Keep the stamp monotonic: never move it backwards
+                    // when we restored purely because local was empty.
+                    localStamps[row.sliceKey] = max(remoteStamp, localStamp)
                     pendingSlices.remove(row.sliceKey)
                     captureSnapshot(slice: row.sliceKey, payload: row.payload, stamp: remoteStamp)
                     if row.sliceKey == "season" { appliedSeason = true }
+                    print("[SeasonSync] applied slice=\(row.sliceKey)")
                 }
             }
             persistState()
@@ -274,6 +294,29 @@ final class SeasonSyncService {
         } catch {
             print("[SeasonSync] pull failed: \(error)")
             return false
+        }
+    }
+
+    /// Whether a decoded remote payload holds no real user data — the
+    /// mirror of `sliceIsEmpty` but for an inbound cloud row. A payload
+    /// that fails to decode is treated as empty so it never blocks a
+    /// real local copy.
+    private func remotePayloadIsEmpty(slice: String, payload: String) -> Bool {
+        guard let data = payload.data(using: .utf8) else { return true }
+        let d = JSONDecoder()
+        switch slice {
+        case "season":
+            guard let v = try? d.decode(Season.self, from: data) else { return true }
+            return v.categories.isEmpty && v.milestones.isEmpty
+        case "pastSeasons": return (try? d.decode([PastSeasonSummary].self, from: data))?.isEmpty ?? true
+        case "tasks": return (try? d.decode([FFTask].self, from: data))?.isEmpty ?? true
+        case "todos": return (try? d.decode([Todo].self, from: data))?.isEmpty ?? true
+        case "logEntries": return (try? d.decode([LogEntry].self, from: data))?.isEmpty ?? true
+        case "boosters": return (try? d.decode([WeeklyBooster].self, from: data))?.isEmpty ?? true
+        case "habitTrains": return (try? d.decode([HabitTrain].self, from: data))?.isEmpty ?? true
+        case "avoidanceItems": return (try? d.decode([AvoidanceItem].self, from: data))?.isEmpty ?? true
+        case "avoidanceOccurrences": return (try? d.decode([AvoidanceOccurrence].self, from: data))?.isEmpty ?? true
+        default: return true
         }
     }
 
@@ -366,10 +409,12 @@ final class SeasonSyncService {
         let touchesSeasonCard = !pendingSlices.isDisjoint(with: Self.seasonCardSlices)
 
         for slice in pendingSlices {
-            // Content-aware guard: an empty slice that was never touched
-            // by a real local mutation is a phantom empty (the reinstall
-            // case). Drop it rather than overwrite real cloud content.
-            if sliceIsEmpty(slice), localStamps[slice] == nil {
+            // Content-aware guard: never upload an empty slice over a
+            // cloud slice that still holds real content. This covers both
+            // the phantom-empty reinstall case (no local mutation) and a
+            // stale-stamp case where an empty slice looks "changed".
+            if sliceIsEmpty(slice), localStamps[slice] == nil || cloudNonEmptySlices.contains(slice) {
+                print("[SeasonSync] flush skip empty slice=\(slice) (cloud has content or never edited)")
                 pendingSlices.remove(slice)
                 continue
             }
