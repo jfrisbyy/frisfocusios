@@ -37,6 +37,20 @@ private nonisolated struct SeasonSyncRow: Codable, Sendable {
     }
 }
 
+/// One captured known-good state of a slice, kept on-device as a
+/// last-resort fallback if both the live copy and the cloud are wiped.
+private nonisolated struct SnapshotEntry: Codable, Sendable {
+    let payload: String
+    let stamp: Date
+}
+
+/// Minimal read shape for verifying the friend-visible season card
+/// before we would overwrite it with an empty one.
+private nonisolated struct ProfileCardRow: Decodable, Sendable {
+    let seasonCard: String?
+    enum CodingKeys: String, CodingKey { case seasonCard = "season_card" }
+}
+
 // MARK: - Service
 
 @Observable
@@ -61,6 +75,11 @@ final class SeasonSyncService {
     @ObservationIgnored private var uploadedMedia: Set<String> = []
     /// Filenames currently downloading, so refreshes don't double-fetch.
     @ObservationIgnored private var activeDownloads: Set<String> = []
+    /// Rolling on-device snapshots of the last few known-good states per
+    /// slice, kept separate from the live copy. If a local wipe leaves a
+    /// slice empty and the cloud can't restore it, the newest snapshot
+    /// is the final fallback before the account shows blank.
+    @ObservationIgnored private var snapshots: [String: [SnapshotEntry]] = [:]
     /// Hard startup gate: no slice may upload until we have reached and
     /// finished restoring from the cloud backup at least once this
     /// launch. Prevents a fresh install / rebuild from ever writing an
@@ -71,8 +90,12 @@ final class SeasonSyncService {
         static let pendingSlices = "seasonSync.pendingSlices"
         static let localStamps = "seasonSync.localStamps"
         static let uploadedMedia = "seasonSync.uploadedMedia"
+        static let snapshots = "seasonSync.snapshots"
         static func initialPush(_ userId: String) -> String { "seasonSync.initialPush.\(userId)" }
     }
+
+    /// Max snapshots retained per slice.
+    private static let maxSnapshotsPerSlice = 3
 
     /// Slice key for a Store data key. Only season-scoped keys map.
     private static func slice(for key: Store.DataKey) -> String? {
@@ -117,6 +140,11 @@ final class SeasonSyncService {
         // failure so a network hiccup never makes us assume there's no
         // data and blank the account out.
         await restoreFromCloud()
+
+        // Last-resort local fallback: if a slice is still empty after the
+        // cloud restore (e.g. the backup was blanked by an older build),
+        // rebuild it from the newest on-device snapshot and re-queue it.
+        recoverEmptySlicesFromSnapshots()
 
         // First sync for this account on this install: queue only the
         // slices that actually have content so a real local season
@@ -225,6 +253,7 @@ final class SeasonSyncService {
                 if applied {
                     localStamps[row.sliceKey] = remoteStamp
                     pendingSlices.remove(row.sliceKey)
+                    captureSnapshot(slice: row.sliceKey, payload: row.payload, stamp: remoteStamp)
                     if row.sliceKey == "season" { appliedSeason = true }
                 }
             }
@@ -354,13 +383,15 @@ final class SeasonSyncService {
                 continue
             }
             do {
+                let stamp = localStamps[slice] ?? Date()
                 try await supabase.from("season_sync").upsert(SeasonSyncRow(
                     userId: myUserId,
                     sliceKey: slice,
                     payload: payload,
-                    updatedAt: SyncDates.iso(localStamps[slice] ?? Date())
+                    updatedAt: SyncDates.iso(stamp)
                 ), onConflict: "user_id,slice_key").execute()
                 pendingSlices.remove(slice)
+                captureSnapshot(slice: slice, payload: payload, stamp: stamp)
             } catch {
                 print("[SeasonSync] upsert failed for \(slice): \(error)")
             }
@@ -397,6 +428,16 @@ final class SeasonSyncService {
     /// — the next flush retries naturally.
     func pushSeasonCard() async {
         guard let myUserId, let store else { return }
+        // Content-aware guard: never publish an empty card over a
+        // friend-visible one that still has content. Only overwrite with
+        // an empty card once we've confirmed the cloud card is also empty.
+        if store.mySeasonCard.isEmpty {
+            let remote = await fetchRemoteSeasonCard()
+            if !remote.reached || (remote.card?.isEmpty == false) {
+                print("[SeasonSync] skip publishing empty season card over non-empty/unverified cloud card")
+                return
+            }
+        }
         do {
             try await supabase
                 .from("profiles")
@@ -408,6 +449,69 @@ final class SeasonSyncService {
                 .execute()
         } catch {
             print("[SeasonSync] season card push failed: \(error)")
+        }
+    }
+
+    /// Read the friend-visible season card currently stored on the
+    /// profile row. `reached` is false when the read failed, so callers
+    /// can stay conservative and refuse to overwrite with an empty card.
+    private func fetchRemoteSeasonCard() async -> (reached: Bool, card: SeasonCard?) {
+        guard let myUserId else { return (false, nil) }
+        do {
+            let rows: [ProfileCardRow] = try await supabase
+                .from("profiles")
+                .select("season_card")
+                .eq("id", value: myUserId)
+                .limit(1)
+                .execute()
+                .value
+            return (true, SeasonCard.decode(fromJSON: rows.first?.seasonCard))
+        } catch {
+            print("[SeasonSync] could not verify remote season card: \(error)")
+            return (false, nil)
+        }
+    }
+
+    // MARK: Snapshots (on-device fallback)
+
+    /// Record a known-good, non-empty slice state. De-duplicates the
+    /// newest identical payload and keeps only the most recent few.
+    private func captureSnapshot(slice: String, payload: String, stamp: Date) {
+        guard !sliceIsEmpty(slice) else { return }
+        var entries = snapshots[slice] ?? []
+        if entries.last?.payload == payload { return }
+        entries.append(SnapshotEntry(payload: payload, stamp: stamp))
+        if entries.count > Self.maxSnapshotsPerSlice {
+            entries.removeFirst(entries.count - Self.maxSnapshotsPerSlice)
+        }
+        snapshots[slice] = entries
+        persistState()
+    }
+
+    /// For any slice still empty after the cloud restore, rebuild it from
+    /// the newest on-device snapshot and re-queue it for upload. This is
+    /// the final fallback against a local wipe that also lost the cloud
+    /// copy. Uploads stay gated on `restoreConfirmed`, so a recovered
+    /// slice only re-publishes once the cloud state is known.
+    private func recoverEmptySlicesFromSnapshots() {
+        guard let store else { return }
+        var recoveredAny = false
+        for slice in Self.allSlices where sliceIsEmpty(slice) {
+            guard let newest = snapshots[slice]?.max(by: { $0.stamp < $1.stamp }) else { continue }
+            suppressedSlices.insert(slice)
+            let applied = apply(slice: slice, payload: newest.payload)
+            store.flushPendingSaves()
+            suppressedSlices.remove(slice)
+            if applied, !sliceIsEmpty(slice) {
+                localStamps[slice] = newest.stamp
+                pendingSlices.insert(slice)
+                recoveredAny = true
+                print("[SeasonSync] recovered \(slice) from on-device snapshot")
+            }
+        }
+        if recoveredAny {
+            persistState()
+            store.refreshMilestoneNudges()
         }
     }
 
@@ -506,6 +610,10 @@ final class SeasonSyncService {
            let names = try? decoder.decode([String].self, from: data) {
             uploadedMedia = Set(names)
         }
+        if let data = defaults.data(forKey: Keys.snapshots),
+           let snaps = try? decoder.decode([String: [SnapshotEntry]].self, from: data) {
+            snapshots = snaps
+        }
     }
 
     private func persistState() {
@@ -514,5 +622,6 @@ final class SeasonSyncService {
         defaults.set(try? encoder.encode(Array(pendingSlices)), forKey: Keys.pendingSlices)
         defaults.set(try? encoder.encode(localStamps), forKey: Keys.localStamps)
         defaults.set(try? encoder.encode(Array(uploadedMedia)), forKey: Keys.uploadedMedia)
+        defaults.set(try? encoder.encode(snapshots), forKey: Keys.snapshots)
     }
 }

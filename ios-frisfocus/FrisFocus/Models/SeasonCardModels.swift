@@ -240,6 +240,18 @@ nonisolated struct SeasonCard: Codable, Equatable, Sendable {
         coverId.flatMap(SeasonCoverKind.init(rawValue:))
     }
 
+    /// Whether this card carries no real season identity — used so an
+    /// empty card can never be published over a friend-visible one that
+    /// still has content.
+    var isEmpty: Bool {
+        (intention?.isEmpty ?? true)
+            && (seasonName?.isEmpty ?? true)
+            && (moodLine?.isEmpty ?? true)
+            && coverId == nil
+            && milestones.isEmpty
+            && pastSeasons.isEmpty
+    }
+
     /// 1-based day into the current season, clamped to its length when
     /// one was published. Nil when the card carries no start date.
     var currentDay: Int? {
