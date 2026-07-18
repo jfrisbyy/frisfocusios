@@ -144,13 +144,17 @@ class AuthManager {
         if let accessToken = KeychainHelper.get("access_token"),
            let user = userFromToken(accessToken) {
             self.user = user
+            print("[AuthManager] checkAuth: restored session from access token, user=\(user.id)")
             syncProfile(user)
             return
         }
 
         // Token missing or expired — try refresh
         if getRefreshToken() != nil {
+            print("[AuthManager] checkAuth: no valid access token, attempting refresh")
             await refreshToken()
+        } else {
+            print("[AuthManager] checkAuth: no access token and no refresh token — signed out")
         }
     }
 
@@ -360,6 +364,8 @@ class AuthManager {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                print("[AuthManager] refreshToken: refresh endpoint returned \(code) — signing out")
                 await signOut()
                 return
             }
@@ -370,9 +376,13 @@ class AuthManager {
             let refreshedUser = userFromToken(refreshResponse.access_token)
             user = refreshedUser
             if let refreshedUser {
+                print("[AuthManager] refreshToken: session refreshed, user=\(refreshedUser.id)")
                 syncProfile(refreshedUser)
+            } else {
+                print("[AuthManager] refreshToken: refresh succeeded but token had no user")
             }
         } catch {
+            print("[AuthManager] refreshToken: refresh failed (\(error.localizedDescription)) — signing out")
             await signOut()
         }
     }

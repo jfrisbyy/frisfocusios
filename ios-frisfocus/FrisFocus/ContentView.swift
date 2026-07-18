@@ -150,6 +150,7 @@ struct ContentView: View {
                 // @username, photo) in sync with who is signed in, and tell
                 // the notification manager who owns this device's token.
                 if let myId = auth.user?.id {
+                    print("[FrisFocus] startup: signed in as user=\(myId) — loading account data")
                     notifications.setUserId(myId)
                     // Messaging is app-wide: load the recent window and
                     // subscribe to realtime once, so unread badges stay
@@ -183,6 +184,7 @@ struct ContentView: View {
                     await cadence.refresh(myUserId: myId)
                     await cadence.sync(into: store, myUserId: myId)
                 } else {
+                    print("[FrisFocus] startup: NO signed-in session (auth.user is nil) — nothing to load; app will look empty until sign-in")
                     notifications.setUserId(nil)
                     messageGraph.stopRealtime()
                     friendGraph.stopRealtime()
