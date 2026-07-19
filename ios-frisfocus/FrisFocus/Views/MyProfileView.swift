@@ -32,7 +32,6 @@ struct MyProfileView: View {
     @State private var showMoodEditor: Bool = false
     @State private var moodDraft: String = ""
     @State private var dayRef: DayRef?
-    @State private var recapChapter: PastSeasonSummary?
 
     /// Zoom-transition namespace — the story player grows out of the
     /// avatar and shrinks back into it on dismiss.
@@ -176,11 +175,6 @@ struct MyProfileView: View {
             }
         }
         .sheet(isPresented: $showAccount) { ProfileSheetView() }
-        .sheet(item: $recapChapter) { chapter in
-            PastSeasonRecapView(chapter: chapter)
-                .environment(store)
-                .presentationDetents([.large])
-        }
         .sheet(isPresented: $showCheers) {
             CheerHistoryView().environment(store)
         }
@@ -426,11 +420,6 @@ struct MyProfileView: View {
                 destinationsSection
             }
 
-            if !store.pastSeasons.isEmpty {
-                JournalHairline().padding(.vertical, 18)
-                seasonsBeforeSection
-            }
-
             JournalHairline().padding(.vertical, 18)
             cheersRow
 
@@ -462,15 +451,6 @@ struct MyProfileView: View {
                 accent: accent,
                 seasonStart: store.currentSeason.startDate
             )
-        }
-    }
-
-    private var seasonsBeforeSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            JournalSectionHeader(label: "SEASONS BEFORE")
-            SeasonsBeforeRow(chapters: store.pastSeasons, showsMilestones: true) { chapter in
-                recapChapter = chapter
-            }
         }
     }
 

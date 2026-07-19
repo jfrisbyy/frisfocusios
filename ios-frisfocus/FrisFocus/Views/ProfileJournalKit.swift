@@ -554,7 +554,7 @@ struct AllChaptersSheet: View {
                     .padding(.vertical, 16)
                 }
             }
-            .navigationTitle("Seasons before")
+            .navigationTitle("Archived seasons")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.warmWheat, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)

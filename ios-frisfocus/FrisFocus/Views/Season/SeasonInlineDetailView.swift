@@ -54,6 +54,10 @@ struct SeasonInlineDetailView: View {
     @State private var showSeasonSetup: Bool = false
     @State private var showNextSeasonDialog: Bool = false
     @State private var showEndSeasonConfirm: Bool = false
+    /// The archived-seasons list sheet and, once a card is tapped, the
+    /// full recap it opens.
+    @State private var showArchivedSeasons: Bool = false
+    @State private var recapChapter: PastSeasonSummary? = nil
     /// Whether the season options grid is unfolded. Collapsed by
     /// default — the row stays quiet until asked.
     @State private var optionsExpanded: Bool = false
@@ -119,6 +123,14 @@ struct SeasonInlineDetailView: View {
         .sheet(isPresented: $showSettings) {
             ScoringSettingsView()
                 .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showArchivedSeasons) {
+            AllChaptersSheet(chapters: store.pastSeasons, showsMilestones: true) { chapter in
+                recapChapter = chapter
+            }
+        }
+        .sheet(item: $recapChapter) { chapter in
+            PastSeasonRecapView(chapter: chapter)
         }
         .fullScreenCover(isPresented: $showSeasonSetup) {
             SeasonSetupFlowView()
@@ -606,9 +618,9 @@ struct SeasonInlineDetailView: View {
         .padding(.top, 22)
     }
 
-    /// The seven season-level controls, in display order.
+    /// The season-level controls, in display order.
     private var seasonOptions: [SeasonOptionItem] {
-        [
+        var base: [SeasonOptionItem] = [
             SeasonOptionItem(
                 label: "New task",
                 hint: "Add a task to today",
@@ -647,6 +659,18 @@ struct SeasonInlineDetailView: View {
                 haptic: .medium
             ) { showEndSeasonConfirm = true }
         ]
+        // Archived Seasons — only surfaces once past seasons exist, so
+        // the grid stays quiet for a brand-new user.
+        if !store.pastSeasons.isEmpty {
+            base.append(
+                SeasonOptionItem(
+                    label: "Archived Seasons",
+                    hint: "Reopen a past season",
+                    iconName: "clock.arrow.circlepath"
+                ) { showArchivedSeasons = true }
+            )
+        }
+        return base
     }
 
     @ViewBuilder
