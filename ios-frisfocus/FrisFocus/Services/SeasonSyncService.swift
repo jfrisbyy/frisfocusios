@@ -106,6 +106,7 @@ final class SeasonSyncService {
         switch key {
         case .season: return "season"
         case .pastSeasons: return "pastSeasons"
+        case .archivedSeasons: return "archivedSeasons"
         case .tasks: return "tasks"
         case .todos: return "todos"
         case .logEntries: return "logEntries"
@@ -118,7 +119,7 @@ final class SeasonSyncService {
     }
 
     private static let allSlices = [
-        "season", "pastSeasons", "tasks", "todos", "logEntries",
+        "season", "pastSeasons", "archivedSeasons", "tasks", "todos", "logEntries",
         "boosters", "habitTrains", "avoidanceItems", "avoidanceOccurrences"
     ]
 
@@ -149,6 +150,11 @@ final class SeasonSyncService {
         // cloud restore (e.g. the backup was blanked by an older build),
         // rebuild it from the newest on-device snapshot and re-queue it.
         recoverEmptySlicesFromSnapshots()
+
+        // Recover any season that was replaced before full archives
+        // existed — reconstruct a restorable copy from on-device
+        // snapshots so it can be reactivated like any other past season.
+        recoverReplacedSeasonsIntoArchive()
 
         // First sync for this account on this install: queue only the
         // slices that actually have content so a real local season
@@ -215,6 +221,7 @@ final class SeasonSyncService {
             let s = store.currentSeason
             return s.categories.isEmpty && s.milestones.isEmpty
         case "pastSeasons": return store.pastSeasons.isEmpty
+        case "archivedSeasons": return store.archivedSeasons.isEmpty
         case "tasks": return store.tasks.isEmpty
         case "todos": return store.todos.isEmpty
         case "logEntries": return store.logEntries.isEmpty
@@ -309,6 +316,7 @@ final class SeasonSyncService {
             guard let v = try? d.decode(Season.self, from: data) else { return true }
             return v.categories.isEmpty && v.milestones.isEmpty
         case "pastSeasons": return (try? d.decode([PastSeasonSummary].self, from: data))?.isEmpty ?? true
+        case "archivedSeasons": return (try? d.decode([SeasonArchive].self, from: data))?.isEmpty ?? true
         case "tasks": return (try? d.decode([FFTask].self, from: data))?.isEmpty ?? true
         case "todos": return (try? d.decode([Todo].self, from: data))?.isEmpty ?? true
         case "logEntries": return (try? d.decode([LogEntry].self, from: data))?.isEmpty ?? true
@@ -332,6 +340,9 @@ final class SeasonSyncService {
         case "pastSeasons":
             guard let value = try? decoder.decode([PastSeasonSummary].self, from: data) else { return false }
             store.pastSeasons = value
+        case "archivedSeasons":
+            guard let value = try? decoder.decode([SeasonArchive].self, from: data) else { return false }
+            store.archivedSeasons = value
         case "tasks":
             guard let value = try? decoder.decode([FFTask].self, from: data) else { return false }
             store.tasks = value
@@ -370,6 +381,7 @@ final class SeasonSyncService {
         switch slice {
         case "season": return encode(store.currentSeason)
         case "pastSeasons": return encode(store.pastSeasons)
+        case "archivedSeasons": return encode(store.archivedSeasons)
         case "tasks": return encode(store.tasks)
         case "todos": return encode(store.todos)
         case "logEntries": return encode(store.logEntries)
@@ -557,6 +569,78 @@ final class SeasonSyncService {
         if recoveredAny {
             persistState()
             store.refreshMilestoneNudges()
+        }
+    }
+
+    // MARK: Replaced-season recovery
+
+    /// Decode the newest snapshot of a slice into a typed value, or nil
+    /// when no snapshot exists / it can't be decoded.
+    private func decodeNewestSnapshot<T: Decodable>(_ slice: String, as type: T.Type) -> T? {
+        guard let newest = snapshots[slice]?.max(by: { $0.stamp < $1.stamp }),
+              let data = newest.payload.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// Reconstruct restorable archives for seasons that were replaced
+    /// before full archives existed. Walks the on-device "season" slice
+    /// snapshots (each a full past Season JSON); for any real season that
+    /// isn't the live one and has no archive yet, it rebuilds a
+    /// `SeasonArchive` — attaching the best-effort sibling graph from the
+    /// newest task/to-do/booster/train/avoidance snapshots — and adds a
+    /// friend-visible chapter so the season reappears and can be reopened.
+    private func recoverReplacedSeasonsIntoArchive() {
+        guard let store else { return }
+        guard let seasonSnaps = snapshots["season"], !seasonSnaps.isEmpty else { return }
+        let decoder = JSONDecoder()
+
+        var knownIds = Set(store.archivedSeasons.map(\.id))
+        knownIds.insert(store.currentSeason.id)
+
+        // Sibling graph, best-effort — the newest known-good copy of each.
+        let recoveredTasks = decodeNewestSnapshot("tasks", as: [FFTask].self) ?? []
+        let recoveredTodos = decodeNewestSnapshot("todos", as: [Todo].self) ?? []
+        let recoveredBoosters = decodeNewestSnapshot("boosters", as: [WeeklyBooster].self) ?? []
+        let recoveredTrains = decodeNewestSnapshot("habitTrains", as: [HabitTrain].self) ?? []
+        let recoveredAvoidance = decodeNewestSnapshot("avoidanceItems", as: [AvoidanceItem].self) ?? []
+
+        var recoveredAny = false
+        // Newest snapshots first so the freshest copy of a season wins.
+        for snap in seasonSnaps.sorted(by: { $0.stamp > $1.stamp }) {
+            guard let data = snap.payload.data(using: .utf8),
+                  let season = try? decoder.decode(Season.self, from: data) else { continue }
+            guard !knownIds.contains(season.id) else { continue }
+            // Skip empty shells — only real seasons are worth recovering.
+            guard !(season.categories.isEmpty && season.milestones.isEmpty) else { continue }
+
+            // Attach sibling graph only when it plausibly belongs to this
+            // season (its tasks reference the season's categories); a
+            // mismatched newest snapshot would otherwise graft the wrong
+            // tasks on. When unsure, recover the season with an empty
+            // board — its categories, milestones, and cover still return.
+            let seasonCats = Set(season.categories.map(\.category))
+            let tasksFit = !recoveredTasks.isEmpty && recoveredTasks.allSatisfy { seasonCats.contains($0.category) }
+            let archive = SeasonArchive(
+                id: season.id,
+                season: season,
+                tasks: tasksFit ? recoveredTasks : [],
+                todos: tasksFit ? recoveredTodos : [],
+                boosters: tasksFit ? recoveredBoosters : [],
+                habitTrains: tasksFit ? recoveredTrains : [],
+                avoidanceItems: tasksFit ? recoveredAvoidance : [],
+                archivedAt: snap.stamp
+            )
+            store.archivedSeasons.insert(archive, at: 0)
+            knownIds.insert(season.id)
+            if !store.pastSeasons.contains(where: { $0.id == season.id }) {
+                store.pastSeasons.insert(archive.summary(endedAt: snap.stamp), at: 0)
+            }
+            recoveredAny = true
+            print("[SeasonSync] recovered replaced season \(season.name) into archive (tasksFit=\(tasksFit))")
+        }
+
+        if recoveredAny {
+            store.flushPendingSaves()
         }
     }
 

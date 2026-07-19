@@ -114,6 +114,10 @@ extension Store {
             milestones: []
         )
 
+        // Save a complete, restorable copy of the season being replaced
+        // (and its friend-visible chapter) before the swap, so carrying
+        // setup forward never discards the old season.
+        archiveCurrentSeasonAsChapter()
         currentSeason = season
         persistAll()
         // Clear stale milestone reminders from the previous season. The

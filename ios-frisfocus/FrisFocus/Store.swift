@@ -27,6 +27,12 @@ final class Store {
     /// sharing tier) as part of the season card.
     var pastSeasons: [PastSeasonSummary] = [] { didSet { markDirty(.pastSeasons) } }
 
+    /// Full, restorable copies of past seasons — the whole graph (season,
+    /// tasks, to-dos, boosters, trains, avoidance) each `PastSeasonSummary`
+    /// chapter points back to, so a past season can be reopened and made
+    /// live again rather than only glanced at. Newest first.
+    var archivedSeasons: [SeasonArchive] = [] { didSet { markDirty(.archivedSeasons) } }
+
     var tasks: [FFTask] = [] { didSet { markDirty(.tasks) } }
     var todos: [Todo] = [] { didSet { markDirty(.todos) } }
     var logEntries: [LogEntry] = [] { didSet { markDirty(.logEntries) } }
@@ -389,6 +395,7 @@ final class Store {
     private enum Keys {
         static let currentSeason = "currentSeason"
         static let pastSeasons = "pastSeasons"
+        static let archivedSeasons = "archivedSeasons"
         static let tasks = "tasks"
         static let todos = "todos"
         static let logEntries = "logEntries"
@@ -563,6 +570,7 @@ final class Store {
                 self.currentSeason = Store.seedSeason()
             }
             self.pastSeasons = Store.loadArray(Keys.pastSeasons) ?? []
+            self.archivedSeasons = Store.loadArray(Keys.archivedSeasons) ?? []
             self.tasks = Store.loadArray(Keys.tasks) ?? []
             self.todos = Store.loadArray(Keys.todos) ?? []
             self.logEntries = Store.loadArray(Keys.logEntries) ?? []
@@ -767,7 +775,7 @@ final class Store {
     /// One persistable slice of the Store. Each case maps to a single
     /// UserDefaults key.
     enum DataKey: CaseIterable {
-        case season, pastSeasons, tasks, todos, logEntries, notes, folders, proofPins, proofLibrary
+        case season, pastSeasons, archivedSeasons, tasks, todos, logEntries, notes, folders, proofPins, proofLibrary
         case friends, circles, circleTaskCompletions, circleContributions
         case circleEvents, eventRSVPs, eventCheckIns
         case signalFacts, cheers, storyPosts, directShares, likes, comments, mediaAssets
@@ -826,7 +834,7 @@ final class Store {
 
     /// The slices mirrored to the user's account by `SeasonSyncService`.
     static let seasonSyncedKeys: Set<DataKey> = [
-        .season, .pastSeasons, .tasks, .todos, .logEntries,
+        .season, .pastSeasons, .archivedSeasons, .tasks, .todos, .logEntries,
         .boosters, .habitTrains, .avoidanceItems, .avoidanceOccurrences
     ]
 
@@ -853,6 +861,7 @@ final class Store {
         switch key {
         case .season: setJSON(currentSeason, forKey: Keys.currentSeason, encoder: encoder)
         case .pastSeasons: setJSON(pastSeasons, forKey: Keys.pastSeasons, encoder: encoder)
+        case .archivedSeasons: setJSON(archivedSeasons, forKey: Keys.archivedSeasons, encoder: encoder)
         case .tasks: setJSON(tasks, forKey: Keys.tasks, encoder: encoder)
         case .todos: setJSON(todos, forKey: Keys.todos, encoder: encoder)
         case .logEntries: setJSON(logEntries, forKey: Keys.logEntries, encoder: encoder)
@@ -916,7 +925,7 @@ final class Store {
     /// Every key the Store persists — the list a release-version bump
     /// snapshots before any new code touches the data.
     private static let allPersistedKeys: [String] = [
-        Keys.currentSeason, Keys.pastSeasons, Keys.tasks, Keys.todos, Keys.logEntries,
+        Keys.currentSeason, Keys.pastSeasons, Keys.archivedSeasons, Keys.tasks, Keys.todos, Keys.logEntries,
         Keys.notes, Keys.folders, Keys.proofPins, Keys.proofLibrary, Keys.friends, Keys.circles,
         Keys.circleTaskCompletions, Keys.circleContributions,
         Keys.signalFacts, Keys.cheers, Keys.storyPosts, Keys.directShares,
@@ -1336,13 +1345,24 @@ extension Store {
     }
 
     /// Archive the season currently being lived as a past chapter —
-    /// called right before a new season replaces it. Seasons that never
-    /// actually started (created today) and already-archived ids are
-    /// skipped, so re-commits never write duplicate chapters.
-    func archiveCurrentSeasonAsChapter() {
+    /// called right before a new season replaces it. Always captures a
+    /// FULL restorable copy of the season graph first (so it can be
+    /// reopened later), then adds the lightweight friend-visible summary.
+    /// Seasons that never actually started (created today) and
+    /// already-summarized ids are skipped for the summary only, so
+    /// re-commits never write duplicate chapters.
+    ///
+    /// `force` writes the summary even for a same-day season — used when
+    /// hopping between seasons so the outgoing one always reappears in
+    /// "Seasons Before".
+    func archiveCurrentSeasonAsChapter(force: Bool = false) {
         let cal = Calendar.current
         let old = currentSeason
-        guard cal.startOfDay(for: old.startDate) < cal.startOfDay(for: Date()) else { return }
+        // Full archive is always captured — the whole point of "nothing
+        // meaningful is discarded anymore."
+        captureCurrentSeasonArchive()
+        let startedBeforeToday = cal.startOfDay(for: old.startDate) < cal.startOfDay(for: Date())
+        guard force || startedBeforeToday else { return }
         guard !pastSeasons.contains(where: { $0.id == old.id }) else { return }
         let plannedEnd = cal.date(byAdding: .day, value: old.lengthDays, to: old.startDate) ?? Date()
         pastSeasons.insert(
@@ -1358,6 +1378,74 @@ extension Store {
             ),
             at: 0
         )
+    }
+
+    /// Capture a complete, restorable copy of the CURRENT season graph
+    /// into `archivedSeasons` (upsert by season id). Everything a new
+    /// season would clear — the season itself, task library, to-dos,
+    /// boosters, trains, and avoidance items — is preserved so the
+    /// season can be brought back to life exactly as it was.
+    func captureCurrentSeasonArchive() {
+        let old = currentSeason
+        let archive = SeasonArchive(
+            id: old.id,
+            season: old,
+            tasks: tasks,
+            todos: todos,
+            boosters: boosters,
+            habitTrains: habitTrains,
+            avoidanceItems: avoidanceItems,
+            archivedAt: Date()
+        )
+        if let idx = archivedSeasons.firstIndex(where: { $0.id == old.id }) {
+            archivedSeasons[idx] = archive
+        } else {
+            archivedSeasons.insert(archive, at: 0)
+        }
+    }
+
+    /// The full restorable archive for a past-season chapter, if one was
+    /// kept. Nil for legacy chapters archived before full copies existed
+    /// (those can only be glanced at, never reopened).
+    func archivedSeason(for id: UUID) -> SeasonArchive? {
+        archivedSeasons.first { $0.id == id }
+    }
+
+    /// Whether a past-season chapter can be brought back to life — true
+    /// only when a full restorable copy of it exists.
+    func canReactivateSeason(_ id: UUID) -> Bool {
+        archivedSeasons.contains { $0.id == id }
+    }
+
+    /// Reopen a past season and make it the live one again. The current
+    /// season is fully archived first (never lost), the chosen season's
+    /// entire graph is restored, and the season card republishes so
+    /// friends see the change immediately. Safe to hop back and forth.
+    @discardableResult
+    func reactivatePastSeason(_ id: UUID) -> Bool {
+        guard let archive = archivedSeason(for: id) else { return false }
+
+        // Archive the outgoing season fully and force its summary so it
+        // always reappears in "Seasons Before" (even if reactivated the
+        // same day it went live), enabling free hopping.
+        archiveCurrentSeasonAsChapter(force: true)
+
+        // Restore the chosen season's whole graph as the live one.
+        currentSeason = archive.season
+        tasks = archive.tasks
+        todos = archive.todos
+        boosters = archive.boosters
+        habitTrains = archive.habitTrains
+        avoidanceItems = archive.avoidanceItems
+
+        // The reactivated season is live now, not a past chapter.
+        pastSeasons.removeAll { $0.id == id }
+
+        persistAll()
+        flushPendingSaves()
+        MilestoneNudgeService.refresh(for: currentSeason)
+        republishSeasonCardNow()
+        return true
     }
 
     /// 1-based day count into the current season. Both endpoints are
@@ -3758,6 +3846,7 @@ extension Store {
     /// (`currentUserId`) and the season are left to the caller.
     private func wipeAllData() {
         pastSeasons = []
+        archivedSeasons = []
         tasks = []
         todos = []
         logEntries = []

@@ -418,6 +418,10 @@ struct DestinationsTimeline: View {
 struct SeasonsBeforeRow: View {
     let chapters: [PastSeasonSummary]
     var showsMilestones: Bool = true
+    /// When set, tapping a poster invokes this (the owner's profile
+    /// opens a reactivatable recap). Friend profiles leave it nil so the
+    /// posters stay read-only.
+    var onSelect: ((PastSeasonSummary) -> Void)? = nil
 
     @State private var showAll: Bool = false
 
@@ -430,7 +434,17 @@ struct SeasonsBeforeRow: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 ForEach(visible) { chapter in
-                    miniPoster(chapter)
+                    if let onSelect {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            onSelect(chapter)
+                        } label: {
+                            miniPoster(chapter)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        miniPoster(chapter)
+                    }
                 }
                 if overflow > 0 {
                     Button {
@@ -454,7 +468,7 @@ struct SeasonsBeforeRow: View {
         }
         .scrollClipDisabled(false)
         .sheet(isPresented: $showAll) {
-            AllChaptersSheet(chapters: chapters, showsMilestones: showsMilestones)
+            AllChaptersSheet(chapters: chapters, showsMilestones: showsMilestones, onSelect: onSelect)
         }
     }
 
@@ -508,6 +522,7 @@ struct SeasonsBeforeRow: View {
 struct AllChaptersSheet: View {
     let chapters: [PastSeasonSummary]
     var showsMilestones: Bool = true
+    var onSelect: ((PastSeasonSummary) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -521,7 +536,18 @@ struct AllChaptersSheet: View {
                         spacing: 12
                     ) {
                         ForEach(chapters) { chapter in
-                            PastSeasonChapterCard(chapter: chapter, showsMilestones: showsMilestones)
+                            if let onSelect {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    dismiss()
+                                    onSelect(chapter)
+                                } label: {
+                                    PastSeasonChapterCard(chapter: chapter, showsMilestones: showsMilestones)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                PastSeasonChapterCard(chapter: chapter, showsMilestones: showsMilestones)
+                            }
                         }
                     }
                     .padding(.horizontal, Theme.pageHorizontalPadding)
