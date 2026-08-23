@@ -19,7 +19,7 @@ struct RecentActivityView: View {
     /// The last-seen stamp captured the moment the sheet opened, so
     /// "new" dots stay visible while the badge itself clears.
     @State private var seenCutoff: Date = .distantFuture
-    @State private var showMyStories: Bool = false
+    @State private var playerTarget: ActivityPlayerTarget?
     @State private var showCheers: Bool = false
 
     private var items: [ActivityItem] { store.activityItems }
@@ -71,8 +71,8 @@ struct RecentActivityView: View {
             }
             store.markActivitySeen()
         }
-        .fullScreenCover(isPresented: $showMyStories) {
-            StoryPlayerView(mode: .mine)
+        .fullScreenCover(item: $playerTarget) { target in
+            StoryPlayerView(mode: target.mode, initialPostId: target.id)
                 .environment(store)
         }
         .sheet(isPresented: $showCheers) {
@@ -85,10 +85,13 @@ struct RecentActivityView: View {
 
     @ViewBuilder
     private func activityRow(_ item: ActivityItem) -> some View {
-        let storyAlive = item.postId.map { id in
-            store.storyPosts.contains { $0.id == id }
-        } ?? false
-        let tappable = item.kind == .cheer || storyAlive
+        // A story row is openable only when the player can actually
+        // show it: a general post must be unexpired (it plays on your
+        // own tape); a circle post plays on the circle's tape, which
+        // never expires — the circle just has to still exist.
+        let target = playerTarget(for: item)
+        let storyOpenable = target != nil
+        let tappable = item.kind == .cheer || storyOpenable
 
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -96,7 +99,7 @@ struct RecentActivityView: View {
             case .cheer:
                 showCheers = true
             case .like, .comment:
-                if storyAlive { showMyStories = true }
+                if let target { playerTarget = target }
             }
         } label: {
             HStack(alignment: .center, spacing: 12) {
@@ -122,7 +125,7 @@ struct RecentActivityView: View {
                         Text(item.date.formatted(.relative(presentation: .named)))
                             .font(.sans(11, weight: .medium))
                             .foregroundStyle(Theme.textTertiary)
-                        if item.kind != .cheer && !storyAlive {
+                        if item.kind != .cheer && !storyOpenable {
                             Text("story expired")
                                 .font(.sans(11, weight: .regular))
                                 .foregroundStyle(Theme.textTertiary.opacity(0.8))
@@ -151,6 +154,23 @@ struct RecentActivityView: View {
         .buttonStyle(.plain)
         .disabled(!tappable)
         .accessibilityLabel("\(item.actorName) \(item.verbLine)")
+    }
+
+    /// Where a like/comment row should open, or nil when the story
+    /// can't be shown anymore (expired general post, deleted post, or
+    /// a circle the user is no longer in).
+    private func playerTarget(for item: ActivityItem) -> ActivityPlayerTarget? {
+        guard item.kind != .cheer,
+              let postId = item.postId,
+              let post = store.storyPosts.first(where: { $0.id == postId })
+        else { return nil }
+
+        if let circleId = post.circleId {
+            guard let circle = store.circle(by: circleId) else { return nil }
+            return ActivityPlayerTarget(id: post.id, mode: .circle(circle))
+        }
+        guard !post.isExpired() else { return nil }
+        return ActivityPlayerTarget(id: post.id, mode: .mine)
     }
 
     private func initialsDisc(_ item: ActivityItem) -> some View {
@@ -207,6 +227,13 @@ struct RecentActivityView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+/// Identifiable wrapper pairing the tape to open with the exact post
+/// to land on — drives the full-screen story player cover.
+private struct ActivityPlayerTarget: Identifiable {
+    let id: UUID
+    let mode: StoryPlayerMode
 }
 
 #Preview {

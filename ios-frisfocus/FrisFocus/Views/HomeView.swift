@@ -66,6 +66,9 @@ struct HomeView: View {
     @State private var undoMessage: String?
     /// The Recent Activity sheet (likes, comments, cheers on me).
     @State private var showActivity: Bool = false
+    /// True while the software keyboard is up — hides the sundial nav
+    /// so it never covers what the person is typing.
+    @State private var keyboardVisible: Bool = false
     /// Auto-dismiss timer for the undo banner.
     @State private var undoDismissTask: Task<Void, Never>?
 
@@ -186,7 +189,19 @@ struct HomeView: View {
                             height: 30
                         )
 
-                        NoteZoneView(isQuickNoteOpen: $isQuickNoteOpen)
+                        NoteZoneView(
+                            isQuickNoteOpen: $isQuickNoteOpen,
+                            onComposerTyping: {
+                                // Keep the line being written visible
+                                // above the keyboard as the note grows.
+                                withAnimation(.easeOut(duration: 0.22)) {
+                                    scrollProxy.scrollTo(
+                                        NoteZoneView.quickNoteAnchorID,
+                                        anchor: .center
+                                    )
+                                }
+                            }
+                        )
                             .id(HomeZone.note.anchorID)
                             .background(zoneTracker(.note))
 
@@ -242,21 +257,25 @@ struct HomeView: View {
                     .padding(.trailing, 4)
                 }
 
-                SundialNavView(
-                    active: .home,
-                    onHomeTap: {
-                        withAnimation(.easeInOut(duration: 0.4)) {
-                            scrollProxy.scrollTo(HomeZone.sun.anchorID, anchor: .top)
-                        }
-                    },
-                    onCirclesTap: {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        showCircles = true
-                    },
-                    circlesBadgeCount: unreadMessages
-                )
-                .ignoresSafeArea(edges: .bottom)
+                if !keyboardVisible {
+                    SundialNavView(
+                        active: .home,
+                        onHomeTap: {
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                scrollProxy.scrollTo(HomeZone.sun.anchorID, anchor: .top)
+                            }
+                        },
+                        onCirclesTap: {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            showCircles = true
+                        },
+                        circlesBadgeCount: unreadMessages
+                    )
+                    .ignoresSafeArea(edges: .bottom)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .observeKeyboard($keyboardVisible)
             .background(Theme.warmWheat)
             // Root page — nothing to go back to, so a left-edge swipe
             // opens the proof camera instead.
@@ -323,10 +342,10 @@ struct HomeView: View {
                         showFriendsFromBanner = true
                     }
 
-                    // Quiet engagement badge — someone liked, commented,
-                    // or cheered since the user last looked. Tap opens
-                    // the Recent Activity sheet.
-                    if store.viewingDay == nil, store.unseenActivityCount > 0 {
+                    // Engagement entry — always reachable. Warm counted
+                    // pill while unseen likes / comments / cheers wait;
+                    // a quiet bell otherwise. Tap opens Recent Activity.
+                    if store.viewingDay == nil {
                         HStack {
                             Spacer()
                             ActivityGlanceChip(count: store.unseenActivityCount) {
@@ -565,22 +584,25 @@ private struct UndoBanner: View {
 
 // MARK: - Activity glance chip
 
-/// Quiet trailing pill on the sun zone — appears only while unseen
-/// likes / comments / cheers are waiting; tapping opens the Recent
-/// Activity sheet.
+/// Trailing pill on the sun zone — the way into Recent Activity.
+/// Warm and counted while unseen likes / comments / cheers wait; a
+/// quiet bell when everything's been seen, so the sheet is always
+/// one tap away.
 private struct ActivityGlanceChip: View {
     let count: Int
     let onTap: () -> Void
 
+    private var hasNew: Bool { count > 0 }
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 7) {
-                Image(systemName: "heart.fill")
+                Image(systemName: hasNew ? "heart.fill" : "bell")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.sunWarm)
-                Text(count == 1 ? "1 new for you" : "\(count) new for you")
+                    .foregroundStyle(hasNew ? Theme.sunWarm : Theme.textPrimary.opacity(0.45))
+                Text(label)
                     .font(.sans(12.5, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                    .foregroundStyle(Theme.textPrimary.opacity(hasNew ? 0.85 : 0.55))
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 8)
@@ -590,13 +612,25 @@ private struct ActivityGlanceChip: View {
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .strokeBorder(Theme.sunWarm.opacity(0.45), lineWidth: 1)
+                    .strokeBorder(
+                        hasNew ? Theme.sunWarm.opacity(0.45) : Theme.textPrimary.opacity(0.14),
+                        lineWidth: 1
+                    )
             )
-            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+            .shadow(color: .black.opacity(hasNew ? 0.12 : 0.06), radius: 8, y: 3)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(count) new likes, comments, or cheers. Tap to view.")
+        .accessibilityLabel(
+            hasNew
+                ? "\(count) new likes, comments, or cheers. Tap to view."
+                : "Recent activity. Tap to view."
+        )
+    }
+
+    private var label: String {
+        guard hasNew else { return "Activity" }
+        return count == 1 ? "1 new for you" : "\(count) new for you"
     }
 }
 

@@ -2280,7 +2280,9 @@ struct CaptureReviewView: View {
             if initialDraftState != nil { CaptureDraftStore.clear() }
 
             // General posts grow the quiet attach invitation — pin the
-            // proof to a journey or note before the editor closes.
+            // proof to a journey or note before the editor closes. The
+            // editor auto-exits after a short confirmation beat; tapping
+            // the attach chip cancels the countdown and keeps it open.
             if case .generalPost = mode, let mediaData {
                 let composed: ComposedProofMedia = mediaType == .video
                     ? .video(mediaData, duration: duration ?? 0)
@@ -2292,7 +2294,7 @@ struct CaptureReviewView: View {
                     sentToast = toast ?? "Posted to your people"
                     attachChipVisible = true
                 }
-                scheduleFinish(after: 3.4)
+                scheduleFinish(after: 1.4)
                 return
             }
 

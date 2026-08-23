@@ -64,6 +64,12 @@ struct StoryPlayerView: View {
     /// Invoked when the user taps the friend identity in the header.
     /// Hosts route this to push the friend's full profile.
     var onShowFriendProfile: ((Friend) -> Void)? = nil
+    /// When set, the player opens on this exact post instead of the
+    /// first segment — used by the Recent Activity sheet so "X liked
+    /// your story" lands on the story that was liked. In `.circle`
+    /// mode the scope widens to the whole journey if the post isn't
+    /// from today.
+    var initialPostId: UUID? = nil
 
     // MARK: - Playback state
 
@@ -289,6 +295,16 @@ struct StoryPlayerView: View {
             tickProgress()
         }
         .onAppear {
+            if let target = initialPostId {
+                if case .circle = mode, !posts.contains(where: { $0.id == target }) {
+                    // The engaged post is older than today — widen to
+                    // the circle's whole tape so it can be found.
+                    circleScope = .whole
+                }
+                if let idx = posts.firstIndex(where: { $0.id == target }) {
+                    currentIndex = idx
+                }
+            }
             markCurrentViewed()
             if posts.isEmpty {
                 // Nothing to watch — close immediately so the user

@@ -12,9 +12,17 @@ import SwiftUI
 import UIKit
 
 struct NoteZoneView: View {
+    /// Scroll anchor on the inline composer — the home page scrolls
+    /// here while the person types so their line stays visible above
+    /// the keyboard.
+    static let quickNoteAnchorID = "quickNoteComposerAnchor"
+
     @Environment(Store.self) private var store
 
     @Binding var isQuickNoteOpen: Bool
+    /// Fired as the person types in the inline composer; the home page
+    /// uses it to keep the composer scrolled into view.
+    var onComposerTyping: (() -> Void)? = nil
 
     @State private var pushLibrary: Bool = false
     @State private var pushExpandedNote: Bool = false
@@ -33,8 +41,10 @@ struct NoteZoneView: View {
                     QuickNoteComposerView(
                         isPresented: $isQuickNoteOpen,
                         draftNoteID: $quickDraftNoteID,
-                        onExpand: expandQuickNote
+                        onExpand: expandQuickNote,
+                        onTyping: onComposerTyping
                     )
+                    .id(Self.quickNoteAnchorID)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
 

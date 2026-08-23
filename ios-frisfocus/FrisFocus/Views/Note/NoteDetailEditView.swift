@@ -82,6 +82,10 @@ struct NoteDetailEditView: View {
     /// the store (it's a one-tap action, not a pending form edit).
     @State private var starPulse: Bool = false
 
+    /// True while the software keyboard is up — slides the sundial
+    /// nav away so it never covers the line being written.
+    @State private var keyboardVisible: Bool = false
+
     var body: some View {
         ZStack(alignment: .bottom) {
             RuledPaperBackground()
@@ -123,14 +127,18 @@ struct NoteDetailEditView: View {
                 .padding(.bottom, 120)
             }
 
-            SundialNavView(
-                active: .subPage,
-                onCaptureTap: { showCaptureSheet = true },
-                onHomeTap: { dismiss() },
-                onCirclesTap: { dismiss() }
-            )
-            .ignoresSafeArea(edges: .bottom)
+            if !keyboardVisible {
+                SundialNavView(
+                    active: .subPage,
+                    onCaptureTap: { showCaptureSheet = true },
+                    onHomeTap: { dismiss() },
+                    onCirclesTap: { dismiss() }
+                )
+                .ignoresSafeArea(edges: .bottom)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .observeKeyboard($keyboardVisible)
         .navigationBarBackButtonHidden(true)
         .edgeSwipeBack()
         .toolbar {

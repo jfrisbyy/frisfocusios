@@ -15,6 +15,9 @@ struct QuickNoteComposerView: View {
     @Binding var isPresented: Bool
     @Binding var draftNoteID: UUID?
     let onExpand: (Note) -> Void
+    /// Fired on every keystroke (and once focus lands) so the host
+    /// page can keep the composer scrolled into view above the keyboard.
+    var onTyping: (() -> Void)? = nil
 
     @State private var noteText: String = ""
     @FocusState private var isFocused: Bool
@@ -53,6 +56,17 @@ struct QuickNoteComposerView: View {
         .shadow(color: Theme.sunWarm.opacity(0.12), radius: 12, y: 4)
         .onChange(of: noteText) { _, _ in
             persistDraft()
+            onTyping?()
+        }
+        .onChange(of: isFocused) { _, focused in
+            // The keyboard just came up — give it a beat to settle,
+            // then bring the composer into view above it.
+            guard focused else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(320))
+                guard isPresented else { return }
+                onTyping?()
+            }
         }
         .onAppear {
             Task { @MainActor in
