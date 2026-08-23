@@ -836,9 +836,12 @@ final class Store {
     }
 
     /// The slices mirrored to the user's account by `SeasonSyncService`.
+    /// Buckets, day templates, and the week schedule ride along — they
+    /// are part of the person's plan and must survive a reinstall too.
     static let seasonSyncedKeys: Set<DataKey> = [
         .season, .pastSeasons, .archivedSeasons, .tasks, .todos, .logEntries,
-        .boosters, .habitTrains, .avoidanceItems, .avoidanceOccurrences
+        .boosters, .habitTrains, .avoidanceItems, .avoidanceOccurrences,
+        .buckets, .dayTemplates, .scheduleConfig
     ]
 
     /// Write every dirty collection now. Called by the debounce, and as

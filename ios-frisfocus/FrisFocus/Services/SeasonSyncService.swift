@@ -37,6 +37,13 @@ private nonisolated struct SeasonSyncRow: Codable, Sendable {
     }
 }
 
+/// Combined wire payload for the week-schedule slice: template
+/// assignments and day swaps travel together under one slice key.
+private struct SchedulePayload: Codable {
+    let assignments: [WeekTemplateAssignment]
+    let swaps: [DaySwapRecord]
+}
+
 /// One captured known-good state of a slice, kept on-device as a
 /// last-resort fallback if both the live copy and the cloud are wiped.
 private nonisolated struct SnapshotEntry: Codable, Sendable {
@@ -96,11 +103,18 @@ final class SeasonSyncService {
     @ObservationIgnored private var cloudNonEmptySlices: Set<String> = []
 
     private enum Keys {
-        static let pendingSlices = "seasonSync.pendingSlices"
-        static let localStamps = "seasonSync.localStamps"
-        static let uploadedMedia = "seasonSync.uploadedMedia"
-        static let snapshots = "seasonSync.snapshots"
-        static func initialPush(_ userId: String) -> String { "seasonSync.initialPush.\(userId)" }
+        // Per-account state so two sign-ins on one device never share
+        // stamps, queues, or snapshots.
+        static func pendingSlices(_ userId: String) -> String { "seasonSync.pendingSlices.\(userId)" }
+        static func localStamps(_ userId: String) -> String { "seasonSync.localStamps.\(userId)" }
+        static func uploadedMedia(_ userId: String) -> String { "seasonSync.uploadedMedia.\(userId)" }
+        static func snapshots(_ userId: String) -> String { "seasonSync.snapshots.\(userId)" }
+        // Pre-namespacing keys — adopted once by the first account that
+        // loads them (the device owner), then removed.
+        static let legacyPendingSlices = "seasonSync.pendingSlices"
+        static let legacyLocalStamps = "seasonSync.localStamps"
+        static let legacyUploadedMedia = "seasonSync.uploadedMedia"
+        static let legacySnapshots = "seasonSync.snapshots"
     }
 
     /// Max snapshots retained per slice.
@@ -119,13 +133,17 @@ final class SeasonSyncService {
         case .habitTrains: return "habitTrains"
         case .avoidanceItems: return "avoidanceItems"
         case .avoidanceOccurrences: return "avoidanceOccurrences"
+        case .buckets: return "buckets"
+        case .dayTemplates: return "dayTemplates"
+        case .scheduleConfig: return "scheduleConfig"
         default: return nil
         }
     }
 
     private static let allSlices = [
         "season", "pastSeasons", "archivedSeasons", "tasks", "todos", "logEntries",
-        "boosters", "habitTrains", "avoidanceItems", "avoidanceOccurrences"
+        "boosters", "habitTrains", "avoidanceItems", "avoidanceOccurrences",
+        "buckets", "dayTemplates", "scheduleConfig"
     ]
 
     /// Slices whose content feeds the public season card on the
@@ -140,10 +158,7 @@ final class SeasonSyncService {
         self.myUserId = myUserId
         self.store = store
         store.seasonSync = self
-        loadState()
-
-        let defaults = UserDefaults.standard
-        let isFirstSync = !defaults.bool(forKey: Keys.initialPush(myUserId))
+        loadState(for: myUserId)
 
         // Startup guarantee: reach and finish restoring from the cloud
         // backup before we are ever allowed to upload. Retries on
@@ -163,21 +178,10 @@ final class SeasonSyncService {
         // snapshots so it can be reactivated like any other past season.
         recoverReplacedSeasonsIntoArchive()
 
-        // First sync for this account on this install: queue only the
-        // slices that actually have content so a real local season
-        // migrates up. Empty slices are never queued — an empty starting
-        // slate must never win over (or overwrite) the cloud backup we
-        // just restored.
-        if isFirstSync {
-            let now = Date()
-            for slice in Self.allSlices where !sliceIsEmpty(slice) {
-                pendingSlices.insert(slice)
-                if localStamps[slice] == nil { localStamps[slice] = now }
-            }
-            persistState()
-            defaults.set(true, forKey: Keys.initialPush(myUserId))
-        }
-
+        // Stranded-content reconciliation happens inside every successful
+        // pull (`queueStrandedLocalContent`), so a season built while
+        // signed out, offline, or before sync existed always migrates up
+        // — on every launch, not just the first sync of an install.
         await flushNow()
         // Make sure friends see the freshest season card even when no
         // slice needed flushing this launch.
@@ -190,6 +194,7 @@ final class SeasonSyncService {
         flushDebounce?.cancel()
         flushDebounce = nil
         myUserId = nil
+        restoreConfirmed = false
     }
 
     // MARK: Up-sync hook (called by Store.flushPendingSaves)
@@ -236,8 +241,29 @@ final class SeasonSyncService {
         case "habitTrains": return store.habitTrains.isEmpty
         case "avoidanceItems": return store.avoidanceItems.isEmpty
         case "avoidanceOccurrences": return store.avoidanceOccurrences.isEmpty
+        case "buckets": return store.buckets.isEmpty
+        case "dayTemplates": return store.dayTemplates.isEmpty
+        case "scheduleConfig": return store.weekTemplateAssignments.isEmpty && store.daySwaps.isEmpty
         default: return true
         }
+    }
+
+    /// Queue every slice that holds real local content while the cloud
+    /// copy is empty or missing. Runs after every successful pull — not
+    /// just an install's first sync — so a season, board, or history
+    /// created while signed out, offline, or before sync existed always
+    /// migrates up to the account.
+    private func queueStrandedLocalContent() {
+        var queued: [String] = []
+        for slice in Self.allSlices
+        where !sliceIsEmpty(slice) && !cloudNonEmptySlices.contains(slice) && !pendingSlices.contains(slice) {
+            pendingSlices.insert(slice)
+            localStamps[slice] = Date()
+            queued.append(slice)
+        }
+        guard !queued.isEmpty else { return }
+        persistState()
+        print("[SeasonSync] queued stranded local content: \(queued.joined(separator: ", "))")
     }
 
     /// Fetch the remote season and apply any slice whose remote stamp
@@ -257,21 +283,31 @@ final class SeasonSyncService {
 
             print("[SeasonSync] pull for user=\(myUserId): \(rows.count) row(s)")
             var appliedSeason = false
-            cloudNonEmptySlices = []
+            var nonEmpty: Set<String> = []
             for row in rows {
                 let remoteStamp = SyncDates.parse(row.updatedAt)
                 let localStamp = localStamps[row.sliceKey] ?? .distantPast
-                let remoteEmpty = remotePayloadIsEmpty(slice: row.sliceKey, payload: row.payload)
+                let remoteState = remotePayloadState(slice: row.sliceKey, payload: row.payload)
                 let localEmpty = sliceIsEmpty(row.sliceKey)
-                if !remoteEmpty { cloudNonEmptySlices.insert(row.sliceKey) }
-                print("[SeasonSync] slice=\(row.sliceKey) bytes=\(row.payload.utf8.count) remoteEmpty=\(remoteEmpty) localEmpty=\(localEmpty) remoteStamp=\(row.updatedAt) localStamp=\(localStamp)")
+                // Anything not PROVABLY empty is protected content. A
+                // payload this build can't decode (written by a newer or
+                // older model) must never count as blank — that would let
+                // an empty local slice overwrite real data.
+                if remoteState != .empty { nonEmpty.insert(row.sliceKey) }
+                print("[SeasonSync] slice=\(row.sliceKey) bytes=\(row.payload.utf8.count) remote=\(remoteState.rawValue) localEmpty=\(localEmpty) remoteStamp=\(row.updatedAt) localStamp=\(localStamp)")
 
-                // Empty never wins: apply the cloud copy when it is newer
-                // by stamp, OR whenever the local slice is empty and the
-                // cloud still holds real content — so a stale local stamp
-                // (left by an earlier build that marked empty data as
-                // "changed now") can never block restoring real data.
-                let shouldApply = (remoteStamp > localStamp) || (localEmpty && !remoteEmpty)
+                // An unreadable payload is never applied — a corrupt or
+                // future-model row must not nuke local data.
+                guard remoteState != .undecodable else { continue }
+
+                // Content always wins, emptiness never travels: a real
+                // cloud copy applies when newer by stamp, or whenever the
+                // local slice is empty (a stale local stamp can never
+                // block restoring real data). An EMPTY cloud copy is never
+                // applied over local content, no matter its stamp — so a
+                // blanked backup can't wipe a device that still holds the
+                // real season.
+                let shouldApply = remoteState == .content && ((remoteStamp > localStamp) || localEmpty)
                 guard shouldApply else { continue }
 
                 suppressedSlices.insert(row.sliceKey)
@@ -291,6 +327,7 @@ final class SeasonSyncService {
                     print("[SeasonSync] applied slice=\(row.sliceKey)")
                 }
             }
+            cloudNonEmptySlices = nonEmpty
             persistState()
 
             // Media already in the bucket needs no re-upload; fetch
@@ -304,6 +341,9 @@ final class SeasonSyncService {
             }
             // Cloud reached and applied — the upload gate may open.
             restoreConfirmed = true
+            // Self-healing pass: push up anything real that the cloud is
+            // missing, every launch.
+            queueStrandedLocalContent()
             return true
         } catch {
             print("[SeasonSync] pull failed: \(error)")
@@ -311,27 +351,38 @@ final class SeasonSyncService {
         }
     }
 
-    /// Whether a decoded remote payload holds no real user data — the
-    /// mirror of `sliceIsEmpty` but for an inbound cloud row. A payload
-    /// that fails to decode is treated as empty so it never blocks a
-    /// real local copy.
-    private func remotePayloadIsEmpty(slice: String, payload: String) -> Bool {
-        guard let data = payload.data(using: .utf8) else { return true }
+    /// What an inbound cloud payload holds — the mirror of
+    /// `sliceIsEmpty` but for a remote row. `.undecodable` is distinct
+    /// from `.empty` on purpose: a row this build can't read is treated
+    /// as protected content (never overwritten by empties), not blank.
+    private enum RemotePayloadState: String { case content, empty, undecodable }
+
+    private func remotePayloadState(slice: String, payload: String) -> RemotePayloadState {
+        guard let data = payload.data(using: .utf8) else { return .undecodable }
         let d = JSONDecoder()
+        func arrayState<T: Decodable>(_ type: T.Type) -> RemotePayloadState {
+            guard let v = try? d.decode([T].self, from: data) else { return .undecodable }
+            return v.isEmpty ? .empty : .content
+        }
         switch slice {
         case "season":
-            guard let v = try? d.decode(Season.self, from: data) else { return true }
-            return v.categories.isEmpty && v.milestones.isEmpty
-        case "pastSeasons": return (try? d.decode([PastSeasonSummary].self, from: data))?.isEmpty ?? true
-        case "archivedSeasons": return (try? d.decode([SeasonArchive].self, from: data))?.isEmpty ?? true
-        case "tasks": return (try? d.decode([FFTask].self, from: data))?.isEmpty ?? true
-        case "todos": return (try? d.decode([Todo].self, from: data))?.isEmpty ?? true
-        case "logEntries": return (try? d.decode([LogEntry].self, from: data))?.isEmpty ?? true
-        case "boosters": return (try? d.decode([WeeklyBooster].self, from: data))?.isEmpty ?? true
-        case "habitTrains": return (try? d.decode([HabitTrain].self, from: data))?.isEmpty ?? true
-        case "avoidanceItems": return (try? d.decode([AvoidanceItem].self, from: data))?.isEmpty ?? true
-        case "avoidanceOccurrences": return (try? d.decode([AvoidanceOccurrence].self, from: data))?.isEmpty ?? true
-        default: return true
+            guard let v = try? d.decode(Season.self, from: data) else { return .undecodable }
+            return (v.categories.isEmpty && v.milestones.isEmpty) ? .empty : .content
+        case "pastSeasons": return arrayState(PastSeasonSummary.self)
+        case "archivedSeasons": return arrayState(SeasonArchive.self)
+        case "tasks": return arrayState(FFTask.self)
+        case "todos": return arrayState(Todo.self)
+        case "logEntries": return arrayState(LogEntry.self)
+        case "boosters": return arrayState(WeeklyBooster.self)
+        case "habitTrains": return arrayState(HabitTrain.self)
+        case "avoidanceItems": return arrayState(AvoidanceItem.self)
+        case "avoidanceOccurrences": return arrayState(AvoidanceOccurrence.self)
+        case "buckets": return arrayState(Bucket.self)
+        case "dayTemplates": return arrayState(DayTemplate.self)
+        case "scheduleConfig":
+            guard let v = try? d.decode(SchedulePayload.self, from: data) else { return .undecodable }
+            return (v.assignments.isEmpty && v.swaps.isEmpty) ? .empty : .content
+        default: return .undecodable
         }
     }
 
@@ -371,6 +422,16 @@ final class SeasonSyncService {
         case "avoidanceOccurrences":
             guard let value = try? decoder.decode([AvoidanceOccurrence].self, from: data) else { return false }
             store.avoidanceOccurrences = value
+        case "buckets":
+            guard let value = try? decoder.decode([Bucket].self, from: data) else { return false }
+            store.buckets = value
+        case "dayTemplates":
+            guard let value = try? decoder.decode([DayTemplate].self, from: data) else { return false }
+            store.dayTemplates = value
+        case "scheduleConfig":
+            guard let value = try? decoder.decode(SchedulePayload.self, from: data) else { return false }
+            store.weekTemplateAssignments = value.assignments
+            store.daySwaps = value.swaps
         default:
             return false
         }
@@ -396,6 +457,13 @@ final class SeasonSyncService {
         case "habitTrains": return encode(store.habitTrains)
         case "avoidanceItems": return encode(store.avoidanceItems)
         case "avoidanceOccurrences": return encode(store.avoidanceOccurrences)
+        case "buckets": return encode(store.buckets)
+        case "dayTemplates": return encode(store.dayTemplates)
+        case "scheduleConfig":
+            return encode(SchedulePayload(
+                assignments: store.weekTemplateAssignments,
+                swaps: store.daySwaps
+            ))
         default: return nil
         }
     }
@@ -446,8 +514,11 @@ final class SeasonSyncService {
                 pendingSlices.remove(slice)
                 continue
             }
+            let stamp = localStamps[slice] ?? Date()
+            // Device-side recovery copy BEFORE the network attempt, so
+            // content whose upload fails is still snapshotted locally.
+            captureSnapshot(slice: slice, payload: payload, stamp: stamp)
             do {
-                let stamp = localStamps[slice] ?? Date()
                 try await supabase.from("season_sync").upsert(SeasonSyncRow(
                     userId: myUserId,
                     sliceKey: slice,
@@ -455,7 +526,6 @@ final class SeasonSyncService {
                     updatedAt: SyncDates.iso(stamp)
                 ), onConflict: "user_id,slice_key").execute()
                 pendingSlices.remove(slice)
-                captureSnapshot(slice: slice, payload: payload, stamp: stamp)
             } catch {
                 print("[SeasonSync] upsert failed for \(slice): \(error)")
             }
@@ -731,33 +801,58 @@ final class SeasonSyncService {
 
     // MARK: State persistence
 
-    private func loadState() {
+    private func loadState(for userId: String) {
+        // Fresh in-memory slate first — an account switch must never
+        // inherit the previous account's queues, stamps, or snapshots.
+        pendingSlices = []
+        localStamps = [:]
+        uploadedMedia = []
+        snapshots = [:]
+        cloudNonEmptySlices = []
+        restoreConfirmed = false
+
         let defaults = UserDefaults.standard
         let decoder = JSONDecoder()
-        if let data = defaults.data(forKey: Keys.pendingSlices),
+
+        // One-time adoption of pre-namespacing state by the first account
+        // that loads it (the device owner), then removed so a second
+        // account on this device can never inherit it.
+        func adoptLegacy(_ legacyKey: String, into key: String) {
+            guard defaults.data(forKey: key) == nil,
+                  let legacy = defaults.data(forKey: legacyKey) else { return }
+            defaults.set(legacy, forKey: key)
+            defaults.removeObject(forKey: legacyKey)
+        }
+        adoptLegacy(Keys.legacyPendingSlices, into: Keys.pendingSlices(userId))
+        adoptLegacy(Keys.legacyLocalStamps, into: Keys.localStamps(userId))
+        adoptLegacy(Keys.legacyUploadedMedia, into: Keys.uploadedMedia(userId))
+        adoptLegacy(Keys.legacySnapshots, into: Keys.snapshots(userId))
+
+        if let data = defaults.data(forKey: Keys.pendingSlices(userId)),
            let slices = try? decoder.decode([String].self, from: data) {
             pendingSlices = Set(slices)
         }
-        if let data = defaults.data(forKey: Keys.localStamps),
+        if let data = defaults.data(forKey: Keys.localStamps(userId)),
            let stamps = try? decoder.decode([String: Date].self, from: data) {
             localStamps = stamps
         }
-        if let data = defaults.data(forKey: Keys.uploadedMedia),
+        if let data = defaults.data(forKey: Keys.uploadedMedia(userId)),
            let names = try? decoder.decode([String].self, from: data) {
             uploadedMedia = Set(names)
         }
-        if let data = defaults.data(forKey: Keys.snapshots),
+        if let data = defaults.data(forKey: Keys.snapshots(userId)),
            let snaps = try? decoder.decode([String: [SnapshotEntry]].self, from: data) {
             snapshots = snaps
         }
     }
 
     private func persistState() {
+        guard let myUserId else { return }
         let defaults = UserDefaults.standard
         let encoder = JSONEncoder()
-        defaults.set(try? encoder.encode(Array(pendingSlices)), forKey: Keys.pendingSlices)
-        defaults.set(try? encoder.encode(localStamps), forKey: Keys.localStamps)
-        defaults.set(try? encoder.encode(Array(uploadedMedia)), forKey: Keys.uploadedMedia)
-        defaults.set(try? encoder.encode(snapshots), forKey: Keys.snapshots)
+        defaults.set(try? encoder.encode(Array(pendingSlices)), forKey: Keys.pendingSlices(myUserId))
+        defaults.set(try? encoder.encode(localStamps), forKey: Keys.localStamps(myUserId))
+        defaults.set(try? encoder.encode(Array(uploadedMedia)), forKey: Keys.uploadedMedia(myUserId))
+        defaults.set(try? encoder.encode(snapshots), forKey: Keys.snapshots(myUserId))
     }
 }
