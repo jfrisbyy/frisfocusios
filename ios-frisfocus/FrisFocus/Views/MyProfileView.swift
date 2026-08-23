@@ -2,12 +2,13 @@
 //  MyProfileView.swift
 //  FrisFocus
 //
-//  The user's own profile — the mirror. A full-bleed identity header
-//  with the sun-ring avatar (its ring is today's sun), the merged
-//  status slot, the day block (sun + qualitative line + seven-sun
-//  horizon), the checked-first category boxes, and the record below.
-//  Self and friend views share this exact layout; only the action row
-//  differs (Edit profile + customize here).
+//  The user's own profile — the mirror. A stretchy full-bleed hero
+//  photo, a floating identity card anchored over its bottom edge (the
+//  sun-ring avatar, name, status, season, and actions in ONE block),
+//  the day card, the single today board, and the record below as
+//  matching cards. A collapsing top bar carries the name once the
+//  card scrolls away. Self and friend views share this exact system;
+//  only the card's action slot differs (Edit profile + customize here).
 //
 //  Hard rule: NO denominators, fractions, or point values anywhere on
 //  this page — only completions, sun language, and qualitative copy.
@@ -33,6 +34,9 @@ struct MyProfileView: View {
     @State private var showMoodEditor: Bool = false
     @State private var moodDraft: String = ""
     @State private var dayRef: DayRef?
+
+    /// Live scroll offset — drives the collapsing top bar.
+    @State private var scrollOffset: CGFloat = 0
 
     /// Zoom-transition namespace — the story player grows out of the
     /// avatar and shrinks back into it on dismiss.
@@ -111,8 +115,16 @@ struct MyProfileView: View {
 
     private var weekday: String { Date().formatted(.dateTime.weekday(.wide)) }
 
-    /// Redline: header photo is 38% of screen height.
-    private var headerHeight: CGFloat { UIScreen.main.bounds.height * 0.38 }
+    /// Redline: hero photo is 34% of screen height; the identity card
+    /// overlaps its bottom edge by `heroOverlap`.
+    private var headerHeight: CGFloat { UIScreen.main.bounds.height * 0.34 }
+    private let heroOverlap: CGFloat = 58
+
+    /// 0 over the photo → 1 once the card's name slides under the bar.
+    private var collapseProgress: Double {
+        let start = headerHeight - 170
+        return Double(min(1, max(0, (scrollOffset - start) / 70)))
+    }
 
     /// The real all-time counter — omitted entirely when it would
     /// read "0 days shown up".
@@ -127,18 +139,22 @@ struct MyProfileView: View {
         ZStack(alignment: .bottom) {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    header
+                    MirrorHeroHeader(
+                        headerURL: headerPhotoURL,
+                        accent: accent,
+                        strength: 0.15 + 0.85 * min(1, todayRatio),
+                        height: headerHeight
+                    )
 
-                    // Row center ≈ header bottom edge (44pt pill → -22).
-                    actionRow
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .offset(y: -22)
-                        .padding(.bottom, -22)
+                    identityCard
+                        .padding(.horizontal, 16)
+                        .offset(y: -heroOverlap)
+                        .padding(.bottom, -heroOverlap)
                         .zIndex(1)
 
                     bodyContent
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 16)
+                        .padding(.top, 20)
 
                     Color.clear.frame(height: 130)
                 }
@@ -146,6 +162,11 @@ struct MyProfileView: View {
             }
             .background(Theme.warmWheat)
             .ignoresSafeArea(edges: .top)
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y
+            } action: { _, offset in
+                scrollOffset = offset
+            }
 
             SundialNavView(
                 active: .subPage,
@@ -161,6 +182,7 @@ struct MyProfileView: View {
             )
             .ignoresSafeArea(edges: .bottom)
         }
+        .overlay(alignment: .top) { topBar }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .edgeSwipeBack()
@@ -224,53 +246,103 @@ struct MyProfileView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Top bar
 
-    private var header: some View {
-        ZStack(alignment: .bottomLeading) {
-            MirrorHeaderBackground(
-                headerURL: headerPhotoURL,
-                accent: accent,
-                strength: 0.15 + 0.85 * min(1, todayRatio)
-            )
-
-            // 14pt avatar→name gap keeps the name block clear of the
-            // halo (name starts at x = 22 + 86 + 14 = 122).
-            HStack(alignment: .center, spacing: 14) {
-                avatarButton
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(displayName)
-                        .font(.serif(26, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 1)
-                    MirrorHandleLine(handle: handle, daysShownUp: daysShownUp)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, Theme.pageHorizontalPadding)
-            .padding(.bottom, 54)
-        }
-        .frame(height: headerHeight)
-        .clipped()
-        .overlay(alignment: .top) {
-            topControls
-                .padding(.top, 58)
-                .padding(.horizontal, Theme.pageHorizontalPadding)
-        }
-    }
-
-    private var topControls: some View {
-        HStack {
+    private var topBar: some View {
+        MirrorTopBar(title: displayName, progress: collapseProgress) {
             MirrorGlassControl(icon: "xmark", label: "Close your profile") {
                 dismiss()
             }
-            Spacer()
-            MirrorGlassControl(icon: "sun.max.fill", label: "Account and settings") {
-                showAccount = true
+        } trailing: {
+            HStack(spacing: 8) {
+                seenAsMenu
+                MirrorGlassControl(icon: "sun.max.fill", label: "Account and settings") {
+                    showAccount = true
+                }
             }
         }
+    }
+
+    /// The tier-preview control — an eye in the glass cluster that
+    /// previews the page exactly as Quiet / Open / Full friends see it.
+    /// A warm dot marks an active non-full preview.
+    private var seenAsMenu: some View {
+        Menu {
+            Section("See your page as friends do") {
+                ForEach(VisibilityTier.allCases, id: \.self) { t in
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        withAnimation(.easeInOut(duration: 0.25)) { previewTier = t }
+                    } label: {
+                        Label(tierName(t), systemImage: previewTier == t ? "checkmark" : "eye")
+                    }
+                }
+            }
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "eye")
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+                    .frame(width: 38, height: 38)
+                    .background(
+                        ZStack {
+                            Circle().fill(.ultraThinMaterial).environment(\.colorScheme, .dark)
+                            Circle().fill(Color.black.opacity(0.32))
+                        }
+                    )
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.8))
+                if previewTier != .full {
+                    Circle()
+                        .fill(Theme.sunOuter)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
+                        .offset(x: -1, y: 1)
+                }
+            }
+            .contentShape(Circle())
+        }
+        .accessibilityLabel("Preview how friends see you. Currently \(tierName(previewTier)).")
+    }
+
+    private func tierName(_ t: VisibilityTier) -> String {
+        switch t {
+        case .quiet: return "Quiet"
+        case .open: return "Open"
+        case .full: return "Full"
+        }
+    }
+
+    // MARK: - Identity card (self)
+
+    private var identityCard: some View {
+        MirrorIdentityCard(
+            name: displayName,
+            handle: handle,
+            daysShownUp: daysShownUp,
+            statusText: statusText,
+            statusEditable: true,
+            onStatusEdit: {
+                moodDraft = store.currentSeason.moodLine ?? ""
+                showMoodEditor = true
+            },
+            avatar: { avatarButton },
+            meta: {
+                HStack(spacing: 7) {
+                    MirrorSeasonPill(seasonName: seasonName, dayNumber: store.currentSeasonDay, accent: accent)
+                    Spacer(minLength: 0)
+                }
+            },
+            actions: {
+                HStack(spacing: 9) {
+                    MirrorPrimaryPill(title: "Edit profile") {
+                        showEditProfile = true
+                    }
+                    MirrorActionCircle(icon: "paintbrush.fill", label: "Design your header") {
+                        showHeaderStudio = true
+                    }
+                }
+            }
+        )
     }
 
     private var avatarButton: some View {
@@ -280,7 +352,7 @@ struct MyProfileView: View {
         } label: {
             SunRingAvatar(
                 ratio: ringRatio,
-                diameter: 86,
+                diameter: 78,
                 photoURL: photoURL,
                 initials: initials,
                 fillColor: Theme.textPrimary,
@@ -319,24 +391,13 @@ struct MyProfileView: View {
         .accessibilityLabel("Change your profile photo")
     }
 
-    // MARK: - Action row (self)
-
-    private var actionRow: some View {
-        HStack(spacing: 9) {
-            MirrorPrimaryPill(title: "Edit profile") {
-                showEditProfile = true
-            }
-            MirrorActionCircle(icon: "paintbrush.fill", label: "Design your header") {
-                showHeaderStudio = true
-            }
-        }
-    }
-
     // MARK: - Body content
 
     private var bodyContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            statusSlot
+        VStack(alignment: .leading, spacing: 22) {
+            if previewTier != .full {
+                previewingNote
+            }
 
             if previewTier != .quiet {
                 MirrorDayBlock(
@@ -348,7 +409,9 @@ struct MyProfileView: View {
                     onTapDay: openDay
                 )
 
-                categoriesBlock
+                if !categorySections.isEmpty {
+                    MirrorTodayBoard(sections: categorySections, showsRows: previewTier == .full)
+                }
             } else {
                 quietNote
             }
@@ -357,20 +420,33 @@ struct MyProfileView: View {
         }
     }
 
-    // MARK: Status + season + seen-as
-
-    private var statusSlot: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            MirrorStatusLine(text: statusText, editable: true) {
-                moodDraft = store.currentSeason.moodLine ?? ""
-                showMoodEditor = true
-            }
-            HStack(spacing: 7) {
-                MirrorSeasonPill(seasonName: seasonName, dayNumber: store.currentSeasonDay, accent: accent)
-                SeenAsChip(tier: $previewTier)
+    /// The one-line banner while previewing a reduced tier — tap to
+    /// return to your full page.
+    private var previewingNote: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeInOut(duration: 0.25)) { previewTier = .full }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "eye")
+                    .font(.sans(11, weight: .semibold))
+                Text("Previewing the \(tierName(previewTier)) view — what those friends see. Tap to show everything.")
+                    .font(.sans(12, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
             }
+            .foregroundStyle(Theme.sunShadow)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Theme.sunWarm.opacity(0.18))
+            )
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Previewing the \(tierName(previewTier)) view. Tap to show your full page.")
     }
 
     private var quietNote: some View {
@@ -382,18 +458,6 @@ struct MyProfileView: View {
     }
 
     // MARK: Categories
-
-    private var categoriesBlock: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(categorySections, id: \.0) { pair in
-                MirrorCategorySection(
-                    category: pair.0,
-                    rows: pair.1,
-                    showsBox: previewTier == .full
-                )
-            }
-        }
-    }
 
     /// Today's tasks grouped by category, preserving first-appearance
     /// order, rows sorted checked-first.
@@ -413,23 +477,40 @@ struct MyProfileView: View {
     // MARK: Record below
 
     private var recordBelow: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 22) {
             if previewTier == .full {
-                JournalHairline().padding(.vertical, 18)
                 pointsPrivacyRow
             }
 
             if previewTier != .quiet, !store.mySeasonCard.milestones.isEmpty {
-                JournalHairline().padding(.vertical, 18)
-                destinationsSection
+                MirrorSectionCard(label: "THE SEASON’S DESTINATIONS") {
+                    DestinationsTimeline(
+                        milestones: store.mySeasonCard.milestones,
+                        accent: accent,
+                        seasonStart: store.currentSeason.startDate
+                    )
+                }
             }
 
-            JournalHairline().padding(.vertical, 18)
-            cheersRow
-
-            JournalHairline().padding(.vertical, 18)
-            activityRow
+            HStack(alignment: .top, spacing: 10) {
+                MirrorRecordTile(
+                    icon: "hands.clap.fill",
+                    title: "Cheers",
+                    subtitle: "Every word that found you"
+                ) {
+                    showCheers = true
+                }
+                MirrorRecordTile(
+                    icon: "heart.text.square.fill",
+                    title: "Activity",
+                    subtitle: "Likes, comments, cheers",
+                    badge: store.unseenActivityCount > 0
+                ) {
+                    showActivity = true
+                }
+            }
         }
+        .padding(.top, 2)
     }
 
     private var pointsPrivacyRow: some View {
@@ -443,78 +524,6 @@ struct MyProfileView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-    }
-
-    private var destinationsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            JournalSectionHeader(label: "THE SEASON’S DESTINATIONS")
-            DestinationsTimeline(
-                milestones: store.mySeasonCard.milestones,
-                accent: accent,
-                seasonStart: store.currentSeason.startDate
-            )
-        }
-    }
-
-    private var cheersRow: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showCheers = true
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "hands.clap.fill")
-                    .font(.sans(15, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Cheers")
-                        .font(.sans(15, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("Every word that found you")
-                        .font(.serifItalic(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                }
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
-                    .font(.sans(12, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("View all cheers you’ve received and sent")
-    }
-
-    private var activityRow: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showActivity = true
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "heart.text.square.fill")
-                    .font(.sans(15, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Recent activity")
-                        .font(.sans(15, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("Likes, comments, and cheers on you")
-                        .font(.serifItalic(12, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                }
-                Spacer(minLength: 4)
-                if store.unseenActivityCount > 0 {
-                    Circle()
-                        .fill(Theme.sunWarm)
-                        .frame(width: 8, height: 8)
-                }
-                Image(systemName: "chevron.right")
-                    .font(.sans(12, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("View recent likes, comments, and cheers")
     }
 
     // MARK: - Actions

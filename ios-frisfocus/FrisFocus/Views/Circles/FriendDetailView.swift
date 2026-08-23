@@ -135,8 +135,19 @@ struct FriendDetailView: View {
         return days
     }
     private var weekday: String { Date().formatted(.dateTime.weekday(.wide)) }
-    /// Redline: header photo is 38% of screen height.
-    private var headerHeight: CGFloat { UIScreen.main.bounds.height * 0.38 }
+    /// Redline: hero photo is 34% of screen height; the identity card
+    /// overlaps its bottom edge by `heroOverlap`.
+    private var headerHeight: CGFloat { UIScreen.main.bounds.height * 0.34 }
+    private let heroOverlap: CGFloat = 58
+
+    /// Live scroll offset — drives the collapsing top bar.
+    @State private var scrollOffset: CGFloat = 0
+
+    /// 0 over the photo → 1 once the card's name slides under the bar.
+    private var collapseProgress: Double {
+        let start = headerHeight - 170
+        return Double(min(1, max(0, (scrollOffset - start) / 70)))
+    }
 
     // MARK: - Body
 
@@ -144,18 +155,22 @@ struct FriendDetailView: View {
         ZStack(alignment: .bottom) {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    header
+                    MirrorHeroHeader(
+                        headerURL: headerPhotoURL,
+                        accent: accent,
+                        strength: tier == .quiet ? 0.5 : (0.15 + 0.85 * min(1, ringRatio)),
+                        height: headerHeight
+                    )
 
-                    // Row center ≈ header bottom edge (44pt pill → -22).
-                    actionRow
-                        .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .offset(y: -22)
-                        .padding(.bottom, -22)
+                    identityCard
+                        .padding(.horizontal, 16)
+                        .offset(y: -heroOverlap)
+                        .padding(.bottom, -heroOverlap)
                         .zIndex(1)
 
                     journalBody
                         .padding(.horizontal, Theme.pageHorizontalPadding)
-                        .padding(.top, 16)
+                        .padding(.top, 20)
 
                     Color.clear.frame(height: 130)
                 }
@@ -163,6 +178,11 @@ struct FriendDetailView: View {
             }
             .background(Theme.warmWheat)
             .ignoresSafeArea(edges: .top)
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y
+            } action: { _, offset in
+                scrollOffset = offset
+            }
 
             SundialNavView(
                 active: .subPage,
@@ -178,6 +198,7 @@ struct FriendDetailView: View {
             )
             .ignoresSafeArea(edges: .bottom)
         }
+        .overlay(alignment: .top) { topBar }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .edgeSwipeBack()
@@ -332,49 +353,14 @@ struct FriendDetailView: View {
         dismiss()
     }
 
-    // MARK: - Header
+    // MARK: - Top bar
 
-    private var header: some View {
-        ZStack(alignment: .bottomLeading) {
-            MirrorHeaderBackground(
-                headerURL: headerPhotoURL,
-                accent: accent,
-                strength: tier == .quiet ? 0.5 : (0.15 + 0.85 * min(1, ringRatio))
-            )
-
-            // 14pt avatar→name gap keeps the name block clear of the
-            // halo (name starts at x = 22 + 86 + 14 = 122).
-            HStack(alignment: .center, spacing: 14) {
-                avatarButton
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(friend.displayName)
-                        .font(.serif(26, weight: .medium))
-                        .foregroundStyle(Theme.textCream)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 1)
-                    MirrorHandleLine(handle: handle, daysShownUp: daysShownUp)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, Theme.pageHorizontalPadding)
-            .padding(.bottom, 54)
-        }
-        .frame(height: headerHeight)
-        .clipped()
-        .overlay(alignment: .top) {
-            topControls
-                .padding(.top, 58)
-                .padding(.horizontal, Theme.pageHorizontalPadding)
-        }
-    }
-
-    private var topControls: some View {
-        HStack {
+    private var topBar: some View {
+        MirrorTopBar(title: friend.displayName, progress: collapseProgress) {
             MirrorGlassControl(icon: "chevron.left", label: "Back to Friends") {
                 dismiss()
             }
-            Spacer()
+        } trailing: {
             Menu {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -427,7 +413,7 @@ struct FriendDetailView: View {
         } label: {
             SunRingAvatar(
                 ratio: ringRatio,
-                diameter: 86,
+                diameter: 78,
                 photoURL: friend.avatarURL,
                 initials: friend.initials,
                 fillColor: accent,
@@ -444,7 +430,32 @@ struct FriendDetailView: View {
         .accessibilityLabel(hasUnviewedStories ? "\(friend.displayName), new story" : friend.displayName)
     }
 
-    // MARK: - Action row (friend)
+    // MARK: - Identity card (friend)
+
+    private var identityCard: some View {
+        MirrorIdentityCard(
+            name: friend.displayName,
+            handle: handle,
+            daysShownUp: daysShownUp,
+            statusText: statusText,
+            avatar: { avatarButton },
+            meta: {
+                VStack(alignment: .leading, spacing: 9) {
+                    if let name = shortSeasonName {
+                        MirrorSeasonPill(
+                            seasonName: name,
+                            dayNumber: publishedCard?.currentDay ?? friend.currentSeasonDay,
+                            accent: accent
+                        )
+                    }
+                    if !mutuals.isEmpty {
+                        mutualsButton
+                    }
+                }
+            },
+            actions: { actionRow }
+        )
+    }
 
     private var actionRow: some View {
         HStack(spacing: 9) {
@@ -497,9 +508,7 @@ struct FriendDetailView: View {
     // MARK: - Journal body
 
     private var journalBody: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            statusSlot
-
+        VStack(alignment: .leading, spacing: 22) {
             if tier != .quiet {
                 MirrorDayBlock(
                     ratio: ringRatio,
@@ -510,7 +519,9 @@ struct FriendDetailView: View {
                     onTapDay: openDay
                 )
 
-                categoriesBlock
+                if !categorySections.isEmpty {
+                    MirrorTodayBoard(sections: categorySections, showsRows: tier == .full)
+                }
 
                 HStack(spacing: 22) {
                     QuietActionLink(icon: "camera.fill", title: "Send a proof") {
@@ -530,23 +541,7 @@ struct FriendDetailView: View {
         }
     }
 
-    // MARK: Status + season
-
-    private var statusSlot: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            MirrorStatusLine(text: statusText)
-            if let name = shortSeasonName {
-                MirrorSeasonPill(
-                    seasonName: name,
-                    dayNumber: publishedCard?.currentDay ?? friend.currentSeasonDay,
-                    accent: accent
-                )
-            }
-            if !mutuals.isEmpty {
-                mutualsButton
-            }
-        }
-    }
+    // MARK: Quiet tier
 
     private var quietNote: some View {
         Text("\(friend.displayName) shares a little with you — their season and this line, nothing about their day.")
@@ -605,18 +600,6 @@ struct FriendDetailView: View {
 
     // MARK: Categories
 
-    private var categoriesBlock: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(categorySections, id: \.0) { pair in
-                MirrorCategorySection(
-                    category: pair.0,
-                    rows: pair.1,
-                    showsBox: tier == .full
-                )
-            }
-        }
-    }
-
     /// The friend's board grouped by category, resolved to their tier.
     /// Full shows real task rows; Open shows count-only headers (task
     /// names stay private), driven by completion counts.
@@ -644,33 +627,28 @@ struct FriendDetailView: View {
     // MARK: Record below
 
     private var recordBelow: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 22) {
             if tier != .quiet {
-                JournalHairline().padding(.vertical, 18)
                 exactPointsRow
             }
 
             if let witness = witnessLine {
-                JournalHairline().padding(.vertical, 18)
                 WitnessLineView(text: witness, accent: accent)
             }
 
             if tier != .quiet, let milestones = publishedCard?.milestones, !milestones.isEmpty {
-                JournalHairline().padding(.vertical, 18)
                 destinationsSection(milestones)
             }
 
             if let past = publishedCard?.pastSeasons, !past.isEmpty {
-                JournalHairline().padding(.vertical, 18)
                 seasonsBeforeSection(past)
             }
 
-            JournalHairline().padding(.vertical, 18)
             togetherSection
 
-            JournalHairline().padding(.vertical, 18)
             sinceConnectedSection
         }
+        .padding(.top, 2)
     }
 
     private var witnessLine: String? {
@@ -744,8 +722,7 @@ struct FriendDetailView: View {
     // MARK: Destinations
 
     private func destinationsSection(_ milestones: [SeasonCardMilestone]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            JournalSectionHeader(label: "THE SEASON’S DESTINATIONS")
+        MirrorSectionCard(label: "THE SEASON’S DESTINATIONS") {
             DestinationsTimeline(
                 milestones: milestones,
                 accent: accent,
@@ -757,8 +734,7 @@ struct FriendDetailView: View {
     // MARK: Seasons before
 
     private func seasonsBeforeSection(_ past: [PastSeasonSummary]) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            JournalSectionHeader(label: "SEASONS BEFORE")
+        MirrorSectionCard(label: "SEASONS BEFORE") {
             SeasonsBeforeRow(chapters: past, showsMilestones: tier != .quiet)
         }
     }
@@ -766,8 +742,7 @@ struct FriendDetailView: View {
     // MARK: Together
 
     private var togetherSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            JournalSectionHeader(label: togetherCount > 0 ? "TOGETHER · \(togetherCount) SHARED" : "TOGETHER")
+        MirrorSectionCard(label: togetherCount > 0 ? "TOGETHER · \(togetherCount) SHARED" : "TOGETHER") {
             VStack(spacing: 10) {
                 ForEach(sharedCircles) { circle in
                     Button {
@@ -864,19 +839,20 @@ struct FriendDetailView: View {
     // MARK: Since you connected
 
     private var sinceConnectedSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            JournalSectionHeader(
-                label: "SINCE YOU CONNECTED · \(store.connectedDescription(friend).uppercased().replacingOccurrences(of: "CONNECTED ", with: ""))"
-            )
-            HStack(spacing: 0) {
-                textureStat("\(texture.proofsTraded)", "proofs\ntraded")
-                textureStat("\(texture.cheersExchanged)", "cheers\nexchanged")
-                textureStat("\(texture.milestonesWitnessed)", "milestones\nwitnessed")
+        MirrorSectionCard(
+            label: "SINCE YOU CONNECTED · \(store.connectedDescription(friend).uppercased().replacingOccurrences(of: "CONNECTED ", with: ""))"
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 0) {
+                    textureStat("\(texture.proofsTraded)", "proofs\ntraded")
+                    textureStat("\(texture.cheersExchanged)", "cheers\nexchanged")
+                    textureStat("\(texture.milestonesWitnessed)", "milestones\nwitnessed")
+                }
+                Text(texture.line)
+                    .font(.serifItalic(15, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text(texture.line)
-                .font(.serifItalic(15, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

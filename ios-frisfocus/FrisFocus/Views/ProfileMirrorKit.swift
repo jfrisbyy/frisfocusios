@@ -8,10 +8,10 @@
 //  a friend sees at a given tier is exactly what you preview.
 //
 //  Every measurement follows the S4 redline (pt on a 390pt-wide
-//  device): avatar 86, ring 96 @ 3pt, halo footprint ≤ 114, total
-//  sun-ring footprint hard-capped at 116 (1.35× avatar); glass corner
-//  controls 38; primary pill 44; task rows 40 with 22pt checks;
-//  >5-task boxes fixed at 208 with an internal scroll.
+//  device): ring = avatar+10 @ 3pt stroke, halo ≤ avatar+28; glass
+//  corner controls 38; primary pill 44; task rows 40 with 22pt checks.
+//  The hero shell (stretchy header, top bar, identity card, board)
+//  lives in ProfileHeroKit.swift.
 //
 //  Hard rule across this file: NO denominators, NO fractions, NO point
 //  values ever render. Only completions ("N today"), sun language, and
@@ -411,15 +411,7 @@ struct MirrorDayBlock: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 15)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(hex: 0xFFFBF1))
-                .shadow(color: Color.black.opacity(0.06), radius: 14, x: 0, y: 6)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.05), lineWidth: 0.8)
-        )
+        .mirrorCard()
     }
 
     /// Today's sun — total footprint including glow capped at 52×44,
@@ -573,188 +565,19 @@ func qualitativeDayLine(ratio: Double) -> String {
     return table[seed % table.count]
 }
 
-// MARK: - Category section (checked-first, nested scroll)
+// MARK: - Task rows (shared by the today board)
 
-/// One task row in a category box.
+/// One task row on the board.
 struct MirrorTaskRow: Identifiable, Equatable {
     let id = UUID()
     let title: String
     let isDone: Bool
 }
 
-/// A category on the (tier-visible) board — an 11pt tracked header with
-/// a completion-only count, 8pt above its box of checked-first 40pt
-/// rows, scrolling within itself when there are more than 5.
-struct MirrorCategorySection: View {
-    let category: Category
-    /// Already sorted checked-first by the caller.
-    let rows: [MirrorTaskRow]
-    /// When false (e.g. the Open tier, where task names stay private),
-    /// only the header + count render — no task box.
-    var showsBox: Bool = true
-
-    private var tint: Color { Color(hex: category.hexColor) }
-    private var doneCount: Int { rows.filter { $0.isDone }.count }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Circle().fill(tint).frame(width: 8, height: 8)
-                Text(category.displayName.uppercased())
-                    .font(.sans(11, weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.62))
-                Spacer(minLength: 8)
-                if doneCount > 0 {
-                    Text("\(doneCount) today")
-                        .font(.sans(11, weight: .semibold))
-                        .foregroundStyle(tint)
-                } else {
-                    Text("quiet so far")
-                        .font(.sans(11, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.38))
-                }
-            }
-            .padding(.horizontal, 2)
-
-            if showsBox, !rows.isEmpty {
-                MirrorCategoryBox(rows: rows, tint: tint)
-            }
-        }
-    }
-}
-
-/// A snapshot of the inner scroll geometry, tracked to drive the fades
-/// and the live "N more" cue.
-nonisolated private struct MirrorScrollProbe: Equatable {
-    var offset: CGFloat = 0
-    var content: CGFloat = 0
-    var container: CGFloat = 0
-}
-
-/// The rounded r16 card holding the rows. ≤ 5 → plain box, height =
-/// rows × 40 + 8. > 5 → a fixed 208pt internal scroll region with a
-/// 26pt bottom fade + "N more · scroll" cue that vanish at the end,
-/// and an 18pt top fade once scrolled down.
-private struct MirrorCategoryBox: View {
-    let rows: [MirrorTaskRow]
-    let tint: Color
-
-    private let rowHeight: CGFloat = 40
-    private let maxRows: Int = 5
-    /// 5 × 40 + 8pt of vertical padding.
-    private let boxHeight: CGFloat = 208
-    private let cardColor: Color = Color(hex: 0xFFFBF1)
-
-    @State private var atBottom: Bool = false
-    @State private var atTop: Bool = true
-    /// nil until the first geometry callback — the cue falls back to
-    /// the static below-the-fold count.
-    @State private var belowFold: Int? = nil
-
-    private var overflowing: Bool { rows.count > maxRows }
-    private var cueCount: Int { belowFold ?? max(0, rows.count - maxRows) }
-
-    var body: some View {
-        Group {
-            if overflowing {
-                ScrollView(.vertical, showsIndicators: false) {
-                    rowStack
-                        .padding(.vertical, 4)
-                        .onScrollGeometryChange(for: MirrorScrollProbe.self) { geo in
-                            MirrorScrollProbe(
-                                offset: geo.contentOffset.y,
-                                content: geo.contentSize.height,
-                                container: geo.containerSize.height
-                            )
-                        } action: { _, probe in
-                            let bottom = probe.offset >= probe.content - probe.container - 2
-                            let top = probe.offset <= 2
-                            // Rows fully or partly below the visible fold.
-                            let visibleBottom = probe.offset + probe.container - 4
-                            let below = max(0, rows.count - Int(visibleBottom / rowHeight))
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                atBottom = bottom
-                                atTop = top
-                                belowFold = below
-                            }
-                        }
-                }
-                .frame(height: boxHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(alignment: .top) { topFade }
-                .overlay(alignment: .bottom) { fadeCue }
-            } else {
-                rowStack
-                    .padding(.vertical, 4)
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(cardColor)
-                .shadow(color: Color.black.opacity(0.04), radius: 10, x: 0, y: 4)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Theme.textPrimary.opacity(0.05), lineWidth: 0.8)
-        )
-    }
-
-    private var rowStack: some View {
-        VStack(spacing: 0) {
-            ForEach(rows) { row in
-                MirrorTaskRowView(row: row, tint: tint)
-                    .frame(height: rowHeight)
-            }
-        }
-    }
-
-    /// 18pt top fade once scrolled down.
-    @ViewBuilder
-    private var topFade: some View {
-        if !atTop {
-            LinearGradient(
-                colors: [cardColor.opacity(0.95), .clear],
-                startPoint: .top, endPoint: .bottom
-            )
-            .frame(height: 18)
-            .allowsHitTesting(false)
-            .transition(.opacity)
-        }
-    }
-
-    /// 26pt bottom fade + the live "N more · scroll" cue; both vanish
-    /// once scrolled to the end.
-    @ViewBuilder
-    private var fadeCue: some View {
-        if !atBottom {
-            ZStack(alignment: .bottom) {
-                LinearGradient(
-                    colors: [.clear, cardColor.opacity(0.95)],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: 26)
-                .allowsHitTesting(false)
-
-                HStack(spacing: 4) {
-                    Text("\(cueCount) more · scroll")
-                        .font(.sans(10, weight: .medium))
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.sans(8, weight: .bold))
-                }
-                .foregroundStyle(Theme.textPrimary.opacity(0.45))
-                .padding(.bottom, 4)
-                .allowsHitTesting(false)
-            }
-            .transition(.opacity)
-        }
-    }
-}
-
 /// One 40pt task row — 22pt rounded-square check (r7), 13.5pt label,
 /// 11pt check→label gap, 14pt side padding. Done rows fill the check
 /// in the category color and strike the label at 55% opacity.
-private struct MirrorTaskRowView: View {
+struct MirrorTaskRowView: View {
     let row: MirrorTaskRow
     let tint: Color
 
@@ -872,95 +695,4 @@ struct MirrorActionCircle: View {
     }
 }
 
-// MARK: - "Seen as" chip (self only)
 
-/// The demoted 28pt tier-preview chip — a small bordered chip that
-/// opens a menu to preview Quiet / Open / Full.
-struct SeenAsChip: View {
-    @Binding var tier: VisibilityTier
-
-    private func name(_ t: VisibilityTier) -> String {
-        switch t {
-        case .quiet: return "Quiet"
-        case .open: return "Open"
-        case .full: return "Full"
-        }
-    }
-
-    var body: some View {
-        Menu {
-            ForEach(VisibilityTier.allCases, id: \.self) { t in
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.easeInOut(duration: 0.25)) { tier = t }
-                } label: {
-                    Label(name(t), systemImage: tier == t ? "checkmark" : "eye")
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "eye")
-                    .font(.sans(9, weight: .semibold))
-                Text("Seen as: \(name(tier))")
-                    .font(.sans(11, weight: .semibold))
-                Image(systemName: "chevron.down")
-                    .font(.sans(7, weight: .bold))
-            }
-            .foregroundStyle(Theme.textPrimary.opacity(0.65))
-            .padding(.horizontal, 12)
-            .frame(height: 28)
-            .background(Capsule(style: .continuous).fill(Theme.textPrimary.opacity(0.04)))
-            .overlay(Capsule(style: .continuous).strokeBorder(Theme.textPrimary.opacity(0.14), lineWidth: 0.8))
-        }
-        .accessibilityLabel("Preview how friends see you. Currently \(name(tier)).")
-    }
-}
-
-// MARK: - Identity handle line
-
-/// The single stat line under the name (12pt @ 82% white):
-/// `@handle · N days shown up`, the number bold. When the counter is
-/// unavailable or zero the stat is OMITTED — never "0 days shown up".
-struct MirrorHandleLine: View {
-    let handle: String?
-    let daysShownUp: Int?
-
-    private var showsDays: Bool { (daysShownUp ?? 0) > 0 }
-    private var showsHandle: Bool { !(handle ?? "").isEmpty }
-
-    var body: some View {
-        Group {
-            if showsHandle, showsDays {
-                handleText(handle ?? "") + boldDays() + Text(" days shown up")
-            } else if showsHandle {
-                Text(prefixed(handle ?? ""))
-            } else if showsDays {
-                boldDays() + Text(" days shown up")
-            }
-        }
-        .font(.sans(12, weight: .regular))
-        .foregroundStyle(Theme.textCream.opacity(0.82))
-        .lineLimit(1)
-        .minimumScaleFactor(0.8)
-        .accessibilityLabel(accessibilityText)
-    }
-
-    private var accessibilityText: String {
-        var parts: [String] = []
-        if showsHandle { parts.append(prefixed(handle ?? "")) }
-        if showsDays { parts.append("\(daysShownUp ?? 0) days shown up") }
-        return parts.joined(separator: ", ")
-    }
-
-    private func prefixed(_ handle: String) -> String {
-        handle.hasPrefix("@") ? handle : "@\(handle)"
-    }
-
-    private func handleText(_ handle: String) -> Text {
-        Text("\(prefixed(handle)) · ")
-    }
-
-    private func boldDays() -> Text {
-        Text("\(daysShownUp ?? 0)").font(.sans(12, weight: .bold))
-    }
-}
