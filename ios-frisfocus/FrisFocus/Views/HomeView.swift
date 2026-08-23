@@ -66,6 +66,12 @@ struct HomeView: View {
     @State private var undoMessage: String?
     /// The Recent Activity sheet (likes, comments, cheers on me).
     @State private var showActivity: Bool = false
+    /// Story tap captured inside the Activity sheet — held while the
+    /// sheet dismisses, then presented, so the player never stacks on
+    /// top of the sheet.
+    @State private var pendingActivityStory: ActivityStoryTarget?
+    /// The story player opened from an activity row.
+    @State private var activityStory: ActivityStoryTarget?
     /// True while the software keyboard is up — hides the sundial nav
     /// so it never covers what the person is typing.
     @State private var keyboardVisible: Bool = false
@@ -101,6 +107,11 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showCircles) {
                 CirclesView()
             }
+            .navigationDestination(isPresented: $showFriendsFromBanner) {
+                // Pushed in place — the system back button and edge
+                // swipe return home; no sheet-with-Done stacking.
+                FriendsView()
+            }
         }
         .onAppear {
             locationService.requestPermissionIfNeeded()
@@ -116,23 +127,27 @@ struct HomeView: View {
                 .environment(auth)
         }
         .profileQuickCard(isPresented: $showProfileSheet)
-        .sheet(isPresented: $showFriendsFromBanner) {
-            NavigationStack {
-                FriendsView()
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") { showFriendsFromBanner = false }
-                                .foregroundStyle(Theme.textPrimary)
-                        }
-                    }
-            }
-        }
         .sheet(item: $homeEventTarget) { target in
             CircleEventDetailView(eventId: target.eventId)
                 .environment(store)
         }
-        .sheet(isPresented: $showActivity) {
-            RecentActivityView()
+        .sheet(isPresented: $showActivity, onDismiss: {
+            // The sheet has fully closed — now land on the story the
+            // person tapped: one clean motion instead of a stacked
+            // pop-up.
+            if let pending = pendingActivityStory {
+                pendingActivityStory = nil
+                activityStory = pending
+            }
+        }) {
+            RecentActivityView(onOpenStory: { mode, postId in
+                pendingActivityStory = ActivityStoryTarget(id: postId, mode: mode)
+                showActivity = false
+            })
+            .environment(store)
+        }
+        .fullScreenCover(item: $activityStory) { target in
+            StoryPlayerView(mode: target.mode, initialPostId: target.id)
                 .environment(store)
         }
         .fullScreenCover(isPresented: $showSeasonConversation) {
@@ -641,6 +656,13 @@ private struct ActivityGlanceChip: View {
 private struct HomeEventTarget: Identifiable {
     let eventId: UUID
     var id: UUID { eventId }
+}
+
+/// The story an activity row pointed at — which tape to open and the
+/// exact post to land on.
+private struct ActivityStoryTarget: Identifiable {
+    let id: UUID
+    let mode: StoryPlayerMode
 }
 
 // MARK: - Preference key

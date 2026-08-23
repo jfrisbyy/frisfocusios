@@ -60,6 +60,7 @@ struct MilestoneDetailView: View {
             }
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: showSharePrompt)
+        .edgeSwipeBack()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if store.milestone(by: milestoneId) != nil {

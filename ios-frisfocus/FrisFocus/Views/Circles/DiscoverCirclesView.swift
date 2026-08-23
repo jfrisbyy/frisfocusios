@@ -50,6 +50,7 @@ struct DiscoverCirclesView: View {
                 .padding(.bottom, 44)
             }
         }
+        .edgeSwipeBack()
         .navigationTitle("Discover")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Theme.warmWheat, for: .navigationBar)

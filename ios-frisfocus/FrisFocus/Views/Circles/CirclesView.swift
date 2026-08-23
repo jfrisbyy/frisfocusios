@@ -49,8 +49,6 @@ struct CirclesView: View {
     @State private var showStoryCapture: Bool = false
     @State private var showMyStory: Bool = false
     @State private var showDirect: Bool = false
-    @State private var showAddFriends: Bool = false
-    @State private var showInvite: Bool = false
     @State private var threadFriend: Friend?
     @State private var route: CirclesRoute?
 
@@ -142,7 +140,7 @@ struct CirclesView: View {
                         Color.clear.frame(height: 140)
                     }
                 }
-                .refreshable { await loadMessages() }
+                .refreshable { await refreshRoom() }
                 .coordinateSpace(.named(scrollSpace))
                 .onPreferenceChange(CirclesSectionTopsPreferenceKey.self) { tops in
                     sectionTops = tops
@@ -187,10 +185,10 @@ struct CirclesView: View {
             }
             .navigationBarBackButtonHidden(true)
             .toolbar(.hidden, for: .navigationBar)
-            // The Friends room is a root page — the left edge opens the
-            // proof camera, same as the homepage. Going home stays one
-            // tap on the sundial's home button.
-            .edgeSwipeCamera()
+            // Standard iOS feel: a left-edge swipe goes back home. The
+            // proof camera stays reachable from Today's Plan and the
+            // capture affordances on this page.
+            .edgeSwipeBack()
             .sheet(isPresented: $showCaptureSheet) {
                 CaptureSheetView()
                     .presentationDetents([.fraction(0.5)])
@@ -233,28 +231,7 @@ struct CirclesView: View {
                         .presentationDragIndicator(.visible)
                 }
             }
-            .sheet(isPresented: $showInvite) {
-                NavigationStack {
-                    InviteFriendsView()
-                        .toolbar {
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button("Done") { showInvite = false }
-                                    .foregroundStyle(Theme.textPrimary)
-                            }
-                        }
-                }
-            }
-            .sheet(isPresented: $showAddFriends) {
-                NavigationStack {
-                    FriendsView()
-                        .toolbar {
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button("Done") { showAddFriends = false }
-                                    .foregroundStyle(Theme.textPrimary)
-                            }
-                        }
-                }
-            }
+
             .sheet(isPresented: $showStartTogether, onDismiss: {
                 // Present the chosen flow only after the chooser has
                 // fully dismissed, so the full-screen cover doesn't
@@ -402,7 +379,7 @@ struct CirclesView: View {
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                showInvite = true
+                route = .inviteFriends
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "square.and.arrow.up")
@@ -430,10 +407,20 @@ struct CirclesView: View {
     // MARK: - Live messaging (unread dot)
 
     /// Refresh of the shared messaging window — realtime keeps it live;
-    /// this is the explicit pull-to-refresh / on-appear catch-up.
+    /// this is the explicit on-appear catch-up.
     private func loadMessages() async {
         guard let myId = auth.user?.id else { return }
         await messageGraph.load(myUserId: myId)
+    }
+
+    /// Pull-to-refresh for the whole room: messages, plus the social
+    /// mirror (stories, friends, cheers) so the story row and Today
+    /// list catch up too — not just the unread dot.
+    private func refreshRoom() async {
+        guard let myId = auth.user?.id else { return }
+        async let messages: Void = messageGraph.load(myUserId: myId)
+        async let social: Void = socialSync.refreshAll()
+        _ = await (messages, social)
     }
 
     /// Total unread proofs/notes across every real conversation — drives
@@ -503,7 +490,7 @@ struct CirclesView: View {
 
     private func handleAddFriendTap() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        showAddFriends = true
+        route = .addFriends
     }
 
     private func handlePactTap(_ pact: Pact) {
@@ -602,6 +589,12 @@ struct CirclesView: View {
         case .discoverCircles:
             DiscoverCirclesView()
                 .environment(auth)
+        case .addFriends:
+            // Pushed in place — no sheet-in-a-sheet, the system back
+            // button and edge swipe both return here naturally.
+            FriendsView()
+        case .inviteFriends:
+            InviteFriendsView()
         }
     }
 
@@ -685,6 +678,8 @@ enum CirclesRoute: Hashable {
     case circleStory(UUID)
     case pactDetail(UUID)
     case discoverCircles
+    case addFriends
+    case inviteFriends
 }
 
 /// Which "start something together" flow to present after the chooser

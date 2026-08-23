@@ -185,7 +185,7 @@ struct CheerComposerView: View {
     private func send() {
         let text = trimmed
         guard !text.isEmpty else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
         store.sendCheer(to: friend, message: text)
         dismiss()
     }

@@ -40,11 +40,18 @@ private struct EdgeSwipeBackModifier: ViewModifier {
     private let commitDistance: CGFloat = 100
 
     func body(content: Content) -> some View {
-        ZStack {
-            // The strip revealed behind the peeking page — warm
-            // parchment, like every page beneath, never a black void.
+        let screenWidth = UIScreen.main.bounds.width
+        let progress = min(max(dragX / screenWidth, 0), 1)
+        return ZStack {
+            // The layer revealed behind the peeking page — warm
+            // parchment sliding in with a UIKit-style parallax and a
+            // dim that lifts as the page lets go, so the previous
+            // page reads as arriving underneath rather than a void.
             if dragX > 0 {
-                Theme.warmWheat.ignoresSafeArea()
+                Theme.warmWheat
+                    .overlay(Color.black.opacity(0.12 * (1 - progress)))
+                    .offset(x: (dragX - screenWidth) * 0.3)
+                    .ignoresSafeArea()
             }
 
             content

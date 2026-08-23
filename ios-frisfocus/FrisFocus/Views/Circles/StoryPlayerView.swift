@@ -90,6 +90,27 @@ struct StoryPlayerView: View {
     @State private var crossedDismissThreshold: Bool = false
     @State private var pressStart: Date?
 
+    // MARK: - Continuous feed (friend-tape paging)
+
+    /// The friend whose tape is currently playing in `.friend` mode.
+    /// Starts as the mode's friend and walks the story-row order as
+    /// the user swipes sideways or a tape runs out.
+    @State private var tapeFriend: Friend?
+    /// Story-row order frozen at open, so paging stays stable while
+    /// watching marks stories seen (which would otherwise reshuffle).
+    @State private var frozenTapeOrder: [UUID] = []
+    /// Direction of the last tape switch — drives the page-turn slide.
+    @State private var tapeSlideForward: Bool = true
+
+    // MARK: - Double-tap to like
+
+    /// Timestamp of the last qualifying tap, for double-tap detection.
+    @State private var lastTapAt: Date?
+    /// The briefly-held single-tap action, cancelled by a second tap.
+    @State private var pendingTapAdvance: Task<Void, Never>?
+    /// Drives the big heart burst on double-tap like.
+    @State private var showHeartBurst: Bool = false
+
     // MARK: - Reply composer
 
     @State private var draft: String = ""
@@ -150,13 +171,12 @@ struct StoryPlayerView: View {
     private var basePosts: [StoryPost] {
         switch mode {
         case .friend(let friend):
-            // Isolated tape: only the tapped friend's unexpired posts,
-            // oldest → newest. The player closes when their last
-            // segment ends — never rolling into another friend's
-            // story, so opening from a profile or the friends row
-            // always stays on that one person.
+            // The tape currently playing — starts as the tapped
+            // friend, then walks the story-row order as the user
+            // swipes sideways or a tape runs out (continuous feed).
+            let owner = tapeFriend ?? friend
             return store.activeFriendStories
-                .filter { $0.authorId == friend.id }
+                .filter { $0.authorId == owner.id }
                 .sorted { $0.createdAt < $1.createdAt }
         case .mine:
             return store.activeMyStories
@@ -217,7 +237,18 @@ struct StoryPlayerView: View {
                     .ignoresSafeArea()
 
                 playerCard(bottomInset: bottomInset)
+                    .id(tapeFriend?.id.uuidString ?? "tape-root")
+                    .transition(.push(from: tapeSlideForward ? .trailing : .leading))
                     .playerCardEffect(drag)
+
+                if showHeartBurst {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 96))
+                        .foregroundStyle(Color(hex: 0xED93B1))
+                        .shadow(color: .black.opacity(0.35), radius: 14, y: 4)
+                        .transition(.scale(scale: 0.4).combined(with: .opacity))
+                        .allowsHitTesting(false)
+                }
             }
             .ignoresSafeArea()
         }
@@ -295,6 +326,10 @@ struct StoryPlayerView: View {
             tickProgress()
         }
         .onAppear {
+            if case .friend(let friend) = mode {
+                tapeFriend = friend
+                frozenTapeOrder = computeTapeOrder()
+            }
             if let target = initialPostId {
                 if case .circle = mode, !posts.contains(where: { $0.id == target }) {
                     // The engaged post is older than today — widen to
@@ -406,7 +441,7 @@ struct StoryPlayerView: View {
     /// own posts, or one circle's clips — so the whole queue is the
     /// window.
     private var segmentWindow: (count: Int, index: Int, ownerKey: String) {
-        (posts.count, currentIndex, "single-owner")
+        (posts.count, currentIndex, tapeFriend?.id.uuidString ?? "single-owner")
     }
 
     /// Per-person segmented bars. Keyed by the current author so the
@@ -1149,19 +1184,137 @@ struct StoryPlayerView: View {
 
     private func advance() {
         if currentIndex + 1 >= posts.count {
-            dismiss()
+            // End of this tape — flow into the next friend's stories
+            // (continuous feed) or close when there's nowhere to go.
+            if !advanceToAdjacentTape(forward: true) {
+                dismiss()
+            }
             return
         }
         currentIndex += 1
         clock.progress = 0
+        // A gentle tick as each story advances.
+        UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.55)
     }
 
     private func goPrev() {
         if currentIndex == 0 {
-            clock.progress = 0
+            // At the first segment, stepping back pages to the
+            // previous friend's tape; at the very first tape it
+            // just replays the segment.
+            if !advanceToAdjacentTape(forward: false) {
+                clock.progress = 0
+            }
         } else {
             currentIndex -= 1
             clock.progress = 0
+        }
+    }
+
+    // MARK: - Continuous feed paging
+
+    /// Friends with an active tape, ordered like the story row (fresh
+    /// tapes first, then watched — stable within each band).
+    private func computeTapeOrder() -> [UUID] {
+        store.friends.enumerated()
+            .filter { store.hasAnyActiveStories(forFriendId: $0.element.id) }
+            .sorted { lhs, rhs in
+                let l = store.hasUnviewedStories(forFriendId: lhs.element.id) ? 0 : 1
+                let r = store.hasUnviewedStories(forFriendId: rhs.element.id) ? 0 : 1
+                if l != r { return l < r }
+                return lhs.offset < rhs.offset
+            }
+            .map { $0.element.id }
+    }
+
+    /// Page to the adjacent friend's tape in the frozen story-row
+    /// order. Only `.friend` mode flows between tapes; returns false
+    /// when there's no adjacent tape left.
+    @discardableResult
+    private func advanceToAdjacentTape(forward: Bool) -> Bool {
+        guard case .friend(let rootFriend) = mode else { return false }
+        let ownerId = (tapeFriend ?? rootFriend).id
+        guard let idx = frozenTapeOrder.firstIndex(of: ownerId) else { return false }
+        var next = forward ? idx + 1 : idx - 1
+        // Skip tapes that emptied (expired) since the order froze.
+        while next >= 0 && next < frozenTapeOrder.count {
+            if let friend = store.friend(by: frozenTapeOrder[next]),
+               store.hasAnyActiveStories(forFriendId: friend.id) {
+                switchTape(to: friend, forward: forward)
+                return true
+            }
+            next += forward ? 1 : -1
+        }
+        return false
+    }
+
+    /// Slide into another friend's tape with a page-turn feel.
+    private func switchTape(to friend: Friend, forward: Bool) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        tapeSlideForward = forward
+        withAnimation(.easeInOut(duration: 0.32)) {
+            tapeFriend = friend
+            currentIndex = 0
+            clock.progress = 0
+        }
+        isPaused = false
+        markCurrentViewed()
+    }
+
+    // MARK: - Tap handling (single advance vs. double-tap like)
+
+    /// Whether the current segment supports double-tap-to-like —
+    /// someone else's post on any tape but your own.
+    private var supportsDoubleTapLike: Bool {
+        if case .mine = mode { return false }
+        guard let post = currentPost else { return false }
+        return post.authorId != store.currentUserId
+    }
+
+    /// Routes a qualifying tap: a second tap within the window likes
+    /// the post with a heart burst; otherwise the tap-zone advance
+    /// runs (briefly held while a double-tap is possible).
+    private func handleTap(at x: CGFloat, width: CGFloat) {
+        let now = Date()
+        if supportsDoubleTapLike, let last = lastTapAt,
+           now.timeIntervalSince(last) < 0.28 {
+            lastTapAt = nil
+            pendingTapAdvance?.cancel()
+            pendingTapAdvance = nil
+            likeWithBurst()
+            return
+        }
+        lastTapAt = now
+        guard supportsDoubleTapLike else {
+            if x < width / 3 { goPrev() } else { goNext() }
+            return
+        }
+        // Hold the single-tap action just long enough for a second
+        // tap to land.
+        pendingTapAdvance?.cancel()
+        pendingTapAdvance = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+            if x < width / 3 { goPrev() } else { goNext() }
+        }
+    }
+
+    /// Double-tap like: a firm success tap, the heart burst, and the
+    /// like itself (never un-likes — repeat double-taps just burst).
+    private func likeWithBurst() {
+        guard let post = currentPost else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        if !store.isPostLikedByMe(post.id) {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                store.toggleLike(postId: post.id)
+            }
+        }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.6)) {
+            showHeartBurst = true
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(650))
+            withAnimation(.easeOut(duration: 0.25)) { showHeartBurst = false }
         }
     }
 
@@ -1248,14 +1401,24 @@ struct StoryPlayerView: View {
                 withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) { drag.translation = .zero }
                 isPaused = false
 
+                // Sideways page-turn between friends' tapes — a
+                // predominantly horizontal swipe flows into the next
+                // (or previous) friend's stories.
+                if case .friend = mode,
+                   abs(value.translation.width) > 60,
+                   abs(value.translation.width) > abs(value.translation.height) * 1.2 {
+                    if value.translation.width < 0 {
+                        if !advanceToAdjacentTape(forward: true) { dismiss() }
+                    } else {
+                        advanceToAdjacentTape(forward: false)
+                    }
+                    return
+                }
+
                 // Short, low-movement release = tap. Long holds fall
                 // through and just resume playback.
                 if pressDuration < 0.25 && movement < 10 {
-                    if value.startLocation.x < width / 3 {
-                        goPrev()
-                    } else {
-                        goNext()
-                    }
+                    handleTap(at: value.startLocation.x, width: width)
                 }
             }
     }

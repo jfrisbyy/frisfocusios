@@ -223,6 +223,7 @@ struct DiscoverProfileSheet: View {
         case .none:
             IdentityPill(title: "Add friend", icon: "person.badge.plus", filled: true, isWorking: isSending) {
                 guard let myId, !isSending else { return }
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
                 isSending = true
                 Task {
                     await graph.sendRequest(to: profile, myUserId: myId)

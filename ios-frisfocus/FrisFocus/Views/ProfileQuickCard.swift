@@ -63,14 +63,12 @@ private struct ProfileQuickCardModifier: ViewModifier {
                 if isPresented, auth.user != nil {
                     ProfileQuickCardOverlay { dest in
                         // The overlay has already played its dismiss
-                        // animation; tear it down, then raise the chosen
-                        // destination a beat later so the two transitions
-                        // don't fight.
+                        // animation — it isn't a presentation, so the
+                        // chosen destination can raise immediately
+                        // without the transitions fighting.
                         isPresented = false
                         if let dest {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                                destination = dest
-                            }
+                            destination = dest
                         }
                     }
                 }

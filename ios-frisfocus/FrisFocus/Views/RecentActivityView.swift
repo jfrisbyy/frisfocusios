@@ -14,7 +14,13 @@ import UIKit
 
 struct RecentActivityView: View {
     @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
+
+    /// When set, story taps hand off to the host (which dismisses this
+    /// sheet and presents the player cleanly) instead of stacking a
+    /// full-screen cover on top of the sheet.
+    var onOpenStory: ((StoryPlayerMode, UUID) -> Void)? = nil
 
     /// The last-seen stamp captured the moment the sheet opened, so
     /// "new" dots stay visible while the badge itself clears.
@@ -50,6 +56,11 @@ struct RecentActivityView: View {
                         )
                         .padding(.horizontal, 16)
                         .padding(.vertical, 16)
+                    }
+                    .refreshable {
+                        // Pull the latest likes, comments, and cheers
+                        // from the cloud mirror.
+                        await socialSync.refreshAll()
                     }
                 }
             }
@@ -99,7 +110,16 @@ struct RecentActivityView: View {
             case .cheer:
                 showCheers = true
             case .like, .comment:
-                if let target { playerTarget = target }
+                if let target {
+                    if let onOpenStory {
+                        // Clean landing: the host closes this sheet
+                        // and opens the player — one motion, no
+                        // modal stack.
+                        onOpenStory(target.mode, target.id)
+                    } else {
+                        playerTarget = target
+                    }
+                }
             }
         } label: {
             HStack(alignment: .center, spacing: 12) {

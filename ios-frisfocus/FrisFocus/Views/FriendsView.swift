@@ -30,6 +30,9 @@ struct FriendsView: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var reportTarget: ReportTarget?
     @State private var discoverPreview: DiscoverSuggestion?
+    /// True once the first Discover fetch has answered — before that,
+    /// the section holds shimmering placeholders instead of popping in.
+    @State private var discoverLoaded: Bool = false
     @FocusState private var searchFocused: Bool
 
     private var myId: String? { auth.user?.id }
@@ -109,11 +112,11 @@ struct FriendsView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 26) {
                     inviteRow
-                    if hasNoFriends, !discoverSuggestions.isEmpty { discoverSection }
+                    if hasNoFriends, showDiscover { discoverSection }
                     addSection
                     if !service.incoming.isEmpty { incomingSection }
                     if !service.outgoing.isEmpty { outgoingSection }
-                    if !hasNoFriends, !discoverSuggestions.isEmpty { discoverSection }
+                    if !hasNoFriends, showDiscover { discoverSection }
                     friendsSection
                 }
                 .padding(.horizontal, 20)
@@ -222,6 +225,7 @@ struct FriendsView: View {
         case .requestReceived:
             Button {
                 guard let myId, let request = service.incoming.first(where: { $0.profile.id == profile.id }) else { return }
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
                 Task { await service.accept(request, myUserId: myId) }
             } label: {
                 pill("Accept", filled: true)
@@ -233,6 +237,7 @@ struct FriendsView: View {
             Button {
                 guard let myId else { return }
                 searchFocused = false
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
                 Task { await service.sendRequest(to: profile, myUserId: myId) }
             } label: {
                 pill("Add", filled: true)
@@ -251,6 +256,7 @@ struct FriendsView: View {
                     HStack(spacing: 8) {
                         Button {
                             guard let myId else { return }
+                            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
                             Task { await service.decline(request, myUserId: myId) }
                         } label: {
                             Image(systemName: "xmark")
@@ -264,6 +270,7 @@ struct FriendsView: View {
 
                         Button {
                             guard let myId else { return }
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
                             Task { await service.accept(request, myUserId: myId) }
                         } label: {
                             pill("Accept", filled: true)
@@ -304,6 +311,12 @@ struct FriendsView: View {
         }
     }
 
+    /// Discover renders while suggestions exist — or while the first
+    /// fetch is still in flight, holding shimmering placeholders.
+    private var showDiscover: Bool {
+        !discoverSuggestions.isEmpty || !discoverLoaded
+    }
+
     private var discoverSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
@@ -324,6 +337,13 @@ struct FriendsView: View {
                 .accessibilityLabel("See all suggestions")
             }
 
+            if discoverSuggestions.isEmpty {
+                ForEach(0..<3, id: \.self) { index in
+                    SkeletonPersonRow()
+                        .opacity(1.0 - Double(index) * 0.18)
+                }
+            }
+
             ForEach(discoverSuggestions.prefix(6)) { suggestion in
                 DiscoverPersonRow(
                     suggestion: suggestion,
@@ -331,6 +351,7 @@ struct FriendsView: View {
                     onOpen: { discoverPreview = suggestion },
                     onAdd: {
                         guard let myId else { return }
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
                         Task {
                             await service.sendRequest(to: suggestion.profile, myUserId: myId)
                         }
@@ -348,10 +369,14 @@ struct FriendsView: View {
             sectionHeader("YOUR FRIENDS", subtitle: nil)
 
             if service.isLoading && service.friends.isEmpty {
-                ProgressView()
-                    .tint(Theme.textPrimary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 28)
+                // Shimmer placeholders in the exact shape of the real
+                // rows — the list feels one beat away, never empty.
+                VStack(spacing: 10) {
+                    ForEach(0..<3, id: \.self) { index in
+                        SkeletonPersonRow()
+                            .opacity(1.0 - Double(index) * 0.18)
+                    }
+                }
             } else if service.friends.isEmpty {
                 emptyFriends
             } else {
@@ -500,6 +525,9 @@ struct FriendsView: View {
         // unseen dot on the home avatar and quick-card tile.
         service.markRequestsSeen()
         await discover.refresh(myUserId: myId, graph: service)
+        withAnimation(.easeInOut(duration: 0.25)) {
+            discoverLoaded = true
+        }
     }
 
     private func runSearch() async {
