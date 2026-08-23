@@ -18,13 +18,28 @@ struct QuickNoteComposerView: View {
     /// Fired on every keystroke (and once focus lands) so the host
     /// page can keep the composer scrolled into view above the keyboard.
     var onTyping: (() -> Void)? = nil
+    /// When set, the composer edits this existing note in place —
+    /// prefilled with its title and body, never deleting it on empty text.
+    var editingNote: Note? = nil
 
     @State private var noteText: String = ""
+    @State private var titleText: String = ""
     @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+
+            if editingNote != nil {
+                TextField("Title (optional)", text: $titleText)
+                    .font(.serif(17, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 4)
+                    .accessibilityLabel("Note title")
+                    .onChange(of: titleText) { _, _ in
+                        persistDraft()
+                    }
+            }
 
             ZStack(alignment: .topLeading) {
                 if noteText.isEmpty {
@@ -69,6 +84,10 @@ struct QuickNoteComposerView: View {
             }
         }
         .onAppear {
+            if let editingNote {
+                noteText = editingNote.body ?? ""
+                titleText = editingNote.label ?? ""
+            }
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(180))
                 guard isPresented else { return }
@@ -88,7 +107,7 @@ struct QuickNoteComposerView: View {
                 Circle()
                     .fill(draftNoteID == nil ? Theme.textPrimary.opacity(0.18) : Theme.alertGreen)
                     .frame(width: 5, height: 5)
-                Text(draftNoteID == nil ? "Autosaves as you write" : "Saved")
+                Text(draftNoteID == nil && editingNote == nil ? "Autosaves as you write" : "Saved")
                     .font(.sans(10, weight: .medium))
                     .tracking(1.1)
                     .textCase(.uppercase)
@@ -101,7 +120,7 @@ struct QuickNoteComposerView: View {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(
-                        draftNoteID == nil
+                        draftNoteID == nil && editingNote == nil
                             ? Theme.textPrimary.opacity(0.24)
                             : Theme.textPrimary.opacity(0.68)
                     )
@@ -109,7 +128,7 @@ struct QuickNoteComposerView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(draftNoteID == nil)
+            .disabled(draftNoteID == nil && editingNote == nil)
             .accessibilityLabel("Expand into full note")
             .accessibilityHint("Opens this note with photos, voice memos, folders, tags, and pinning")
 
@@ -127,6 +146,22 @@ struct QuickNoteComposerView: View {
     }
 
     private func persistDraft() {
+        // Editing an existing note: update title and body in place.
+        // Never delete on empty text — the note may hold photos, memos,
+        // or a title the person still wants.
+        if let editingNote {
+            guard var existing = store.notes.first(where: { $0.id == editingNote.id }) else { return }
+            let trimmedTitle = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let newLabel: String? = trimmedTitle.isEmpty ? nil : trimmedTitle
+            let bodyChanged = (existing.body ?? "") != noteText
+            let labelChanged = existing.label != newLabel
+            guard bodyChanged || labelChanged else { return }
+            existing.body = noteText
+            existing.label = newLabel
+            store.updateNote(existing)
+            return
+        }
+
         let meaningfulText = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !meaningfulText.isEmpty else {
@@ -161,7 +196,7 @@ struct QuickNoteComposerView: View {
 
     private func expand() {
         persistDraft()
-        guard let id = draftNoteID,
+        guard let id = editingNote?.id ?? draftNoteID,
               let note = store.notes.first(where: { $0.id == id }) else { return }
 
         UIImpactFeedbackGenerator(style: .light).impactOccurred()

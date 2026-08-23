@@ -69,15 +69,19 @@ nonisolated enum SyncDates {
         return f
     }()
 
+    /// Parses a server timestamp. Missing or unreadable stamps fall back
+    /// to `.distantPast` — NEVER "now". Stamping unparseable rows with the
+    /// current time made them look freshly-arrived on every refresh, which
+    /// kept resurrecting the "N new for you" badge for old activity.
     static func parse(_ s: String?) -> Date {
-        guard let s else { return Date() }
+        guard let s else { return .distantPast }
         if let d = isoFractional.date(from: s) { return d }
         if let d = isoPlain.date(from: s) { return d }
         // Timestamps without timezone (e.g. "2026-06-11T01:02:03.456")
         if let d = isoFractional.date(from: s + "Z") { return d }
         if let d = isoPlain.date(from: s + "Z") { return d }
         if let d = day.date(from: s) { return d }
-        return Date()
+        return .distantPast
     }
 
     static func iso(_ d: Date) -> String { isoFractional.string(from: d) }

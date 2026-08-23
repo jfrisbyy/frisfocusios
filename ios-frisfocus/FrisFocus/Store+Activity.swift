@@ -112,8 +112,11 @@ extension Store {
     }
 
     /// Clear the badge (the list itself keeps its short history).
+    /// Stamps at least as late as the newest item so device/server clock
+    /// skew can't leave already-seen rows counting as "new" after a refresh.
     func markActivitySeen() {
-        activityLastSeenAt = Date()
+        let newestItem = activityItems.first?.date ?? .distantPast
+        activityLastSeenAt = max(Date(), newestItem)
     }
 
     private static func initials(from name: String) -> String {

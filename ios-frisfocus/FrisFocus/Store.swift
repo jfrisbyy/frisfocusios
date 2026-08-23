@@ -555,10 +555,17 @@ final class Store {
         // (no stored mode) sits in `.uninitialized` until the welcome
         // intro resolves; installs that predate this feature but already
         // carry data are treated as `.clean` so they're never re-introduced.
-        let storedMode = userDefaults.string(forKey: Keys.appMode).flatMap(AppMode.init(rawValue:))
+        // Demo mode has been removed. An old sample-sandbox install is
+        // wiped back to the first-run welcome so the only path forward is
+        // a real signed-in account — its fake data must never load as if
+        // it were a person's real history.
+        let storedModeRaw = userDefaults.string(forKey: Keys.appMode)
+        let wasDemoInstall = storedModeRaw == "demo"
+        let storedMode = wasDemoInstall ? nil : storedModeRaw.flatMap(AppMode.init(rawValue:))
 
         let storedSeasonData = userDefaults.data(forKey: Keys.currentSeason)
-        let hasPersistedData = storedSeasonData != nil || userDefaults.data(forKey: Keys.tasks) != nil
+        let hasPersistedData = !wasDemoInstall
+            && (storedSeasonData != nil || userDefaults.data(forKey: Keys.tasks) != nil)
         if hasPersistedData {
             // Returning user — load everything we've persisted.
             self.appMode = storedMode ?? .clean
@@ -671,25 +678,6 @@ final class Store {
             // the group-story layer landed so "Our story" always has a
             // timeline to look back on.
             self.circles = Store.withChapterTimelines(self.circles)
-        } else if storedMode == .demo {
-            // A demo install whose seeded data somehow didn't persist —
-            // rebuild the full sample sandbox so the marker + content match.
-            // Assigned directly (not via `applyDemoSeed`) because `self`
-            // can't be used before every stored property is initialized.
-            self.appMode = .demo
-            self.currentSeason = Store.seedSeason()
-            self.tasks = Store.seedTasks()
-            self.todos = Store.seedTodos()
-            self.logEntries = Store.seedLogEntries()
-            self.folders = Store.seedFolders()
-            self.notes = Store.seedNotes()
-            let social = Store.seedDemoSocial(myUserId: self.currentUserId)
-            self.friends = social.friends
-            self.circles = social.circles
-            self.storyPosts = social.posts
-            self.cheers = social.cheers
-            markAllDirty()
-            flushPendingSaves()
         } else if storedMode == .clean {
             // The user already chose a clean start on a previous launch but
             // hasn't finished season setup yet. Keep the empty slate (a
@@ -708,6 +696,14 @@ final class Store {
             // choosing still shows the intro.
             self.appMode = .uninitialized
             self.currentSeason = Store.emptySeason()
+            if wasDemoInstall {
+                // Purge the sandbox: overwrite every persisted slice with
+                // this empty state and drop the stale mode marker so the
+                // sample data can never resurface under a real account.
+                userDefaults.removeObject(forKey: Keys.appMode)
+                markAllDirty()
+                flushPendingSaves()
+            }
         }
 
         // One-time reset of the legacy local-only social graph (the
@@ -3536,198 +3532,8 @@ extension Store {
         )
     }
 
-    /// A wider seed list than v1 — the expanded Season page in
-    /// Prompt 2h needs enough Tasks across categories and tiers to
-    /// demonstrate grouping. Several entries also exercise the new
-    /// `.daily` and `.daysOfWeek` pin schedules.
-    static func seedTasks() -> [FFTask] {
-        [
-            FFTask(
-                title: "Lift — push day",
-                category: .fitness,
-                pointValue: 10,
-                tier: .must,
-                skipPenalty: -5,
-                estimatedMinutes: 40,
-                pinSchedule: .today
-            ),
-            FFTask(
-                title: "Ship v2 onboarding to TestFlight",
-                category: .work,
-                pointValue: 15,
-                tier: .should,
-                estimatedMinutes: 90,
-                pinSchedule: .today
-            ),
-            FFTask(
-                title: "Morning prayer + reading",
-                category: .spiritual,
-                pointValue: 8,
-                tier: .must,
-                skipPenalty: -5,
-                pinSchedule: .daily
-            ),
-            FFTask(
-                title: "Capital One deep work block",
-                category: .work,
-                pointValue: 12,
-                tier: .should,
-                estimatedMinutes: 90,
-                pinSchedule: .daysOfWeek([2, 3, 4, 5, 6])
-            ),
-            FFTask(
-                title: "Wash face · brush teeth",
-                category: .health,
-                pointValue: 2,
-                tier: .could,
-                pinSchedule: .daily
-            ),
-            FFTask(
-                title: "Northup verse work",
-                category: .creative,
-                pointValue: 7,
-                tier: .should,
-                pinSchedule: .today
-            ),
-            FFTask(
-                title: "Evening reflection",
-                category: .spiritual,
-                pointValue: 5,
-                tier: .could,
-                estimatedMinutes: 15,
-                pinSchedule: .today
-            ),
-            FFTask(
-                title: "Demo recording session",
-                category: .creative,
-                pointValue: 12,
-                tier: .should,
-                estimatedMinutes: 45,
-                pinSchedule: .today
-            ),
-            FFTask(
-                title: "Lyrics journal entry",
-                category: .creative,
-                pointValue: 3,
-                tier: .could,
-                estimatedMinutes: 10,
-                pinSchedule: .today
-            ),
-            // Tiered — sleep awards the highest level the logged hours reach.
-            FFTask(
-                title: "Sleep 7+ hours",
-                category: .health,
-                pointValue: 4,
-                pinSchedule: .daily,
-                scoring: ScoringConfig(
-                    type: .tiered,
-                    unit: "hours",
-                    tiers: [
-                        ScoreTier(threshold: 6, points: 2),
-                        ScoreTier(threshold: 7, points: 4),
-                        ScoreTier(threshold: 8, points: 6)
-                    ]
-                )
-            ),
-            // Quantity — base payout at a floor, plus more per block beyond.
-            FFTask(
-                title: "Pushups",
-                category: .fitness,
-                pointValue: 3,
-                pinSchedule: .today,
-                scoring: ScoringConfig(
-                    type: .quantity,
-                    unit: "reps",
-                    baseThreshold: 100,
-                    basePoints: 3,
-                    unitSize: 50,
-                    pointsPerUnit: 1
-                )
-            )
-        ]
-    }
-
-    static func seedTodos() -> [Todo] {
-        let calendar = Calendar.current
-        let today = Date()
-        return [
-            Todo(
-                title: "Call grandma",
-                dueDate: calendar.date(byAdding: .day, value: -2, to: today),
-                pointValue: 4
-            ),
-            Todo(
-                title: "Doctor — annual physical",
-                dueDate: calendar.date(byAdding: .day, value: 2, to: today),
-                pointValue: 6
-            ),
-            Todo(
-                title: "Email landlord about the radiator",
-                dueDate: today,
-                pointValue: 2
-            ),
-            Todo(
-                title: "Replace bathroom lightbulb",
-                dueDate: nil,
-                pointValue: nil
-            )
-        ]
-    }
-
-    static func seedLogEntries() -> [LogEntry] {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        return [
-            // Today: 8 + 12 + 12 = 32 → matches the hardcoded Sun-zone score.
-            LogEntry(date: today, pointsEarned: 8),
-            LogEntry(date: today, pointsEarned: 12),
-            LogEntry(date: today, pointsEarned: 12),
-            // Yesterday
-            LogEntry(
-                date: cal.date(byAdding: .day, value: -1, to: today) ?? today,
-                pointsEarned: 42
-            ),
-            // 2 days ago
-            LogEntry(
-                date: cal.date(byAdding: .day, value: -2, to: today) ?? today,
-                pointsEarned: 58
-            ),
-            // 3 days ago
-            LogEntry(
-                date: cal.date(byAdding: .day, value: -3, to: today) ?? today,
-                pointsEarned: 25
-            )
-        ]
-    }
-
-    /// The three folders the v1 design referenced (Songs, Prayer,
-    /// Work). Their tints match the previously-hard-coded styling so
-    /// the morning-pages screenshot still reads the same way after
-    /// the model lift.
-    static func seedFolders() -> [NoteFolder] {
-        [
-            NoteFolder(name: "Songs", colorKey: .purple),
-            NoteFolder(name: "Prayer", colorKey: .green),
-            NoteFolder(name: "Work", colorKey: .blue)
-        ]
-    }
-
-    static func seedNotes() -> [Note] {
-        let calendar = Calendar.current
-        let now = Date()
-        let morning = calendar.date(bySettingHour: 8, minute: 14, second: 0, of: now) ?? now
-        return [
-            Note(
-                createdAt: morning,
-                body: "Slept rough. Mind kept circling the v2 onboarding — the empty state copy still isn't right. Going to lift first to clear it, then sit with the screen. Don't open Slack until after.",
-                label: "morning pages"
-            )
-        ]
-    }
-
-    /// A nameless placeholder season that keeps `currentSeason`
-    /// non-optional on a clean slate (before the user has run guided
-    /// setup). Its empty `name` is the signal `needsSeasonSetup` reads.
+    /// A nameless placeholder season — keeps `currentSeason` non-optional
+    /// while the intro covers the home and before guided setup names it.
     static func emptySeason() -> Season {
         Season(
             name: "",
@@ -3740,118 +3546,14 @@ extension Store {
             milestones: []
         )
     }
-
-    /// Local sample friends, a circle, recent story moments, and a
-    /// couple of cheers — enough for the demo's social side to feel
-    /// lived-in without a backend. Authored against `myUserId` so the
-    /// cheers land on the current user and the circle includes them.
-    static func seedDemoSocial(myUserId: UUID) -> (friends: [Friend], circles: [FFCircle], posts: [StoryPost], cheers: [Cheer]) {
-        let now = Date()
-        let cal = Calendar.current
-
-        var maya = Friend(displayName: "Maya R.", initials: "MR", accentColorHex: "7F77DD")
-        maya.currentSeasonName = "Marathon Build"
-        maya.currentSeasonDay = 31
-        maya.todayScore = 48
-        maya.hitGoalToday = true
-        maya.lastSignalAt = cal.date(byAdding: .hour, value: -2, to: now)
-        maya.sharesWithMe = SharingSettings.from(tier: .full)
-        maya.connectedAt = cal.date(byAdding: .day, value: -120, to: now)
-
-        var theo = Friend(displayName: "Theo K.", initials: "TK", accentColorHex: "D85A30")
-        theo.currentSeasonName = "Founder Sprint"
-        theo.currentSeasonDay = 12
-        theo.todayScore = 22
-        theo.hitGoalToday = false
-        theo.lastSignalAt = cal.date(byAdding: .hour, value: -6, to: now)
-        theo.sharesWithMe = SharingSettings.from(tier: .open)
-        theo.connectedAt = cal.date(byAdding: .day, value: -64, to: now)
-
-        var ines = Friend(displayName: "Inés M.", initials: "IM", accentColorHex: "639922")
-        ines.currentSeasonName = "Quiet Mornings"
-        ines.currentSeasonDay = 7
-        ines.todayScore = 35
-        ines.hitGoalToday = true
-        ines.lastSignalAt = cal.date(byAdding: .hour, value: -20, to: now)
-        ines.sharesWithMe = SharingSettings.from(tier: .open)
-        ines.connectedAt = cal.date(byAdding: .day, value: -210, to: now)
-
-        let friends = [maya, theo, ines]
-
-        let circle = FFCircle(
-            name: "Sunrise Crew",
-            type: .witness,
-            timeframe: .ongoing,
-            memberIds: [myUserId, maya.id, theo.id, ines.id],
-            tasks: [],
-            createdAt: cal.date(byAdding: .day, value: -45, to: now) ?? now,
-            ownerId: myUserId
-        )
-        let circles = withChapterTimelines([circle])
-
-        let posts: [StoryPost] = [
-            StoryPost(
-                authorId: maya.id,
-                createdAt: cal.date(byAdding: .hour, value: -3, to: now) ?? now,
-                caption: "18 miles done before sunrise. Legs are jelly but the lake was glass."
-            ),
-            StoryPost(
-                authorId: ines.id,
-                createdAt: cal.date(byAdding: .hour, value: -9, to: now) ?? now,
-                caption: "Day 7 of no-phone mornings. Wrote two pages instead."
-            )
-        ]
-
-        let cheers: [Cheer] = [
-            Cheer(
-                fromFriendId: maya.id,
-                fromName: maya.displayName,
-                fromInitials: maya.initials,
-                fromColorHex: maya.accentColorHex,
-                toUserId: myUserId,
-                message: "You're three demos deep — keep the momentum 🔥",
-                sentAt: cal.date(byAdding: .hour, value: -1, to: now) ?? now
-            ),
-            Cheer(
-                fromFriendId: theo.id,
-                fromName: theo.displayName,
-                fromInitials: theo.initials,
-                fromColorHex: theo.accentColorHex,
-                toUserId: myUserId,
-                message: "Proud of your streak this week.",
-                sentAt: cal.date(byAdding: .hour, value: -4, to: now) ?? now
-            )
-        ]
-
-        return (friends, circles, posts, cheers)
-    }
-
-    /// Fill a store instance with the full sample sandbox — personal
-    /// content plus the local social preview. Used both by `startDemo()`
-    /// and the init rebuild path. Assignments here are made directly on
-    /// `store`, so callers must mark dirty + flush themselves.
-    static func applyDemoSeed(to store: Store) {
-        store.currentSeason = seedSeason()
-        store.tasks = seedTasks()
-        store.todos = seedTodos()
-        store.logEntries = seedLogEntries()
-        store.folders = seedFolders()
-        store.notes = seedNotes()
-
-        let social = seedDemoSocial(myUserId: store.currentUserId)
-        store.friends = social.friends
-        store.circles = social.circles
-        store.storyPosts = social.posts
-        store.cheers = social.cheers
-    }
 }
 
 // MARK: - First-run lifecycle
 //
-// The three transitions out of the welcome intro: a clean personal
-// start, the sample sandbox, and leaving the sandbox. Each writes the
-// new `appMode` straight to UserDefaults (it sits outside the batched
-// DataKey slices) and flushes the data through immediately.
+// The transitions out of the welcome intro: a clean personal start or
+// a returning sign-in. Each writes the new `appMode` straight to
+// UserDefaults (it sits outside the batched DataKey slices) and
+// flushes the data through immediately.
 
 extension Store {
     private func persistAppMode() {
@@ -3912,17 +3614,6 @@ extension Store {
         flushPendingSaves()
     }
 
-    /// "Explore a demo": load the full sample sandbox and enter
-    /// `.demo` mode so the marker shows.
-    func startDemo() {
-        wipeAllData()
-        Store.applyDemoSeed(to: self)
-        appMode = .demo
-        persistAppMode()
-        markAllDirty()
-        flushPendingSaves()
-    }
-
     /// A returning user signed in from the welcome intro. Leave the
     /// empty placeholder season in place — the account's real season,
     /// journal, circles, and friends restore over the cloud sync — and
@@ -3932,19 +3623,6 @@ extension Store {
         guard appMode == .uninitialized else { return }
         appMode = .clean
         persistAppMode()
-    }
-
-    /// "Exit demo": wipe every sample row and return to the first-run
-    /// welcome. The full onboarding (board → sign-in seam) runs again,
-    /// so a signed-out explorer is never dropped into a setup flow that
-    /// needs an account without any way to sign in.
-    func exitDemo() {
-        wipeAllData()
-        currentSeason = Store.emptySeason()
-        appMode = .uninitialized
-        persistAppMode()
-        markAllDirty()
-        flushPendingSaves()
     }
 
     /// Commit the 60-second cold-start board. Builds a real (named)

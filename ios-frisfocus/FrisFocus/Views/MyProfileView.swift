@@ -429,11 +429,6 @@ struct MyProfileView: View {
 
             JournalHairline().padding(.vertical, 18)
             activityRow
-
-            if store.appMode == .demo {
-                JournalHairline().padding(.vertical, 18)
-                exitDemoRow
-            }
         }
     }
 
@@ -520,42 +515,6 @@ struct MyProfileView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("View recent likes, comments, and cheers")
-    }
-
-    private var exitDemoRow: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            dismiss()
-            store.exitDemo()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "rectangle.portrait.and.arrow.right")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.cadenceLavenderDark)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Exit demo")
-                        .font(.sans(15, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text("Clear the sample data and start your own season")
-                        .font(.sans(12.5, weight: .regular))
-                        .foregroundStyle(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-            }
-            .padding(.vertical, 14)
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Theme.cadenceLavenderWash)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Theme.cadenceLavender.opacity(0.35), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Actions

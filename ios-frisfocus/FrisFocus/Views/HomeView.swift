@@ -38,6 +38,7 @@ struct HomeView: View {
     /// Inline journal composer state. Home owns it so a user-driven
     /// scroll can dismiss the keyboard and settle the note zone closed.
     @State private var isQuickNoteOpen: Bool = false
+    @State private var editingNoteID: UUID?
     @State private var topSafeInset: CGFloat = 0
     /// Invitation card: observation kinds the person has quieted for this
     /// season (loaded once, updated on dismiss). Drives the pull-not-push
@@ -206,6 +207,7 @@ struct HomeView: View {
 
                         NoteZoneView(
                             isQuickNoteOpen: $isQuickNoteOpen,
+                            editingNoteID: $editingNoteID,
                             onComposerTyping: {
                                 // Keep the line being written visible
                                 // above the keyboard as the note grows.
@@ -234,9 +236,10 @@ struct HomeView: View {
                 .scrollClipDisabled(false)
                 .scrollPosition($scrollPosition)
                 .onScrollPhaseChange { _, newPhase in
-                    guard newPhase == .interacting, isQuickNoteOpen else { return }
+                    guard newPhase == .interacting, isQuickNoteOpen || editingNoteID != nil else { return }
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isQuickNoteOpen = false
+                        editingNoteID = nil
                     }
                 }
                 .onScrollGeometryChange(for: ScrollMetrics.self) { geo in
@@ -599,10 +602,10 @@ private struct UndoBanner: View {
 
 // MARK: - Activity glance chip
 
-/// Trailing pill on the sun zone — the way into Recent Activity.
-/// Warm and counted while unseen likes / comments / cheers wait; a
-/// quiet bell when everything's been seen, so the sheet is always
-/// one tap away.
+/// Trailing control on the sun zone — the way into Recent Activity.
+/// At rest it's a quiet bell in a compact circle; the moment unseen
+/// likes / comments / cheers wait, it expands into a warm counted
+/// "N new for you" pill, animating between the two states.
 private struct ActivityGlanceChip: View {
     let count: Int
     let onTap: () -> Void
@@ -613,14 +616,20 @@ private struct ActivityGlanceChip: View {
         Button(action: onTap) {
             HStack(spacing: 7) {
                 Image(systemName: hasNew ? "heart.fill" : "bell")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(hasNew ? Theme.sunWarm : Theme.textPrimary.opacity(0.45))
-                Text(label)
-                    .font(.sans(12.5, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(hasNew ? 0.85 : 0.55))
+                    .font(.system(size: hasNew ? 11 : 13, weight: .semibold))
+                    .foregroundStyle(hasNew ? Theme.sunWarm : Theme.textPrimary.opacity(0.5))
+                if hasNew {
+                    Text(label)
+                        .font(.sans(12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
+            .padding(.horizontal, hasNew ? 13 : 0)
+            .padding(.vertical, hasNew ? 8 : 0)
+            .frame(minWidth: 34, minHeight: 34)
             .background(
                 Capsule(style: .continuous)
                     .fill(.ultraThinMaterial)
@@ -636,6 +645,7 @@ private struct ActivityGlanceChip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: hasNew)
         .accessibilityLabel(
             hasNew
                 ? "\(count) new likes, comments, or cheers. Tap to view."
@@ -644,8 +654,7 @@ private struct ActivityGlanceChip: View {
     }
 
     private var label: String {
-        guard hasNew else { return "Activity" }
-        return count == 1 ? "1 new for you" : "\(count) new for you"
+        count == 1 ? "1 new for you" : "\(count) new for you"
     }
 }
 

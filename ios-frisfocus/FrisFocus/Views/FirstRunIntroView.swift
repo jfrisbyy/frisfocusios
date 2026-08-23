@@ -8,18 +8,15 @@
 //  sun low, ready for the first check.
 //
 //  A quiet "Already have an account? Sign in" link restores returning
-//  users, and a small secondary "Explore a demo" entry lets anyone
-//  wander a fully lived-in sample life first. Shown only while the
-//  Store sits in `.uninitialized`.
+//  users. Shown only while the Store sits in `.uninitialized` — the only
+//  ways forward are building a season (then required sign-in) or signing
+//  straight in.
 //
 
 import SwiftUI
 import AuthenticationServices
 
 struct FirstRunIntroView: View {
-    /// Load the fully-lived-in sample sandbox.
-    let onStartDemo: () -> Void
-
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -44,7 +41,6 @@ struct FirstRunIntroView: View {
                     DawnBackdrop(progress: 0).ignoresSafeArea()
                     WelcomePanel(
                         onStart: { advance(to: .manifesto) },
-                        onDemo: onStartDemo,
                         onSignIn: { showSignIn = true }
                     )
                 }
@@ -139,7 +135,6 @@ struct FirstRunIntroView: View {
 
 private struct WelcomePanel: View {
     let onStart: () -> Void
-    let onDemo: () -> Void
     let onSignIn: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -204,30 +199,6 @@ private struct WelcomePanel: View {
                             .fill(Theme.textCream)
                     )
                     .shadow(color: .black.opacity(0.22), radius: 14, y: 6)
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    onDemo()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "binoculars.fill")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("Explore a demo first")
-                            .font(.sans(15, weight: .medium))
-                    }
-                    .foregroundStyle(Theme.textCream.opacity(0.9))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color.white.opacity(0.1))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Theme.textCream.opacity(0.18), lineWidth: 1)
-                    )
                 }
                 .buttonStyle(.plain)
 
@@ -346,7 +317,7 @@ private struct SignInSheet: View {
 }
 
 #Preview {
-    FirstRunIntroView(onStartDemo: {})
+    FirstRunIntroView()
         .environment(AuthManager())
         .environment(Store())
 }

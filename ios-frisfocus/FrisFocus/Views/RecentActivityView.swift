@@ -82,6 +82,11 @@ struct RecentActivityView: View {
             }
             store.markActivitySeen()
         }
+        .onDisappear {
+            // Anything that streamed in while the sheet was open was read
+            // too — stamp again on close so it doesn't instantly re-badge.
+            store.markActivitySeen()
+        }
         .fullScreenCover(item: $playerTarget) { target in
             StoryPlayerView(mode: target.mode, initialPostId: target.id)
                 .environment(store)

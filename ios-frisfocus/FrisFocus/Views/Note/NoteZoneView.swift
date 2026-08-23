@@ -20,6 +20,9 @@ struct NoteZoneView: View {
     @Environment(Store.self) private var store
 
     @Binding var isQuickNoteOpen: Bool
+    /// The note currently being edited in place on the page — tapping an
+    /// entry swaps its row for the inline composer, prefilled.
+    @Binding var editingNoteID: UUID?
     /// Fired as the person types in the inline composer; the home page
     /// uses it to keep the composer scrolled into view.
     var onComposerTyping: (() -> Void)? = nil
@@ -149,7 +152,19 @@ struct NoteZoneView: View {
         } else {
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(visibleNotes) { note in
-                    NoteEntryView(note: note)
+                    if editingNoteID == note.id {
+                        QuickNoteComposerView(
+                            isPresented: editorPresented,
+                            draftNoteID: .constant(note.id),
+                            onExpand: expandQuickNote,
+                            onTyping: onComposerTyping,
+                            editingNote: note
+                        )
+                        .id(Self.quickNoteAnchorID)
+                        .transition(.opacity)
+                    } else {
+                        NoteEntryView(note: note, onTap: beginEditing)
+                    }
                     if note.id != visibleNotes.last?.id {
                         Rectangle()
                             .fill(Theme.textPrimary.opacity(0.05))
@@ -173,7 +188,27 @@ struct NoteZoneView: View {
             store.viewingDay = nil
         }
         withAnimation(.easeInOut(duration: 0.22)) {
+            editingNoteID = nil
             isQuickNoteOpen = true
+        }
+    }
+
+    /// Bridges the composer's `isPresented` binding onto `editingNoteID` —
+    /// closing the editor clears the edited note.
+    private var editorPresented: Binding<Bool> {
+        Binding(
+            get: { editingNoteID != nil },
+            set: { open in
+                if !open { editingNoteID = nil }
+            }
+        )
+    }
+
+    private func beginEditing(_ note: Note) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.easeInOut(duration: 0.22)) {
+            isQuickNoteOpen = false
+            editingNoteID = note.id
         }
     }
 
@@ -201,7 +236,7 @@ private struct EmptyNoteHintView: View {
 #Preview {
     NavigationStack {
         ScrollView {
-            NoteZoneView(isQuickNoteOpen: .constant(false))
+            NoteZoneView(isQuickNoteOpen: .constant(false), editingNoteID: .constant(nil))
         }
         .environment(Store())
     }

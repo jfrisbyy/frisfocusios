@@ -34,10 +34,8 @@ struct ContentView: View {
 
     @State private var pendingInvite: InviteTarget?
     @State private var showSeasonSetupFromComplete: Bool = false
-    /// Drives guided season setup after a clean start or leaving the demo.
+    /// Drives guided season setup after a clean start.
     @State private var showCleanSeasonSetup: Bool = false
-    /// Confirmation before wiping the sample sandbox.
-    @State private var showExitDemoConfirm: Bool = false
     /// True once a returning user signed in from the welcome intro, so
     /// dismissing the cover never bounces them into guided season setup
     /// while their real season is still restoring from the cloud.
@@ -56,16 +54,10 @@ struct ContentView: View {
     var body: some View {
         @Bindable var store = store
         return HomeView()
-            // Demo marker — a small, always-legible pill while exploring
-            // the sample sandbox, tappable to leave it.
+            // A returning sign-in whose season is still coming down
+            // from the cloud — say so instead of looking empty.
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
-                    if store.appMode == .demo {
-                        DemoModePill { showExitDemoConfirm = true }
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                    // A returning sign-in whose season is still coming down
-                    // from the cloud — say so instead of looking empty.
                     if auth.user != nil,
                        seasonSync.isRestoring,
                        store.appMode == .clean,
@@ -78,18 +70,6 @@ struct ContentView: View {
             }
             .animation(.easeInOut(duration: 0.3), value: store.appMode)
             .animation(.easeInOut(duration: 0.3), value: seasonSync.isRestoring)
-            .confirmationDialog(
-                "Exit demo?",
-                isPresented: $showExitDemoConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Exit and start fresh", role: .destructive) {
-                    store.exitDemo()
-                }
-                Button("Keep exploring", role: .cancel) {}
-            } message: {
-                Text("This clears all the sample data and takes you back to the start, where you can build your own season. Nothing from the demo is kept.")
-            }
             // First-launch welcome — covers the home until the user picks
             // a path. Non-dismissible: a choice must be made.
             .fullScreenCover(isPresented: introBinding, onDismiss: {
@@ -109,21 +89,15 @@ struct ContentView: View {
                     if auth.isLoading && auth.hasRestorableSession {
                         AccountRestoreCover()
                     } else {
-                        FirstRunIntroView(
-                            onStartDemo: { store.startDemo() }
-                        )
+                        FirstRunIntroView()
                     }
                 }
                 .interactiveDismissDisabled(true)
             }
-            // Guided season setup for a clean start / after exiting the demo.
+            // Guided season setup for a clean start.
             .fullScreenCover(isPresented: $showCleanSeasonSetup) {
                 SeasonSetupFlowView()
             }
-            // Leaving the demo returns to `.uninitialized`, so the
-            // first-run welcome (board → sign-in seam) presents itself
-            // via `introBinding` — a signed-out explorer always has a
-            // real path to an account.
             .sheet(isPresented: $store.showCarryForwardPrompt) {
                 CarryForwardPromptView(candidates: store.carryForwardCandidates)
                     .environment(store)
@@ -384,50 +358,6 @@ private struct CloudRestoreBanner: View {
         )
         .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         .accessibilityLabel("Restoring your season from your account")
-    }
-}
-
-// MARK: - Demo marker
-
-/// A small, always-legible pill shown at the top of the home while the
-/// user is exploring the sample sandbox. Tapping it offers a way out.
-private struct DemoModePill: View {
-    let onTap: () -> Void
-    @State private var pulse: Bool = false
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(Theme.cadenceLavender)
-                    .frame(width: 7, height: 7)
-                    .opacity(pulse ? 0.4 : 1)
-                Text("Demo · sample data")
-                    .font(.sans(12.5, weight: .semibold))
-                Text("Exit")
-                    .font(.sans(12.5, weight: .semibold))
-                    .foregroundStyle(Theme.cadenceLavenderDark)
-            }
-            .foregroundStyle(Theme.textPrimary.opacity(0.8))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.ultraThinMaterial)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(Theme.cadenceLavender.opacity(0.45), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
-        }
-        .buttonStyle(.plain)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
-                pulse = true
-            }
-        }
-        .accessibilityLabel("Exploring demo with sample data. Tap to exit.")
     }
 }
 

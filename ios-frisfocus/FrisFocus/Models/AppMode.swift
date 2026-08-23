@@ -3,9 +3,10 @@
 //  FrisFocus
 //
 //  The lifecycle state of a fresh install. On the very first launch the
-//  Store no longer silently seeds a fake life — instead it sits in
-//  `.uninitialized` until the welcome intro resolves into either a clean
-//  personal start (`.clean`) or a fully-seeded sample sandbox (`.demo`).
+//  Store sits in `.uninitialized` until the welcome intro resolves into
+//  a clean personal start (`.clean`) backed by a real signed-in account.
+//  (The old `.demo` sample sandbox has been removed — a stored "demo"
+//  marker is treated as uninitialized and its data purged.)
 //
 
 import Foundation
@@ -21,9 +22,4 @@ nonisolated enum AppMode: String, Codable, Equatable {
     /// The user chose to start their own season from a clean slate.
     /// Nothing is seeded; they go straight into guided season setup.
     case clean
-
-    /// The user is exploring the fully-populated sample sandbox. A
-    /// persistent marker stays visible, and "Exit demo" wipes it back
-    /// to a clean start.
-    case demo
 }

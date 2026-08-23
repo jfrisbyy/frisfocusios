@@ -14,6 +14,9 @@ import SwiftUI
 
 struct NoteEntryView: View {
     let note: Note
+    /// When provided, tapping the row calls this instead of pushing the
+    /// full editor — the homepage uses it to open the inline composer.
+    var onTap: ((Note) -> Void)? = nil
     @Environment(Store.self) private var store
 
     private static let timeFormatter: DateFormatter = {
@@ -23,12 +26,21 @@ struct NoteEntryView: View {
     }()
 
     var body: some View {
-        NavigationLink {
-            NoteDetailEditView(note: note)
-        } label: {
-            content
+        if let onTap {
+            Button {
+                onTap(note)
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink {
+                NoteDetailEditView(note: note)
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder

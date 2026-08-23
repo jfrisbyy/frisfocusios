@@ -88,7 +88,8 @@ struct SundialNavView: View {
             Capsule()
                 .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
         )
-        .clipShape(Capsule())
+        // No .clipShape here — the background is already capsule-shaped,
+        // and clipping would cut off the unread badge riding the edge.
         .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
         .opacity(isTouched ? 1.0 : restOpacity)
         .scaleEffect(isTouched ? 1.0 : 0.985, anchor: .bottom)
@@ -150,7 +151,7 @@ struct SundialNavView: View {
                                     lineWidth: 1.2
                                 )
                             )
-                            .offset(x: 6, y: -2)
+                            .offset(x: 4, y: -4)
                             .transition(.scale.combined(with: .opacity))
                             .accessibilityHidden(true)
                     }
