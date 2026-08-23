@@ -51,6 +51,8 @@ struct ProofPlayerView: View {
     @State private var crossedDismissThreshold: Bool = false
     @State private var pressStart: Date?
     @State private var reportTarget: ReportTarget?
+    /// Asks for confirmation before blocking the sender.
+    @State private var showBlockConfirm: Bool = false
     /// Keeps the player up briefly after a reaction so the burst lands.
     @State private var didReact: Bool = false
     /// True while this player holds the playback audio-session claim
@@ -104,6 +106,21 @@ struct ProofPlayerView: View {
             )
             .environment(auth)
             .environment(moderation)
+        }
+        .confirmationDialog(
+            "Block \(friend.displayName)?",
+            isPresented: $showBlockConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Block", role: .destructive) {
+                blockSender()
+            }
+            Button("Cancel", role: .cancel) {
+                isPaused = false
+                player?.play()
+            }
+        } message: {
+            Text("They won't be able to message you or see your days, and you won't see theirs.")
         }
         .onAppear { presence?.setWatching(true) }
     }
@@ -246,12 +263,24 @@ struct ProofPlayerView: View {
             Spacer()
 
             Menu {
-                Button(role: .destructive) {
+                Button {
+                    hideThisProof()
+                } label: {
+                    Label("Hide this proof", systemImage: "eye.slash")
+                }
+                Button {
                     isPaused = true
                     player?.pause()
                     reportTarget = ReportTarget(reportedUserId: friend.id, messageId: proof.id, subjectName: friend.displayName)
                 } label: {
                     Label("Report this proof", systemImage: "flag")
+                }
+                Button(role: .destructive) {
+                    isPaused = true
+                    player?.pause()
+                    showBlockConfirm = true
+                } label: {
+                    Label("Block \(friend.displayName)", systemImage: "hand.raised")
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -364,8 +393,28 @@ struct ProofPlayerView: View {
 
     // MARK: - Playback timing
 
+    /// Hide this proof from the thread on this account — instant and
+    /// local, remembered across refreshes. Nothing is sent to the
+    /// sender; the player simply closes over the removed proof.
+    private func hideThisProof() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        moderation.hideProof(proof.id)
+        message.removeLocally(proof.id)
+        dismiss()
+    }
+
+    /// Block the sender: sever the relationship server-side, then
+    /// close the player — the thread empties out with the block.
+    private func blockSender() {
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        Task {
+            await moderation.block(friend.id, myUserId: myUserId)
+            dismiss()
+        }
+    }
+
     private func tickProgress() {
-        guard !isPaused, !isLoading, !failed, reportTarget == nil else { return }
+        guard !isPaused, !isLoading, !failed, reportTarget == nil, !showBlockConfirm else { return }
         clock.progress += tick / max(0.1, currentDuration)
         if clock.progress >= 1 {
             clock.progress = 1

@@ -165,7 +165,7 @@ struct StoryPlayerView: View {
     /// Posts from anyone the user has blocked vanish immediately, even
     /// before the server refresh drops them.
     private var posts: [StoryPost] {
-        basePosts.filter { !isBlockedAuthor($0.authorId) }
+        basePosts.filter { !isBlockedAuthor($0.authorId) && !moderation.isStoryHidden($0.id) }
     }
 
     private var basePosts: [StoryPost] {
@@ -589,10 +589,15 @@ struct StoryPlayerView: View {
         }
     }
 
-    /// The "…" safety menu on someone else's segment: report the
-    /// post, or block its author entirely.
+    /// The "…" safety menu on someone else's segment: hide the post,
+    /// report it, or block its author entirely.
     private func moderationMenu(for post: StoryPost) -> some View {
         Menu {
+            Button {
+                hideCurrentPost(post)
+            } label: {
+                Label("Hide this story", systemImage: "eye.slash")
+            }
             Button {
                 isPaused = true
                 reportTarget = ReportTarget(
@@ -1116,6 +1121,27 @@ struct StoryPlayerView: View {
         store.deleteMyStoryPost(postId)
         // After removal, `posts` recomputes. Clamp the playhead so we
         // never index past the end; dismiss when nothing remains.
+        if posts.isEmpty {
+            dismiss()
+            return
+        }
+        if currentIndex >= posts.count {
+            currentIndex = posts.count - 1
+        }
+        clock.progress = 0
+        isPaused = false
+    }
+
+    /// Hide someone else's post from this account everywhere — the
+    /// player, story rings, activity — and keep it hidden across sync
+    /// refreshes. Quiet and instant: no confirmation, nothing is sent
+    /// to the author, the tape just moves on.
+    private func hideCurrentPost(_ post: StoryPost) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        moderation.hideStory(post.id)
+        store.storyPosts.removeAll { $0.id == post.id }
+        // `posts` recomputes. Clamp the playhead so we never index past
+        // the end; dismiss when nothing remains to watch.
         if posts.isEmpty {
             dismiss()
             return

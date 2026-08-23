@@ -211,6 +211,15 @@ extension SocialSyncService {
             }
             mapped.append(contentsOf: optimistic)
             mapped.sort { $0.createdAt > $1.createdAt }
+
+            // Posts this account chose to hide never re-enter from the
+            // server — dropped at ingest so no surface has to remember.
+            if let uid = myUserId {
+                let hidden = ModerationService.persistedHiddenStories(userId: uid)
+                if !hidden.isEmpty {
+                    mapped.removeAll { hidden.contains($0.id) }
+                }
+            }
             store.storyPosts = mapped
 
             store.likes = likeRows.map { row in

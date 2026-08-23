@@ -208,6 +208,12 @@ final class MessageGraphService {
     /// never re-sign (and the URL cache stays warm).
     @ObservationIgnored private var signedURLCache: [String: (url: URL, expires: Date)] = [:]
 
+    /// Proofs this account chose to hide — loaded with each `load` and
+    /// enforced on every ingest path (initial window, older pages,
+    /// realtime) so a hidden proof can never resurface in a thread.
+    /// Persistence lives with `ModerationService`.
+    @ObservationIgnored private var hiddenIds: Set<UUID> = []
+
     /// The column list every row fetch shares.
     private static let rowColumns = "id, sender_id, recipient_id, kind, body, media_path, media_kind, media_duration, created_at, read_at, watched_at"
 
@@ -261,6 +267,7 @@ final class MessageGraphService {
     func load(myUserId: String) async {
         isLoading = true
         defer { isLoading = false }
+        hiddenIds = ModerationService.persistedHiddenProofs(userId: myUserId)
         do {
             let rows: [DirectMessageRow] = try await supabase
                 .from("direct_messages")
@@ -280,6 +287,7 @@ final class MessageGraphService {
             // retry) must survive a reload — they don't exist server-side.
             let localOnly = messages.filter { failedMessageIds.contains($0.id) || pendingMessageIds.contains($0.id) }
             messages = (rows.reversed().compactMap(mapRow) + localOnly)
+                .filter { !hiddenIds.contains($0.id) }
                 .sorted { $0.createdAt < $1.createdAt }
             syncBadge(myUserId: myUserId)
             prefetchMedia(myUserId: myUserId)
@@ -318,7 +326,8 @@ final class MessageGraphService {
                 exhaustedThreads.insert(friendId)
             }
             let existing = Set(messages.map(\.id))
-            let fresh = rows.compactMap(mapRow).filter { !existing.contains($0.id) }
+            let fresh = rows.compactMap(mapRow)
+                .filter { !existing.contains($0.id) && !hiddenIds.contains($0.id) }
             guard !fresh.isEmpty else { return }
             messages.append(contentsOf: fresh)
             messages.sort { $0.createdAt < $1.createdAt }
@@ -528,9 +537,19 @@ final class MessageGraphService {
     }
 
     private func appendIfNew(_ row: DirectMessageRow) {
-        guard let message = mapRow(row), !messages.contains(where: { $0.id == message.id }) else { return }
+        guard let message = mapRow(row),
+              !hiddenIds.contains(message.id),
+              !messages.contains(where: { $0.id == message.id }) else { return }
         messages.append(message)
         messages.sort { $0.createdAt < $1.createdAt }
+    }
+
+    /// Strip one message from the live window and remember it as hidden
+    /// so realtime echoes and later pages can't resurrect it. Callers
+    /// persist the hide through `ModerationService.hideProof`.
+    func removeLocally(_ messageId: UUID) {
+        hiddenIds.insert(messageId)
+        messages.removeAll { $0.id == messageId }
     }
 
     // MARK: Optimistic plumbing

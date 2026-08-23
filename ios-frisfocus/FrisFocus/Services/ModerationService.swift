@@ -2,15 +2,18 @@
 //  ModerationService.swift
 //  FrisFocus
 //
-//  Safety tools required for a social app: blocking and reporting. Block
-//  is symmetric — once you block someone the friendship is severed, any
-//  pending requests are cleared, and RLS stops either of you from
-//  messaging or re-requesting the other. Reporting files a row for
-//  out-of-band review.
+//  Safety tools required for a social app: blocking, reporting, and
+//  hiding. Block is symmetric — once you block someone the friendship
+//  is severed, any pending requests are cleared, and RLS stops either
+//  of you from messaging or re-requesting the other. Reporting files a
+//  row for out-of-band review. Hiding is quieter: one piece of content
+//  (a story post, a proof) disappears from this account's surfaces
+//  without touching the relationship — persisted per account so sync
+//  refreshes can never resurrect it.
 //
 //  Injected once at the app root so every surface can read `blockedIds`
-//  to hide a blocked person, and call `block` / `report` from their
-//  "..." menus.
+//  to hide a blocked person, and call `block` / `report` / `hideStory`
+//  / `hideProof` from their "..." menus.
 //
 
 import Foundation
@@ -60,15 +63,29 @@ final class ModerationService {
     /// Account ids the signed-in user has blocked. Surfaces read this to
     /// hide blocked people from lists, search, and conversations.
     var blockedIds: Set<String> = []
+    /// Story posts this account chose to hide — filtered from every tape
+    /// and dropped at sync ingest so refreshes can't bring them back.
+    var hiddenStoryPostIds: Set<UUID> = []
+    /// Direct proofs this account chose to hide from their threads.
+    var hiddenProofIds: Set<UUID> = []
     var isWorking = false
     var errorMessage: String?
     var showError = false
 
+    /// The account the hidden sets were loaded for — persistence key
+    /// namespace, so two sign-ins on one device never share hides.
+    @ObservationIgnored private var hiddenOwnerUserId: String?
+
     func isBlocked(_ id: String) -> Bool { blockedIds.contains(id) }
+    func isStoryHidden(_ postId: UUID) -> Bool { hiddenStoryPostIds.contains(postId) }
+    func isProofHidden(_ messageId: UUID) -> Bool { hiddenProofIds.contains(messageId) }
 
     // MARK: Load
 
     func loadBlocks(myUserId: String) async {
+        hiddenOwnerUserId = myUserId
+        hiddenStoryPostIds = Self.persistedHiddenStories(userId: myUserId)
+        hiddenProofIds = Self.persistedHiddenProofs(userId: myUserId)
         do {
             let rows: [BlockRow] = try await supabase
                 .from("blocks")
@@ -84,6 +101,48 @@ final class ModerationService {
 
     func clear() {
         blockedIds = []
+        hiddenStoryPostIds = []
+        hiddenProofIds = []
+        hiddenOwnerUserId = nil
+    }
+
+    // MARK: Hide (quiet, per-account, local)
+
+    private static func hiddenStoriesKey(_ userId: String) -> String { "moderation.hiddenStories.\(userId)" }
+    private static func hiddenProofsKey(_ userId: String) -> String { "moderation.hiddenProofs.\(userId)" }
+
+    /// The persisted hidden-story ids for an account — readable by sync
+    /// services at ingest without holding the live instance.
+    static func persistedHiddenStories(userId: String) -> Set<UUID> {
+        let raw = UserDefaults.standard.stringArray(forKey: hiddenStoriesKey(userId)) ?? []
+        return Set(raw.compactMap(UUID.init(uuidString:)))
+    }
+
+    /// The persisted hidden-proof ids for an account.
+    static func persistedHiddenProofs(userId: String) -> Set<UUID> {
+        let raw = UserDefaults.standard.stringArray(forKey: hiddenProofsKey(userId)) ?? []
+        return Set(raw.compactMap(UUID.init(uuidString:)))
+    }
+
+    /// Hide one story post from every surface on this account. Quiet
+    /// and instant — no confirmation, nothing sent to the author.
+    func hideStory(_ postId: UUID) {
+        hiddenStoryPostIds.insert(postId)
+        guard let userId = hiddenOwnerUserId else { return }
+        UserDefaults.standard.set(
+            hiddenStoryPostIds.map(\.uuidString),
+            forKey: Self.hiddenStoriesKey(userId)
+        )
+    }
+
+    /// Hide one direct proof from this account's threads.
+    func hideProof(_ messageId: UUID) {
+        hiddenProofIds.insert(messageId)
+        guard let userId = hiddenOwnerUserId else { return }
+        UserDefaults.standard.set(
+            hiddenProofIds.map(\.uuidString),
+            forKey: Self.hiddenProofsKey(userId)
+        )
     }
 
     /// Profiles for the people the user has blocked — for the
