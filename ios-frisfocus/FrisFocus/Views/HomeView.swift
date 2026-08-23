@@ -64,6 +64,8 @@ struct HomeView: View {
     @State private var homeEventTarget: HomeEventTarget?
     /// Brief confirmation text after a shake-to-undo. Nil when hidden.
     @State private var undoMessage: String?
+    /// The Recent Activity sheet (likes, comments, cheers on me).
+    @State private var showActivity: Bool = false
     /// Auto-dismiss timer for the undo banner.
     @State private var undoDismissTask: Task<Void, Never>?
 
@@ -124,6 +126,10 @@ struct HomeView: View {
         }
         .sheet(item: $homeEventTarget) { target in
             CircleEventDetailView(eventId: target.eventId)
+                .environment(store)
+        }
+        .sheet(isPresented: $showActivity) {
+            RecentActivityView()
                 .environment(store)
         }
         .fullScreenCover(isPresented: $showSeasonConversation) {
@@ -315,6 +321,21 @@ struct HomeView: View {
                     // or someone accepted yours. Tap opens Friends.
                     FriendRequestBanner {
                         showFriendsFromBanner = true
+                    }
+
+                    // Quiet engagement badge — someone liked, commented,
+                    // or cheered since the user last looked. Tap opens
+                    // the Recent Activity sheet.
+                    if store.viewingDay == nil, store.unseenActivityCount > 0 {
+                        HStack {
+                            Spacer()
+                            ActivityGlanceChip(count: store.unseenActivityCount) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                showActivity = true
+                            }
+                        }
+                        .padding(.horizontal, Theme.pageHorizontalPadding)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
                     // The next circle event you're in on — one glance away.
@@ -539,6 +560,43 @@ private struct UndoBanner: View {
             Capsule().fill(Theme.textPrimary.opacity(0.92))
         )
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+    }
+}
+
+// MARK: - Activity glance chip
+
+/// Quiet trailing pill on the sun zone — appears only while unseen
+/// likes / comments / cheers are waiting; tapping opens the Recent
+/// Activity sheet.
+private struct ActivityGlanceChip: View {
+    let count: Int
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 7) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.sunWarm)
+                Text(count == 1 ? "1 new for you" : "\(count) new for you")
+                    .font(.sans(12.5, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Theme.sunWarm.opacity(0.45), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(count) new likes, comments, or cheers. Tap to view.")
     }
 }
 

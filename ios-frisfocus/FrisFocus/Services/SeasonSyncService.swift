@@ -58,6 +58,11 @@ private nonisolated struct ProfileCardRow: Decodable, Sendable {
 final class SeasonSyncService {
     private(set) var myUserId: String?
 
+    /// True while the startup cloud restore is in flight — the home
+    /// shows a quiet "Restoring your account…" state instead of a
+    /// flash of empty content for a returning sign-in.
+    private(set) var isRestoring: Bool = false
+
     @ObservationIgnored weak var store: Store?
     @ObservationIgnored private var flushDebounce: Task<Void, Never>?
     @ObservationIgnored private var isFlushing = false
@@ -144,7 +149,9 @@ final class SeasonSyncService {
         // backup before we are ever allowed to upload. Retries on
         // failure so a network hiccup never makes us assume there's no
         // data and blank the account out.
+        isRestoring = true
         await restoreFromCloud()
+        isRestoring = false
 
         // Last-resort local fallback: if a slice is still empty after the
         // cloud restore (e.g. the backup was blanked by an older build),

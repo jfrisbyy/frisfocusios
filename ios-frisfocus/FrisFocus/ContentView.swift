@@ -59,13 +59,25 @@ struct ContentView: View {
             // Demo marker — a small, always-legible pill while exploring
             // the sample sandbox, tappable to leave it.
             .overlay(alignment: .top) {
-                if store.appMode == .demo {
-                    DemoModePill { showExitDemoConfirm = true }
-                        .padding(.top, 4)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                VStack(spacing: 8) {
+                    if store.appMode == .demo {
+                        DemoModePill { showExitDemoConfirm = true }
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    // A returning sign-in whose season is still coming down
+                    // from the cloud — say so instead of looking empty.
+                    if auth.user != nil,
+                       seasonSync.isRestoring,
+                       store.appMode == .clean,
+                       store.currentSeason.name.isEmpty {
+                        CloudRestoreBanner()
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                .padding(.top, 4)
             }
             .animation(.easeInOut(duration: 0.3), value: store.appMode)
+            .animation(.easeInOut(duration: 0.3), value: seasonSync.isRestoring)
             .confirmationDialog(
                 "Exit demo?",
                 isPresented: $showExitDemoConfirm,
@@ -90,9 +102,18 @@ struct ContentView: View {
                     startMechanicsTourIfFresh()
                 }
             }) {
-                FirstRunIntroView(
-                    onStartDemo: { store.startDemo() }
-                )
+                // A cold launch with restorable credentials: hold a calm
+                // "restoring" cover instead of flashing the welcome
+                // buttons while the silent session restore is in flight.
+                Group {
+                    if auth.isLoading && auth.hasRestorableSession {
+                        AccountRestoreCover()
+                    } else {
+                        FirstRunIntroView(
+                            onStartDemo: { store.startDemo() }
+                        )
+                    }
+                }
                 .interactiveDismissDisabled(true)
             }
             // Guided season setup for a clean start / after exiting the demo.
@@ -198,6 +219,10 @@ struct ContentView: View {
                 print("[FrisFocus] Tasks: \(store.tasks.count), To-dos: \(store.todos.count), Notes: \(store.notes.count), LogEntries: \(store.logEntries.count)")
                 store.performDayRolloverIfNeeded()
                 store.evaluateCarryForwardPrompt()
+                // Build today's on-device reminders and hand the widget
+                // its first snapshot of the day.
+                store.schedulePlanReminderRefresh()
+                WidgetBridge.publish(from: store)
                 // Keep milestone target-week nudges aligned with the
                 // season's current milestones on every launch.
                 store.refreshMilestoneNudges()
@@ -222,6 +247,7 @@ struct ContentView: View {
                 if newPhase == .active {
                     store.performDayRolloverIfNeeded()
                     store.evaluateCarryForwardPrompt()
+                    store.schedulePlanReminderRefresh()
                     // A network hiccup at launch may have left the app
                     // signed out with valid tokens still stored — retry
                     // the silent restore now that we're back.
@@ -291,6 +317,73 @@ extension ContentView {
             return false
         }
         walkthrough.startMechanicsTour(includesQuantity: hasQuantity)
+    }
+}
+
+// MARK: - Account restore states
+
+/// Full-screen cover shown during a cold launch while stored
+/// credentials are being silently restored — in place of the welcome
+/// intro, which would otherwise flash for returning users.
+private struct AccountRestoreCover: View {
+    var body: some View {
+        ZStack {
+            Theme.warmWheat.ignoresSafeArea()
+            VStack(spacing: 18) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.textPrimary)
+                        .frame(width: 76, height: 76)
+                        .overlay(Circle().stroke(Theme.sunWarm, lineWidth: 2))
+                    Image(systemName: "sun.max.fill")
+                        .font(.system(size: 32, weight: .regular))
+                        .foregroundStyle(Theme.sunWarm)
+                }
+                .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 4)
+
+                VStack(spacing: 8) {
+                    Text("Restoring your account…")
+                        .font(.serif(22, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Signing you back in and gathering your season.")
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                ProgressView()
+                    .tint(Theme.textPrimary)
+                    .padding(.top, 6)
+            }
+            .padding(40)
+        }
+    }
+}
+
+/// Quiet top pill while a signed-in account's season is still coming
+/// down from the cloud — the moment data lands, it disappears.
+private struct CloudRestoreBanner: View {
+    var body: some View {
+        HStack(spacing: 9) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(Theme.textPrimary)
+            Text("Restoring your season from your account…")
+                .font(.sans(12.5, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.8))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Theme.sunWarm.opacity(0.45), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .accessibilityLabel("Restoring your season from your account")
     }
 }
 

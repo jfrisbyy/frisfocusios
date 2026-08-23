@@ -43,7 +43,7 @@ struct BringPeopleStep: View {
 
     private var myId: String? { auth.user?.id }
 
-    private var inviteURL: URL? { myId.flatMap { InviteLink.url(forUserId: $0) } }
+    private var inviteURL: URL? { myId.flatMap { InviteLink.webURL(forUserId: $0) } }
 
     private var shareMessage: String {
         let link = inviteURL?.absoluteString ?? ""

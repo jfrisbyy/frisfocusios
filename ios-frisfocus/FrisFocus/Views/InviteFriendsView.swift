@@ -21,7 +21,7 @@ struct InviteFriendsView: View {
     @State private var didCopy: Bool = false
 
     private var myId: String? { auth.user?.id }
-    private var inviteURL: URL? { myId.flatMap { InviteLink.url(forUserId: $0) } }
+    private var inviteURL: URL? { myId.flatMap { InviteLink.webURL(forUserId: $0) } }
 
     private var displayName: String {
         profileStore.myProfile?.name ?? auth.user?.name ?? "You"

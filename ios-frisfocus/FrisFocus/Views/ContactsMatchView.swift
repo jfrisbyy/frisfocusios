@@ -25,7 +25,7 @@ struct ContactsMatchView: View {
 
     private var inviteMessage: String {
         let handle = profileStore.myProfile?.handle
-        let link = myId.flatMap { InviteLink.url(forUserId: $0)?.absoluteString } ?? ""
+        let link = myId.flatMap { InviteLink.webURL(forUserId: $0)?.absoluteString } ?? ""
         if let handle {
             return "I'm on FrisFocus as \(handle) — add me and let's keep each other going. \(link)"
         }

@@ -120,6 +120,13 @@ final class Store {
     /// sync layer refills it on every refresh.
     var storyViewerIds: [UUID: Set<UUID>] = [:]
 
+    /// When the user last opened the Recent Activity sheet — anything
+    /// newer counts toward the unseen badge. Device-local and
+    /// self-persisting (deliberately outside the sync envelope).
+    var activityLastSeenAt: Date = (UserDefaults.standard.object(forKey: "activityLastSeenAt") as? Date) ?? .distantPast {
+        didSet { UserDefaults.standard.set(activityLastSeenAt, forKey: "activityLastSeenAt") }
+    }
+
     /// The day the home screen is currently "travelled" to. `nil` means
     /// today (the live home). When set to a past day, the home shows
     /// that day's snapshot and a banner offers a way back. Observed so
@@ -855,6 +862,15 @@ final class Store {
                 seasonSync?.sliceChanged(key)
             }
         }
+
+        // Plan-shaped writes feed the on-device reminder schedule and
+        // the home-screen widget. Hanging both off this single write
+        // path means every mutation site — check-offs, pins, plan
+        // edits, rollover — refreshes them without remembering to.
+        if !keys.isDisjoint(with: [.tasks, .todos, .logEntries, .season, .settings, .cadenceLinks]) {
+            schedulePlanReminderRefresh()
+        }
+        WidgetBridge.publish(from: self)
     }
 
     private func write(_ key: DataKey, with encoder: JSONEncoder) {

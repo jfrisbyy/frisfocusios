@@ -29,6 +29,7 @@ struct MyProfileView: View {
     @State private var showAccount: Bool = false
     @State private var showMyStories: Bool = false
     @State private var showCheers: Bool = false
+    @State private var showActivity: Bool = false
     @State private var showMoodEditor: Bool = false
     @State private var moodDraft: String = ""
     @State private var dayRef: DayRef?
@@ -177,6 +178,9 @@ struct MyProfileView: View {
         .sheet(isPresented: $showAccount) { ProfileSheetView() }
         .sheet(isPresented: $showCheers) {
             CheerHistoryView().environment(store)
+        }
+        .sheet(isPresented: $showActivity) {
+            RecentActivityView().environment(store)
         }
         .sheet(item: $dayRef) { ref in
             NavigationStack {
@@ -423,6 +427,9 @@ struct MyProfileView: View {
             JournalHairline().padding(.vertical, 18)
             cheersRow
 
+            JournalHairline().padding(.vertical, 18)
+            activityRow
+
             if store.appMode == .demo {
                 JournalHairline().padding(.vertical, 18)
                 exitDemoRow
@@ -480,6 +487,39 @@ struct MyProfileView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("View all cheers you’ve received and sent")
+    }
+
+    private var activityRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showActivity = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "heart.text.square.fill")
+                    .font(.sans(15, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Recent activity")
+                        .font(.sans(15, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Likes, comments, and cheers on you")
+                        .font(.serifItalic(12, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                }
+                Spacer(minLength: 4)
+                if store.unseenActivityCount > 0 {
+                    Circle()
+                        .fill(Theme.sunWarm)
+                        .frame(width: 8, height: 8)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("View recent likes, comments, and cheers")
     }
 
     private var exitDemoRow: some View {

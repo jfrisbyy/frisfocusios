@@ -320,6 +320,19 @@ struct ProfileSheetView: View {
             hubDivider
 
             NavigationLink {
+                ReminderSettingsView()
+            } label: {
+                hubRow(
+                    icon: "bell.badge.fill",
+                    title: "Reminders",
+                    subtitle: "Plan nudges through the day"
+                )
+            }
+            .buttonStyle(.plain)
+
+            hubDivider
+
+            NavigationLink {
                 BlockedAccountsView()
             } label: {
                 hubRow(
