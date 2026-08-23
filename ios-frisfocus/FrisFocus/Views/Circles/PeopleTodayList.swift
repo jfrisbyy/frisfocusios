@@ -26,6 +26,9 @@ import UIKit
 
 struct PeopleTodayList: View {
     @Environment(Store.self) private var store
+    @Environment(AuthManager.self) private var auth
+    @Environment(MessageGraphService.self) private var messageGraph
+    @Environment(SocialSyncService.self) private var socialSync
 
     /// Open the friend's detail page (separate from story viewing).
     let onRowTap: (Friend) -> Void
@@ -41,10 +44,17 @@ struct PeopleTodayList: View {
     /// collapse never hides a pending interaction.
     private let collapsedCount: Int = 4
 
+    /// Real unread count from the synced messaging backend.
+    private func unreadCount(for friend: Friend) -> Int {
+        guard let myId = auth.user?.id,
+              let remote = socialSync.remoteId(forLocal: friend.id) else { return 0 }
+        return messageGraph.unreadCount(fromFriendId: remote, myUserId: myId)
+    }
+
     private var orderedFriends: [Friend] {
         store.friends.sorted { a, b in
-            let aUnread = store.unreadCount(fromFriendId: a.id) > 0
-            let bUnread = store.unreadCount(fromFriendId: b.id) > 0
+            let aUnread = unreadCount(for: a) > 0
+            let bUnread = unreadCount(for: b) > 0
             if aUnread != bUnread { return aUnread }
             return false
         }
@@ -132,6 +142,9 @@ struct PeopleTodayList: View {
 
 private struct PersonTodayRow: View {
     @Environment(Store.self) private var store
+    @Environment(AuthManager.self) private var auth
+    @Environment(MessageGraphService.self) private var messageGraph
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let friend: Friend
@@ -152,8 +165,24 @@ private struct PersonTodayRow: View {
         friend.hitGoalToday == true || store.dayRingFraction(for: friend) >= 0.999
     }
 
-    private var unread: Int { store.unreadCount(fromFriendId: friend.id) }
-    private var latestUnread: DirectShare? { store.latestUnread(fromFriendId: friend.id) }
+    /// This friend's real cloud id — the key the synced messaging
+    /// backend speaks.
+    private var remoteId: String? { socialSync.remoteId(forLocal: friend.id) }
+
+    /// Live unread count from the delivered (Supabase) message stream.
+    private var unread: Int {
+        guard let myId = auth.user?.id, let remote = remoteId else { return 0 }
+        return messageGraph.unreadCount(fromFriendId: remote, myUserId: myId)
+    }
+
+    /// The newest still-unread message from this friend, for the notice
+    /// line and the pill's proof/note flavor.
+    private var latestUnread: DirectMessage? {
+        guard unread > 0, let myId = auth.user?.id, let remote = remoteId else { return nil }
+        return messageGraph.thread(withFriendId: remote, myUserId: myId)
+            .last { $0.senderId == remote && $0.readAt == nil }
+    }
+
     private var hasProofUnread: Bool { latestUnread?.isProof == true }
 
     var body: some View {

@@ -242,6 +242,132 @@ export type Database = {
           },
         ]
       }
+      circle_event_checkins: {
+        Row: {
+          at: string
+          event_id: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          at?: string
+          event_id: string
+          id: string
+          user_id: string
+        }
+        Update: {
+          at?: string
+          event_id?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_event_checkins_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "circle_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_event_rsvps: {
+        Row: {
+          event_id: string
+          id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          event_id: string
+          id?: string
+          status: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          event_id?: string
+          id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_event_rsvps_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "circle_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_events: {
+        Row: {
+          circle_id: string
+          created_at: string
+          creator_id: string
+          details: string | null
+          end_at: string | null
+          id: string
+          linked_circle_task_id: string | null
+          location: string | null
+          reminder_minutes: number
+          repeat_end_count: number | null
+          repeat_end_date: string | null
+          repeat_frequency: string
+          repeat_weekdays: number[]
+          series_id: string
+          start_at: string
+          title: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          creator_id: string
+          details?: string | null
+          end_at?: string | null
+          id: string
+          linked_circle_task_id?: string | null
+          location?: string | null
+          reminder_minutes?: number
+          repeat_end_count?: number | null
+          repeat_end_date?: string | null
+          repeat_frequency?: string
+          repeat_weekdays?: number[]
+          series_id: string
+          start_at: string
+          title: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          creator_id?: string
+          details?: string | null
+          end_at?: string | null
+          id?: string
+          linked_circle_task_id?: string | null
+          location?: string | null
+          reminder_minutes?: number
+          repeat_end_count?: number | null
+          repeat_end_date?: string | null
+          repeat_frequency?: string
+          repeat_weekdays?: number[]
+          series_id?: string
+          start_at?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_events_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_invitations: {
         Row: {
           circle_id: string

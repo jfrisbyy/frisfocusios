@@ -19,30 +19,37 @@ struct ColdStartCoachBanner: View {
         if store.coldStartCoaching {
             let progress = store.coldStartProgress
             let started = progress.done > 0
+            // Every setup page was skipped — there is no task to check,
+            // so the coaching points at planting one instead.
+            let emptyBoard = progress.total == 0
 
             Button {
-                if progress.total > 0 && progress.done >= progress.total {
+                if emptyBoard {
+                    dismiss()
+                } else if progress.total > 0 && progress.done >= progress.total {
                     dismiss()
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: started ? "sun.max.fill" : "hand.tap.fill")
+                    Image(systemName: emptyBoard ? "plus.circle.fill" : (started ? "sun.max.fill" : "hand.tap.fill"))
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(started ? Theme.sunOuter : Theme.textCream)
+                        .foregroundStyle(started && !emptyBoard ? Theme.sunOuter : Theme.textCream)
                         .symbolRenderingMode(.hierarchical)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(started ? "The sun's rising." : "Check your first task")
+                        Text(emptyBoard ? "Plant your first task" : (started ? "The sun's rising." : "Check your first task"))
                             .font(.sans(13.5, weight: .semibold))
                             .foregroundStyle(Theme.textCream)
-                        Text(subtitle(started: started, progress: progress))
+                        Text(emptyBoard
+                             ? "Your plan is empty — scroll to Today's plan and add one thing that matters."
+                             : subtitle(started: started, progress: progress))
                             .font(.sans(11.5, weight: .regular))
                             .foregroundStyle(Theme.textCream.opacity(0.8))
                     }
 
                     Spacer(minLength: 0)
 
-                    if started {
+                    if started || emptyBoard {
                         Button {
                             dismiss()
                         } label: {

@@ -149,6 +149,9 @@ final class SocialSyncService {
             store.circles = []
             store.circleTaskCompletions = []
             store.circleContributions = []
+            store.circleEvents = []
+            store.eventRSVPs = []
+            store.eventCheckIns = []
             store.storyViewerIds = [:]
             store.focusPresences = []
             store.persistAll()
@@ -187,7 +190,8 @@ final class SocialSyncService {
         async let c: Void = refreshPacts()
         async let d: Void = refreshCircles()
         async let e: Void = refreshGrove()
-        _ = await (a, b, c, d, e)
+        async let f: Void = refreshEvents()
+        _ = await (a, b, c, d, e, f)
     }
 
     /// Batch-resolve profiles into the cache, registering id mappings.
@@ -333,6 +337,9 @@ final class SocialSyncService {
             ("circle_tasks", "circles"),
             ("circle_task_completions", "circles"),
             ("circle_contributions", "circles"),
+            ("circle_events", "events"),
+            ("circle_event_rsvps", "events"),
+            ("circle_event_checkins", "events"),
             ("focus_blocks", "grove"),
             ("focus_participants", "grove")
         ]
@@ -371,6 +378,7 @@ final class SocialSyncService {
             case "cheers": await self?.refreshCheers()
             case "pacts": await self?.refreshPacts()
             case "circles": await self?.refreshCircles()
+            case "events": await self?.refreshEvents()
             case "grove": await self?.refreshGrove()
             default: break
             }

@@ -42,6 +42,7 @@ type PushType =
   | "circle_task"
   | "circle_progress"
   | "circle_mode"
+  | "circle_event"
   | "golden_post"
   | "cheer"
   | "cheer_reaction"
@@ -157,6 +158,12 @@ function buildCopy(
         body: p
           ? `${senderName} switched ${circleName} to ${p}`
           : `${senderName} changed what ${circleName} is doing together`,
+        data: { route: "circle", circleId: circleId ?? "" },
+      };
+    case "circle_event":
+      return {
+        title: circleName,
+        body: p ? `${senderName} planned "${p}"` : `${senderName} planned something in ${circleName}`,
         data: { route: "circle", circleId: circleId ?? "" },
       };
     case "golden_post":

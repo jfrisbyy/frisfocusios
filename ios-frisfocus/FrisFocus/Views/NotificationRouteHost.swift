@@ -86,6 +86,27 @@ struct NotificationRouteHost: View {
             } else {
                 RouteFallback(message: "This milestone was completed or removed.") { dismiss() }
             }
+
+        case .stories:
+            // A like or comment on the user's story — open their own
+            // tape, where the engagement lives.
+            StoryPlayerView(mode: .mine)
+                .environment(store)
+
+        case .pacts:
+            // A pact was proposed or accepted — the pacts list carries
+            // both, with the detail one tap away.
+            NavigationStack {
+                PactsListView()
+            }
+            .environment(store)
+
+        case .home, .grove:
+            // These land on the home itself; the tap is consumed before
+            // presentation. Defensive: if one ever reaches here, close.
+            Theme.warmWheat
+                .ignoresSafeArea()
+                .onAppear { dismiss() }
         }
     }
 

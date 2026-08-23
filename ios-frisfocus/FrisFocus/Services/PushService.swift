@@ -29,6 +29,7 @@ nonisolated enum PushKind: String, Sendable {
     case circleTask = "circle_task"
     case circleProgress = "circle_progress"
     case circleMode = "circle_mode"
+    case circleEvent = "circle_event"
     case goldenPost = "golden_post"
     case cheer
     case cheerReaction = "cheer_reaction"

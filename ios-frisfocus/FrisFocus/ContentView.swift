@@ -76,7 +76,7 @@ struct ContentView: View {
                 }
                 Button("Keep exploring", role: .cancel) {}
             } message: {
-                Text("This clears all the sample data and starts your own season from scratch. Nothing from the demo is kept.")
+                Text("This clears all the sample data and takes you back to the start, where you can build your own season. Nothing from the demo is kept.")
             }
             // First-launch welcome — covers the home until the user picks
             // a path. Non-dismissible: a choice must be made.
@@ -99,13 +99,10 @@ struct ContentView: View {
             .fullScreenCover(isPresented: $showCleanSeasonSetup) {
                 SeasonSetupFlowView()
             }
-            // Leaving the demo (from anywhere) transitions demo → clean;
-            // open guided setup once the wipe lands.
-            .onChange(of: store.appMode) { old, new in
-                if old == .demo && new == .clean {
-                    showCleanSeasonSetup = true
-                }
-            }
+            // Leaving the demo returns to `.uninitialized`, so the
+            // first-run welcome (board → sign-in seam) presents itself
+            // via `introBinding` — a signed-out explorer always has a
+            // real path to an account.
             .sheet(isPresented: $store.showCarryForwardPrompt) {
                 CarryForwardPromptView(candidates: store.carryForwardCandidates)
                     .environment(store)
@@ -225,6 +222,10 @@ struct ContentView: View {
                 if newPhase == .active {
                     store.performDayRolloverIfNeeded()
                     store.evaluateCarryForwardPrompt()
+                    // A network hiccup at launch may have left the app
+                    // signed out with valid tokens still stored — retry
+                    // the silent restore now that we're back.
+                    Task { await auth.retryRestoreIfNeeded() }
                     // Re-check Screen Time approval on every return — the
                     // user may have granted access in Settings or signed
                     // into iCloud while away; the UI updates immediately.
@@ -284,6 +285,11 @@ extension ContentView {
     /// flagging the quantity lesson only when their board actually has a
     /// tiered/increment task to log.
     fileprivate func startMechanicsTourIfFresh() {
+        // An empty board (every setup page skipped) has nothing to
+        // practice on — the gesture tour would point at a task that
+        // doesn't exist. The plan's own "add" affordance and the coach
+        // banner lead instead; the tour stays available for later.
+        guard !store.todaysPlan.isEmpty else { return }
         let hasQuantity = store.todaysPlan.contains { item in
             if case .task(let task) = item { return task.requiresQuantityLogging }
             return false

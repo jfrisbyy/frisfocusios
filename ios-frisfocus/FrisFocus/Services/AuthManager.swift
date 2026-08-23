@@ -19,6 +19,10 @@ class AuthManager {
     var isSigningIn = false
     var showError = false
     var errorMessage = ""
+    /// True when the session was ended WITHOUT the user asking — the
+    /// refresh token was rejected by the auth server. The home shows a
+    /// visible "sign back in" banner instead of silently looking empty.
+    var sessionExpired = false
 
     private let authURL = Config.EXPO_PUBLIC_RORK_AUTH_URL
     private let appKey = Config.EXPO_PUBLIC_RORK_APP_KEY
@@ -338,6 +342,7 @@ class AuthManager {
             KeychainHelper.set("refresh_token", value: tokenResponse.refresh_token)
 
             user = tokenResponse.user
+            sessionExpired = false
             syncProfile(tokenResponse.user)
         } catch {
             setError("Sign in failed: \(error.localizedDescription)")
@@ -363,10 +368,21 @@ class AuthManager {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                print("[AuthManager] refreshToken: refresh endpoint returned \(code) — signing out")
-                await signOut()
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard code == 200 else {
+                if (400...499).contains(code) {
+                    // The auth server definitively rejected the refresh
+                    // token — the session is over. Sign out, but say so
+                    // visibly instead of silently looking empty.
+                    print("[AuthManager] refreshToken: refresh rejected (\(code)) — signing out, flagging expiry")
+                    await signOut()
+                    sessionExpired = true
+                } else {
+                    // Server hiccup (5xx) — keep the stored tokens and
+                    // retry on the next foreground instead of destroying
+                    // a probably-valid session.
+                    print("[AuthManager] refreshToken: refresh endpoint returned \(code) — keeping session for retry")
+                }
                 return
             }
 
@@ -377,14 +393,32 @@ class AuthManager {
             user = refreshedUser
             if let refreshedUser {
                 print("[AuthManager] refreshToken: session refreshed, user=\(refreshedUser.id)")
+                sessionExpired = false
                 syncProfile(refreshedUser)
             } else {
                 print("[AuthManager] refreshToken: refresh succeeded but token had no user")
             }
         } catch {
-            print("[AuthManager] refreshToken: refresh failed (\(error.localizedDescription)) — signing out")
-            await signOut()
+            // Network failure (offline launch, timeout) — never destroy
+            // the session over connectivity. Tokens stay; the app retries
+            // silently when it becomes active again.
+            print("[AuthManager] refreshToken: network failure (\(error.localizedDescription)) — keeping session for retry")
         }
+    }
+
+    /// True when stored credentials exist that could still restore a
+    /// session (used to retry a silent restore after a network failure).
+    var hasRestorableSession: Bool {
+        KeychainHelper.get("access_token") != nil || getRefreshToken() != nil
+    }
+
+    /// Re-attempt a silent session restore — called on foreground when
+    /// a network failure left the app signed out with tokens intact.
+    @MainActor
+    func retryRestoreIfNeeded() async {
+        guard user == nil, !isLoading, !isSigningIn, hasRestorableSession else { return }
+        print("[AuthManager] retryRestoreIfNeeded: tokens present, retrying silent restore")
+        await checkAuth()
     }
 
     @MainActor
@@ -393,6 +427,7 @@ class AuthManager {
         KeychainHelper.delete("refresh_token")
         UserDefaults.standard.removeObject(forKey: "RORK_AUTH_REFRESH_TOKEN")
         user = nil
+        sessionExpired = false
     }
 
     /// Permanently erase all of the user's data via the `delete-account`

@@ -289,6 +289,10 @@ struct HomeView: View {
             .walkthroughLessonSheet($homeLesson) { walkthrough.markSeen($0) }
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
+                    // A rejected session never fails silently — the way
+                    // back in lives right here.
+                    SessionExpiredBanner()
+
                     // Time machine — the real home has transformed to a
                     // past day; this pill is the marker + the way back.
                     if let day = store.viewingDay {

@@ -63,6 +63,11 @@ struct CirclesView: View {
     /// red dot on the header avatar.
     @Environment(FriendGraphService.self) private var friendGraph
 
+    /// Maps local friend UUIDs onto their real cloud identities so the
+    /// message pill always opens the synced, delivered thread.
+    @Environment(SocialSyncService.self) private var socialSync
+    @Environment(ModerationService.self) private var moderation
+
     /// Golden Hour: the orb's tap target. The banner itself only exists
     /// while a moment is live or its wall is still draining.
     @Environment(GoldenHourService.self) private var goldenHour
@@ -211,10 +216,22 @@ struct CirclesView: View {
                     .presentationDragIndicator(.visible)
             }
             .sheet(item: $threadFriend) { friend in
-                DirectThreadView(friend: friend)
-                    .environment(store)
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
+                // ALWAYS the real, Supabase-backed thread — never a
+                // local-only composer whose messages would go nowhere.
+                if let myId = auth.user?.id, let remote = remoteProfile(for: friend) {
+                    ProofThreadView(friend: remote, message: messageGraph, myUserId: myId)
+                        .environment(store)
+                        .environment(auth)
+                        .environment(moderation)
+                        .environment(socialSync)
+                        .presentationDetents([.large])
+                        .presentationDragIndicator(.visible)
+                } else {
+                    ThreadUnavailableView(friendName: friend.displayName)
+                        .environment(auth)
+                        .presentationDetents([.medium])
+                        .presentationDragIndicator(.visible)
+                }
             }
             .sheet(isPresented: $showInvite) {
                 NavigationStack {
@@ -456,6 +473,13 @@ struct CirclesView: View {
     /// quiet glyph.
     private func handleActionTap(_ friend: Friend) {
         threadFriend = friend
+    }
+
+    /// Resolve a local friend to their real cloud profile — the social
+    /// mirror first, then the live friend graph as a fallback.
+    private func remoteProfile(for friend: Friend) -> RemoteProfile? {
+        socialSync.profile(forLocal: friend.id)
+            ?? friendGraph.friends.first { socialSync.localId(forRemote: $0.id) == friend.id }
     }
 
     private func handleYouTap() {

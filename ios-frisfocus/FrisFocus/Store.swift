@@ -3918,12 +3918,14 @@ extension Store {
         persistAppMode()
     }
 
-    /// "Exit demo": wipe every sample row and drop into the same clean
-    /// fresh start as "Start my season".
+    /// "Exit demo": wipe every sample row and return to the first-run
+    /// welcome. The full onboarding (board → sign-in seam) runs again,
+    /// so a signed-out explorer is never dropped into a setup flow that
+    /// needs an account without any way to sign in.
     func exitDemo() {
         wipeAllData()
         currentSeason = Store.emptySeason()
-        appMode = .clean
+        appMode = .uninitialized
         persistAppMode()
         markAllDirty()
         flushPendingSaves()
@@ -5002,6 +5004,32 @@ extension Store {
         var ids = pendingCircleCreateIds
         guard ids.remove(id) != nil else { return }
         userDefaults.set(ids.map(\.uuidString), forKey: Store.pendingCircleCreatesKey)
+    }
+
+    // MARK: - Pending event up-sync
+
+    /// Ids of circle events created locally whose backend insert hasn't
+    /// been confirmed yet — same retry contract as pending circles: a
+    /// refresh never drops them, it retries the write instead.
+    private static let pendingEventCreatesKey = "pendingEventCreates"
+
+    var pendingEventCreateIds: Set<UUID> {
+        Set(
+            (userDefaults.stringArray(forKey: Store.pendingEventCreatesKey) ?? [])
+                .compactMap { UUID(uuidString: $0) }
+        )
+    }
+
+    func markEventCreatePending(_ id: UUID) {
+        var ids = pendingEventCreateIds
+        ids.insert(id)
+        userDefaults.set(ids.map(\.uuidString), forKey: Store.pendingEventCreatesKey)
+    }
+
+    func clearEventCreatePending(_ id: UUID) {
+        var ids = pendingEventCreateIds
+        guard ids.remove(id) != nil else { return }
+        userDefaults.set(ids.map(\.uuidString), forKey: Store.pendingEventCreatesKey)
     }
 
     // MARK: - Relationship hub (C-Restructure)

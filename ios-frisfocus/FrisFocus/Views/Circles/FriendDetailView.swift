@@ -252,9 +252,11 @@ struct FriendDetailView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             } else {
-                DirectThreadView(friend: friend)
-                    .environment(store)
-                    .presentationDetents([.large])
+                // Never a local-only composer — a message that can't be
+                // delivered is worse than a clear "sign in first".
+                ThreadUnavailableView(friendName: friend.displayName)
+                    .environment(auth)
+                    .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
             }
         }
@@ -281,7 +283,10 @@ struct FriendDetailView: View {
                 )
                 .environment(store)
             } else {
-                CaptureView(mode: .generalPost, initialDirectFriendId: friend.id).environment(store)
+                // A proof that can't reach its person shouldn't pretend
+                // to send — surface the sign-in doorway instead.
+                ThreadUnavailableView(friendName: friend.displayName)
+                    .environment(auth)
             }
         }
         .fullScreenCover(isPresented: $showProposePact) {

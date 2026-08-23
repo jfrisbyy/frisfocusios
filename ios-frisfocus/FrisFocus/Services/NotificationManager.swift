@@ -45,6 +45,15 @@ enum DeepLinkRoute: Identifiable, Equatable {
     case golden(circleId: String)
     /// Open one milestone's page (a target-week nudge was tapped).
     case milestone(milestoneId: String)
+    /// A cheer / cheer reaction — the home itself is the destination.
+    case home
+    /// A like or comment on the user's story — opens their own tape.
+    case stories
+    /// A pact was proposed or accepted — opens the pacts list.
+    case pacts
+    /// A friend invited the user to focus together — lands on home,
+    /// where the live grove surfaces.
+    case grove
 
     var id: String {
         switch self {
@@ -54,6 +63,10 @@ enum DeepLinkRoute: Identifiable, Equatable {
         case .circle(let circleId): return "circle:\(circleId)"
         case .golden(let circleId): return "golden:\(circleId)"
         case .milestone(let milestoneId): return "milestone:\(milestoneId)"
+        case .home: return "home"
+        case .stories: return "stories"
+        case .pacts: return "pacts"
+        case .grove: return "grove"
         }
     }
 
@@ -78,6 +91,14 @@ enum DeepLinkRoute: Identifiable, Equatable {
         case "milestone":
             guard let milestoneId = userInfo["milestoneId"] as? String, !milestoneId.isEmpty else { return nil }
             self = .milestone(milestoneId: milestoneId)
+        case "home":
+            self = .home
+        case "stories":
+            self = .stories
+        case "pacts":
+            self = .pacts
+        case "grove":
+            self = .grove
         default:
             return nil
         }
@@ -169,9 +190,16 @@ final class NotificationManager {
 
     /// Decode a tapped notification's payload into a route the app shell
     /// can present. No-op when the payload has no recognizable route.
+    /// Cheers and focus invites land on the home itself — opening the
+    /// app IS the destination, so no cover is presented for those.
     func handleTap(userInfo: [AnyHashable: Any]) {
         guard let route = DeepLinkRoute(userInfo: userInfo) else { return }
-        pendingRoute = route
+        switch route {
+        case .home, .grove:
+            pendingRoute = nil
+        default:
+            pendingRoute = route
+        }
     }
 
     // MARK: App icon badge

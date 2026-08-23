@@ -10,6 +10,7 @@
 //  and proofs fall out for free.
 //
 
+import CryptoKit
 import Foundation
 import UserNotifications
 
@@ -92,10 +93,15 @@ extension Store {
             reminderMinutes: reminderMinutes
         )
         circleEvents.append(event)
-        // The creator is presumed going.
-        setRSVP(eventId: event.id, status: .going)
+        // The creator is presumed going — appended directly (not via
+        // `setRSVP`) so the up-sync writes the event row first and the
+        // RSVP second, in one ordered task.
+        let creatorRSVP = EventRSVP(eventId: event.id, memberId: currentUserId, status: .going)
+        eventRSVPs.append(creatorRSVP)
         persistAll()
         scheduleReminder(for: event)
+        markEventCreatePending(event.id)
+        social?.eventCreated(event, myRSVP: .going, notifyMembers: true)
         return event
     }
 
@@ -107,6 +113,7 @@ extension Store {
         let task = CircleTask(title: title, pointValue: pointValue, linkedPersonalTaskId: nil)
         circles[ci].tasks.append(task)
         persistAll()
+        social?.circleTaskUpserted(circleId: circleId, task: task, position: circles[ci].tasks.count - 1)
         return task.id
     }
 
@@ -117,7 +124,9 @@ extension Store {
         eventRSVPs.removeAll { $0.eventId == eventId }
         eventCheckIns.removeAll { $0.eventId == eventId }
         cancelReminder(eventId: eventId)
+        clearEventCreatePending(eventId)
         persistAll()
+        social?.eventDeleted(eventId)
     }
 
     /// True when the current user may edit/delete an event — the
@@ -163,6 +172,7 @@ extension Store {
                 scheduleReminder(for: event)
             }
         }
+        social?.eventRSVPChanged(eventId: eventId, status: myRSVPStatus(forEventId: eventId))
     }
 
     /// Members who answered a given way for an event.
@@ -194,8 +204,10 @@ extension Store {
     /// the event's effective end (see `CircleEvent.isCheckInOpen`).
     func checkIn(eventId: UUID) {
         guard !isCheckedIn(eventId: eventId) else { return }
-        eventCheckIns.append(EventCheckIn(eventId: eventId, memberId: currentUserId))
+        let stamp = EventCheckIn(eventId: eventId, memberId: currentUserId)
+        eventCheckIns.append(stamp)
         persistAll()
+        social?.eventCheckedIn(stamp)
     }
 
     /// True when the current user has EVER checked into the event —
@@ -268,16 +280,36 @@ extension Store {
 
             let duration = latest.endAt.map { $0.timeIntervalSince(latest.startAt) }
             var next = template
-            next.id = UUID()
+            // Deterministic occurrence ids: every member's device derives
+            // the same UUID for the same slot, so multi-device spawns
+            // collapse into one row locally and in the cloud upsert.
+            next.id = Self.occurrenceId(seriesId: template.seriesId, startAt: nextStart)
             next.startAt = nextStart
             next.endAt = duration.map { nextStart.addingTimeInterval($0) }
             next.createdAt = now
+            guard !circleEvents.contains(where: { $0.id == next.id }) else { continue }
             added.append(next)
         }
         guard !added.isEmpty else { return }
         circleEvents.append(contentsOf: added)
         persistAll()
-        for event in added { scheduleReminder(for: event) }
+        for event in added {
+            scheduleReminder(for: event)
+            markEventCreatePending(event.id)
+            social?.eventCreated(event, myRSVP: nil, notifyMembers: false)
+        }
+    }
+
+    /// Stable id for a spawned occurrence — SHA-256 of the series id +
+    /// start slot, shaped into a valid UUID.
+    private static func occurrenceId(seriesId: UUID, startAt: Date) -> UUID {
+        let key = "frisfocus-event-occurrence:\(seriesId.uuidString):\(Int(startAt.timeIntervalSince1970))"
+        let digest = SHA256.hash(data: Data(key.utf8))
+        var b = Array(digest.prefix(16))
+        b[6] = (b[6] & 0x0F) | 0x50
+        b[8] = (b[8] & 0x3F) | 0x80
+        return UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+                           b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]))
     }
 
     /// Next start date strictly after `previous`, respecting the rule.
