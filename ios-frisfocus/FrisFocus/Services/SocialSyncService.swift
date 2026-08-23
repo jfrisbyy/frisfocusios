@@ -122,7 +122,6 @@ final class SocialSyncService {
         await refreshAll()
         isSyncing = false
         startRealtime()
-        pokeEngine()
     }
 
     /// Tear down on sign-out. The mirrored social data is cleared so a
@@ -385,42 +384,4 @@ final class SocialSyncService {
         }
     }
 
-    // MARK: Test-user engine
-
-    private nonisolated struct EngineResponse: Decodable, Sendable {
-        let ok: Bool?
-    }
-
-    private nonisolated struct EngineBody: Encodable, Sendable {
-        let trigger: String
-    }
-
-    /// Fire-and-forget nudge to the simulated-friends engine so test
-    /// accounts react (accept requests, reply, post, like) shortly
-    /// after the user does something.
-    nonisolated func pokeEngine(trigger: String = "app") {
-        Task {
-            do {
-                let _: EngineResponse = try await supabase.functions.invoke(
-                    "test-user-engine",
-                    options: .init(body: EngineBody(trigger: trigger))
-                )
-            } catch {
-                print("[SocialSync] engine poke failed: \(error)")
-            }
-        }
-        // A delayed second poke gives "natural" reaction latency for
-        // actions whose cooldown hadn't elapsed on the first pass.
-        Task {
-            try? await Task.sleep(for: .seconds(75))
-            do {
-                let _: EngineResponse = try await supabase.functions.invoke(
-                    "test-user-engine",
-                    options: .init(body: EngineBody(trigger: "\(trigger)-delayed"))
-                )
-            } catch {
-                // Quiet — purely best-effort.
-            }
-        }
-    }
 }

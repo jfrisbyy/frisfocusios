@@ -11,7 +11,8 @@
 //  Intentionally minimal: no replies, no comment reactions, no
 //  edit/delete. C7a's contract is short messages within a private
 //  context — this view enforces that by simply not surfacing any
-//  other affordance.
+//  other affordance. Each comment from someone else carries a quiet
+//  "…" menu to report it or block its author.
 //
 
 import SwiftUI
@@ -19,6 +20,9 @@ import UIKit
 
 struct CommentsSheetView: View {
     @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var socialSync
+    @Environment(ModerationService.self) private var moderation
+    @Environment(AuthManager.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
     let postId: UUID
@@ -28,6 +32,10 @@ struct CommentsSheetView: View {
     @FocusState private var inputFocused: Bool
     /// The comment author whose profile is open, if any.
     @State private var profileTarget: ProfileTarget?
+    /// The report flow for a specific comment, when open.
+    @State private var reportTarget: ReportTarget?
+    /// The comment whose author is pending a block confirmation.
+    @State private var blockCandidate: Comment?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,6 +49,7 @@ struct CommentsSheetView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     let rows = store.comments(for: postId)
+                        .filter { !isBlockedAuthor($0.fromFriendId) }
                     if rows.isEmpty {
                         Text("No comments yet — be the first.")
                             .font(.serifItalic(14, weight: .regular))
@@ -67,6 +76,33 @@ struct CommentsSheetView: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .profileDestination($profileTarget, store: store)
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: target.messageId,
+                subjectName: target.subjectName,
+                storyPostId: target.storyPostId,
+                storyCommentId: target.storyCommentId
+            )
+        }
+        .confirmationDialog(
+            "Block \(blockCandidate?.fromName ?? "this person")?",
+            isPresented: Binding(
+                get: { blockCandidate != nil },
+                set: { if !$0 { blockCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Block", role: .destructive) {
+                if let candidate = blockCandidate {
+                    blockAuthor(of: candidate)
+                }
+                blockCandidate = nil
+            }
+            Button("Cancel", role: .cancel) { blockCandidate = nil }
+        } message: {
+            Text("They won't be able to message you or see your days, and you won't see theirs.")
+        }
     }
 
     private var header: some View {
@@ -89,43 +125,96 @@ struct CommentsSheetView: View {
         let colorHex = friend?.accentColorHex ?? "2C2C2A"
         let target: ProfileTarget? = isMine ? .me : friend.map { ProfileTarget.friend($0) }
 
-        return Button {
-            guard let target else { return }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            profileTarget = target
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                FriendAvatarView(
-                    friend: isMine ? nil : friend,
-                    size: 28,
-                    fallbackInitials: comment.fromInitials,
-                    fallbackColor: isMine ? Theme.textPrimary : Color(hex: colorHex)
-                )
-
-                VStack(alignment: .leading, spacing: 2) {
-                    (
-                        Text(comment.fromName)
-                            .font(.sans(13, weight: .semibold))
-                            .foregroundColor(Theme.textPrimary)
-                        + Text("  ")
-                        + Text(comment.text)
-                            .font(.sans(13, weight: .regular))
-                            .foregroundColor(Theme.textPrimary.opacity(0.85))
+        return HStack(alignment: .top, spacing: 6) {
+            Button {
+                guard let target else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                profileTarget = target
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    FriendAvatarView(
+                        friend: isMine ? nil : friend,
+                        size: 28,
+                        fallbackInitials: comment.fromInitials,
+                        fallbackColor: isMine ? Theme.textPrimary : Color(hex: colorHex)
                     )
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        (
+                            Text(comment.fromName)
+                                .font(.sans(13, weight: .semibold))
+                                .foregroundColor(Theme.textPrimary)
+                            + Text("  ")
+                            + Text(comment.text)
+                                .font(.sans(13, weight: .regular))
+                                .foregroundColor(Theme.textPrimary.opacity(0.85))
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(target == nil)
+            .accessibilityLabel(
+                isMine
+                    ? "Your comment: \(comment.text)"
+                    : (target != nil ? "\(comment.fromName), tap to open profile. \(comment.text)" : "\(comment.fromName): \(comment.text)")
+            )
+
+            if !isMine {
+                Menu {
+                    Button {
+                        reportTarget = ReportTarget(
+                            reportedUserId: socialSync.remoteId(forLocal: comment.fromFriendId),
+                            messageId: nil,
+                            subjectName: comment.fromName,
+                            storyPostId: postId,
+                            storyCommentId: comment.id
+                        )
+                    } label: {
+                        Label("Report comment", systemImage: "flag")
+                    }
+                    if socialSync.remoteId(forLocal: comment.fromFriendId) != nil {
+                        Button(role: .destructive) {
+                            blockCandidate = comment
+                        } label: {
+                            Label("Block \(comment.fromName)", systemImage: "hand.raised")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.sans(12, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Options for \(comment.fromName)'s comment")
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(target == nil)
-        .accessibilityLabel(
-            isMine
-                ? "Your comment: \(comment.text)"
-                : (target != nil ? "\(comment.fromName), tap to open profile. \(comment.text)" : "\(comment.fromName): \(comment.text)")
-        )
+    }
+
+    /// Whether a comment author has been blocked — their comments
+    /// vanish immediately, before any server refresh.
+    private func isBlockedAuthor(_ localId: UUID) -> Bool {
+        guard localId != store.currentUserId,
+              let remote = socialSync.remoteId(forLocal: localId) else { return false }
+        return moderation.isBlocked(remote)
+    }
+
+    /// Block a comment's author and refresh the mirrors so their
+    /// presence fades from every surface.
+    private func blockAuthor(of comment: Comment) {
+        guard let remote = socialSync.remoteId(forLocal: comment.fromFriendId),
+              let myId = auth.user?.id else { return }
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        Task {
+            await moderation.block(remote, myUserId: myId)
+            await socialSync.refreshFriends()
+            await socialSync.refreshStories()
+        }
     }
 
     private var composer: some View {

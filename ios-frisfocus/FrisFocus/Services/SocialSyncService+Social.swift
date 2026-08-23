@@ -397,7 +397,6 @@ extension SocialSyncService {
                     message: cheer.message
                 )).execute()
                 PushService.send(to: recipient, kind: .cheer, preview: cheer.message)
-                self.pokeEngine(trigger: "cheer")
             } catch {
                 print("[SocialSync] cheer send failed: \(error)")
             }
@@ -550,7 +549,6 @@ extension SocialSyncService {
                     try await supabase.from("pact_tasks").insert(tasks).execute()
                 }
                 PushService.send(to: partner, kind: .pactInvite, preview: pact.title)
-                self.pokeEngine(trigger: "pact")
             } catch {
                 print("[SocialSync] pact propose failed: \(error)")
             }
@@ -843,7 +841,6 @@ extension SocialSyncService {
                 // The write is confirmed — the refresh mirror may now own
                 // this circle's row.
                 self.store?.clearCircleCreatePending(circle.id)
-                self.pokeEngine(trigger: "circle")
             } catch {
                 print("[SocialSync] circle create failed (will retry on next refresh): \(error)")
             }

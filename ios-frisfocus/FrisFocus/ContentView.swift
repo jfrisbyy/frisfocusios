@@ -242,12 +242,8 @@ struct ContentView: View {
                         // Re-resolve today's Golden Hour moment (a turns-mode
                         // pick may have landed) and refresh the alerts.
                         Task { await goldenHour.load(myUserId: myId) }
-                        // Catch up the social mirror and nudge the
-                        // test-user engine so simulated friends react.
-                        Task {
-                            await socialSync.refreshAll()
-                            socialSync.pokeEngine(trigger: "foreground")
-                        }
+                        // Catch up the social mirror.
+                        Task { await socialSync.refreshAll() }
                         // Catch up the journal: pull remote edits and
                         // flush anything queued while offline.
                         Task {

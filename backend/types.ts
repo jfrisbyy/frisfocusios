@@ -1315,6 +1315,8 @@ export type Database = {
           reason: string
           reported_user_id: string | null
           reporter_id: string
+          story_comment_id: string | null
+          story_post_id: string | null
         }
         Insert: {
           created_at?: string
@@ -1324,6 +1326,8 @@ export type Database = {
           reason: string
           reported_user_id?: string | null
           reporter_id: string
+          story_comment_id?: string | null
+          story_post_id?: string | null
         }
         Update: {
           created_at?: string
@@ -1333,6 +1337,8 @@ export type Database = {
           reason?: string
           reported_user_id?: string | null
           reporter_id?: string
+          story_comment_id?: string | null
+          story_post_id?: string | null
         }
         Relationships: [
           {

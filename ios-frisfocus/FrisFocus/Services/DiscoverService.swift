@@ -112,6 +112,7 @@ final class DiscoverService {
             let newest: [RemoteProfile] = try await supabase
                 .from("profiles")
                 .select(Self.profileColumns)
+                .eq("is_test", value: false)
                 .order("created_at", ascending: false)
                 .limit(Self.newestLimit)
                 .execute()
@@ -128,6 +129,7 @@ final class DiscoverService {
                 let extra: [RemoteProfile] = try await supabase
                     .from("profiles")
                     .select(Self.profileColumns)
+                    .eq("is_test", value: false)
                     .in("id", values: Array(missingIds))
                     .execute()
                     .value
@@ -188,6 +190,7 @@ final class DiscoverService {
             let results: [RemoteProfile] = try await supabase
                 .from("profiles")
                 .select(Self.profileColumns)
+                .eq("is_test", value: false)
                 .or("username.ilike.*\(safe)*,name.ilike.*\(safe)*,email.ilike.*\(safe)*")
                 .limit(20)
                 .execute()
@@ -215,6 +218,7 @@ final class DiscoverService {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
                 .select(Self.profileColumns)
+                .eq("is_test", value: false)
                 .in("area_key", values: AreaGrid.neighborKeys(of: areaKey))
                 .limit(40)
                 .execute()

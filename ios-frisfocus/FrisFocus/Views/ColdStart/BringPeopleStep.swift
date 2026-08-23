@@ -257,7 +257,6 @@ struct BringPeopleStep: View {
                 addedIds.insert(profile.id)
                 Task {
                     await graph.sendRequest(to: profile, myUserId: myId)
-                    socialSync.pokeEngine(trigger: "friend")
                 }
             } label: {
                 pill(title: added ? "Added" : "Add", filled: !added, icon: added ? "checkmark" : "plus")
@@ -573,7 +572,6 @@ private struct ContactsInviteSheet: View {
                 addedIds.insert(profile.id)
                 Task {
                     await graph.sendRequest(to: profile, myUserId: myId)
-                    socialSync.pokeEngine(trigger: "friend")
                 }
             } label: {
                 pill(title: added ? "Added" : "Add", filled: !added, icon: added ? "checkmark" : "plus")

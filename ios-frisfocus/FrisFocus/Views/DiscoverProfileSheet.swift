@@ -226,7 +226,6 @@ struct DiscoverProfileSheet: View {
                 isSending = true
                 Task {
                     await graph.sendRequest(to: profile, myUserId: myId)
-                    socialSync.pokeEngine(trigger: "friend")
                     isSending = false
                 }
             }

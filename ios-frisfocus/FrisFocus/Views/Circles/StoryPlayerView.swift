@@ -55,6 +55,9 @@ enum CircleStoryScope {
 
 struct StoryPlayerView: View {
     @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var socialSync
+    @Environment(ModerationService.self) private var moderation
+    @Environment(AuthManager.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
     let mode: StoryPlayerMode
@@ -110,6 +113,13 @@ struct StoryPlayerView: View {
     /// the calm viewer sheet is up and resumes on dismiss.
     @State private var seenByPost: StoryPost?
 
+    /// The report flow for the current segment, when open. Pauses
+    /// playback while the sheet is up.
+    @State private var reportTarget: ReportTarget?
+
+    /// Asks for confirmation before blocking the current author.
+    @State private var showBlockConfirm: Bool = false
+
     /// Tick rate for the progress driver. 25 fps reads as smooth
     /// without burning a re-render every vsync.
     private let tick: TimeInterval = 0.04
@@ -125,7 +135,13 @@ struct StoryPlayerView: View {
     /// The chronological list of posts driving this story. Oldest →
     /// newest so the first segment to fill is the earliest moment the
     /// friend shared, matching the rest of the social UI's order.
+    /// Posts from anyone the user has blocked vanish immediately, even
+    /// before the server refresh drops them.
     private var posts: [StoryPost] {
+        basePosts.filter { !isBlockedAuthor($0.authorId) }
+    }
+
+    private var basePosts: [StoryPost] {
         switch mode {
         case .friend(let friend):
             // Isolated tape: only the tapped friend's unexpired posts,
@@ -222,6 +238,27 @@ struct StoryPlayerView: View {
             }
         } message: {
             Text("This will remove the post from your stories. Friends won't see it anymore.")
+        }
+        .sheet(item: $reportTarget, onDismiss: { isPaused = false }) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: target.messageId,
+                subjectName: target.subjectName,
+                storyPostId: target.storyPostId,
+                storyCommentId: target.storyCommentId
+            )
+        }
+        .confirmationDialog(
+            "Block this person?",
+            isPresented: $showBlockConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Block", role: .destructive) {
+                blockCurrentAuthor()
+            }
+            Button("Cancel", role: .cancel) { isPaused = false }
+        } message: {
+            Text("They won't be able to message you or see your days, and you won't see theirs.")
         }
         .sheet(item: $cheerTarget, onDismiss: {
             // Resume playback the moment the cheer composer is
@@ -482,6 +519,10 @@ struct StoryPlayerView: View {
                 .accessibilityLabel("Delete this post")
             }
 
+            if let post = currentPost, post.authorId != store.currentUserId {
+                moderationMenu(for: post)
+            }
+
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 dismiss()
@@ -495,6 +536,39 @@ struct StoryPlayerView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Close story")
         }
+    }
+
+    /// The "…" safety menu on someone else's segment: report the
+    /// post, or block its author entirely.
+    private func moderationMenu(for post: StoryPost) -> some View {
+        Menu {
+            Button {
+                isPaused = true
+                reportTarget = ReportTarget(
+                    reportedUserId: socialSync.remoteId(forLocal: post.authorId),
+                    messageId: nil,
+                    subjectName: authorName(for: post),
+                    storyPostId: post.id
+                )
+            } label: {
+                Label("Report this story", systemImage: "flag")
+            }
+            if socialSync.remoteId(forLocal: post.authorId) != nil {
+                Button(role: .destructive) {
+                    isPaused = true
+                    showBlockConfirm = true
+                } label: {
+                    Label("Block \(authorName(for: post))", systemImage: "hand.raised")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.sans(16, weight: .semibold))
+                .foregroundStyle(Theme.textCream)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("More options")
     }
 
     /// The user's own avatar disc used in `.mine` mode — their real
@@ -550,6 +624,13 @@ struct StoryPlayerView: View {
     private func authorName(for post: StoryPost) -> String {
         if post.authorId == store.currentUserId { return "You" }
         return store.friend(by: post.authorId)?.displayName ?? "Member"
+    }
+
+    /// Whether a local member id belongs to someone the user blocked.
+    private func isBlockedAuthor(_ authorId: UUID) -> Bool {
+        guard authorId != store.currentUserId,
+              let remote = socialSync.remoteId(forLocal: authorId) else { return false }
+        return moderation.isBlocked(remote)
     }
 
     /// `{circle name}` already lives on the line above; this provides
@@ -755,7 +836,11 @@ struct StoryPlayerView: View {
     private var captionOverlay: some View {
         if let post = currentPost {
             let likeSummary = store.likeSummary(postId: post.id)
-            let recent = Array(store.comments(for: post.id).suffix(2))
+            let recent = Array(
+                store.comments(for: post.id)
+                    .filter { !isBlockedAuthor($0.fromFriendId) }
+                    .suffix(2)
+            )
 
             // Media posts carry their caption *inside* the media itself
             // (placed text is flattened into the photo at capture time),
@@ -989,6 +1074,24 @@ struct StoryPlayerView: View {
         }
         clock.progress = 0
         isPaused = false
+    }
+
+    /// Block the current segment's author: sever the relationship,
+    /// refresh the mirrors, and close the player — their tape is gone.
+    private func blockCurrentAuthor() {
+        guard let post = currentPost,
+              let remote = socialSync.remoteId(forLocal: post.authorId),
+              let myId = auth.user?.id else {
+            isPaused = false
+            return
+        }
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        Task {
+            await moderation.block(remote, myUserId: myId)
+            await socialSync.refreshFriends()
+            await socialSync.refreshStories()
+            dismiss()
+        }
     }
 
     private func submitReply(for post: StoryPost) {

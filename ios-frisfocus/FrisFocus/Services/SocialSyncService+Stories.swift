@@ -325,7 +325,6 @@ extension SocialSyncService {
     nonisolated func storyPosted(post: StoryPost, asset: MediaAsset?) {
         Task { @MainActor [weak self] in
             await self?.uploadStory(post: post, asset: asset)
-            self?.pokeEngine(trigger: "story")
         }
     }
 

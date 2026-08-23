@@ -333,7 +333,6 @@ struct FriendsView: View {
                         guard let myId else { return }
                         Task {
                             await service.sendRequest(to: suggestion.profile, myUserId: myId)
-                            socialSync.pokeEngine(trigger: "friend")
                         }
                     },
                     prominent: hasNoFriends

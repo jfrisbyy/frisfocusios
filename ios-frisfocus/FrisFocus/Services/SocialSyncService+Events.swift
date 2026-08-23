@@ -311,7 +311,6 @@ extension SocialSyncService {
                         }
                     }
                 }
-                self.pokeEngine(trigger: "event")
             } catch {
                 print("[SocialSync] event create failed (will retry on next refresh): \(error)")
             }

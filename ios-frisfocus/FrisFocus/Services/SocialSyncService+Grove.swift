@@ -155,7 +155,6 @@ extension SocialSyncService {
                     }
                 }
                 try await supabase.from("focus_participants").insert(participants).execute()
-                self.pokeEngine(trigger: "grove")
                 await self.refreshGrove()
             } catch {
                 print("[SocialSync] grove start failed: \(error)")
@@ -203,7 +202,6 @@ extension SocialSyncService {
                     leafTier: "full"
                 )).execute()
                 PushService.send(to: remote, kind: .focusInvite, preview: nil)
-                self.pokeEngine(trigger: "grove")
                 await self.refreshGrove()
             } catch {
                 print("[SocialSync] grove mid-session invite failed: \(error)")

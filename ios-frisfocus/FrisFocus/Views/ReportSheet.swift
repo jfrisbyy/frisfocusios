@@ -2,10 +2,11 @@
 //  ReportSheet.swift
 //  FrisFocus
 //
-//  A calm reporting flow reused anywhere a person or a proof can be
-//  flagged. Pick a reason, optionally add a note, and submit — the
-//  report is filed for review. Pass a `messageId` to report a specific
-//  proof, or just a `reportedUserId` to report the person.
+//  A calm reporting flow reused anywhere a person or a piece of
+//  content can be flagged. Pick a reason, optionally add a note, and
+//  submit — the report is filed for review. Pass a `messageId` to
+//  report a proof, a `storyPostId` / `storyCommentId` to report story
+//  content, or just a `reportedUserId` to report the person.
 //
 
 import SwiftUI
@@ -18,6 +19,8 @@ struct ReportTarget: Identifiable {
     let reportedUserId: String?
     let messageId: UUID?
     let subjectName: String
+    var storyPostId: UUID? = nil
+    var storyCommentId: UUID? = nil
 }
 
 struct ReportSheet: View {
@@ -28,6 +31,8 @@ struct ReportSheet: View {
     let reportedUserId: String?
     let messageId: UUID?
     let subjectName: String
+    var storyPostId: UUID? = nil
+    var storyCommentId: UUID? = nil
 
     @State private var reason: String?
     @State private var details: String = ""
@@ -42,7 +47,9 @@ struct ReportSheet: View {
     ]
 
     private var subtitle: String {
-        messageId != nil ? "Report this proof from \(subjectName)" : "Report \(subjectName)"
+        if storyCommentId != nil { return "Report this comment from \(subjectName)" }
+        if storyPostId != nil { return "Report this story from \(subjectName)" }
+        return messageId != nil ? "Report this proof from \(subjectName)" : "Report \(subjectName)"
     }
 
     var body: some View {
@@ -192,6 +199,8 @@ struct ReportSheet: View {
         let ok = await moderation.report(
             reportedUserId: reportedUserId,
             messageId: messageId,
+            storyPostId: storyPostId,
+            storyCommentId: storyCommentId,
             reason: reason,
             details: details,
             myUserId: myId

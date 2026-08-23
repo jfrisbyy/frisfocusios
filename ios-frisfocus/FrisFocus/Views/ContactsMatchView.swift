@@ -193,7 +193,6 @@ struct ContactsMatchView: View {
                                     guard let myId else { return }
                                     Task {
                                         await graph.sendRequest(to: suggestion.profile, myUserId: myId)
-                                        socialSync.pokeEngine(trigger: "friend")
                                     }
                                 }
                             )

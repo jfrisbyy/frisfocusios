@@ -36,6 +36,8 @@ private nonisolated struct ReportInsert: Encodable, Sendable {
     let reporterId: String
     let reportedUserId: String?
     let messageId: String?
+    let storyPostId: String?
+    let storyCommentId: String?
     let reason: String
     let details: String?
 
@@ -43,6 +45,8 @@ private nonisolated struct ReportInsert: Encodable, Sendable {
         case reporterId = "reporter_id"
         case reportedUserId = "reported_user_id"
         case messageId = "message_id"
+        case storyPostId = "story_post_id"
+        case storyCommentId = "story_comment_id"
         case reason
         case details
     }
@@ -160,11 +164,14 @@ final class ModerationService {
 
     // MARK: Report
 
-    /// File a report against a person and/or a specific message.
+    /// File a report against a person and/or a specific piece of
+    /// content — a proof message, a story post, or a story comment.
     @discardableResult
     func report(
         reportedUserId: String?,
         messageId: UUID?,
+        storyPostId: UUID? = nil,
+        storyCommentId: UUID? = nil,
         reason: String,
         details: String?,
         myUserId: String
@@ -179,6 +186,8 @@ final class ModerationService {
                     reporterId: myUserId,
                     reportedUserId: reportedUserId,
                     messageId: messageId?.uuidString,
+                    storyPostId: storyPostId?.uuidString,
+                    storyCommentId: storyCommentId?.uuidString,
                     reason: reason,
                     details: (trimmedDetails?.isEmpty == false) ? trimmedDetails : nil
                 ))
