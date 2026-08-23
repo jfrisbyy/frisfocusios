@@ -37,6 +37,12 @@ extension Store {
                     isDone: todo.isCompleted,
                     category: .work
                 ))
+            case .bucket(let bucket):
+                dayTasks.append(FriendDayTask(
+                    title: bucket.title,
+                    isDone: hasLogEntryToday(forBucketId: bucket.id),
+                    category: bucket.category
+                ))
             case .cadenceLink:
                 break
             }

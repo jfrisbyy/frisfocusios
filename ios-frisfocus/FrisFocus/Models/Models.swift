@@ -1268,19 +1268,22 @@ extension FFTask {
 
 // MARK: - Home composition
 
-/// A single row in Today's Plan — either a repeatable Task or a dated
-/// To-do, both reusing their own card view. Identifiable by the
-/// underlying object's id so SwiftUI can diff a heterogeneous list.
+/// A single row in Today's Plan — a repeatable Task, a dated To-do,
+/// a linked Cadence routine, or a flexible block (bucket) from the
+/// agenda. Identifiable by the underlying object's id so SwiftUI can
+/// diff a heterogeneous list.
 enum HomeRowItem: Identifiable {
     case task(FFTask)
     case todo(Todo)
     case cadenceLink(CadenceLink)
+    case bucket(Bucket)
 
     var id: UUID {
         switch self {
         case .task(let t): return t.id
         case .todo(let td): return td.id
         case .cadenceLink(let link): return link.id
+        case .bucket(let b): return b.id
         }
     }
 }

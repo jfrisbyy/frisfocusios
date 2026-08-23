@@ -1551,6 +1551,26 @@ extension Store {
         return tasks.filter { $0.isPinnedFor(day) || loggedIds.contains($0.id) }
     }
 
+    /// The flexible blocks (buckets) on the displayed day's plan — the
+    /// same set the agenda grid shows, so the flat list and the agenda
+    /// can never drift apart. A bucket honored on the day stays visible
+    /// even if it's no longer pinned (mirrors `planTasksToday`).
+    var planBucketsToday: [Bucket] {
+        let cal = Calendar.current
+        let day = isViewingPast ? displayedDay : today
+        let honoredIds = Set(logEntries.compactMap { entry -> UUID? in
+            guard entry.entryType == .completed,
+                  cal.isDate(entry.date, inSameDayAs: day) else { return nil }
+            return entry.bucketId
+        })
+        var result = bucketsPinned(on: day)
+        for bucket in buckets
+            where honoredIds.contains(bucket.id) && !result.contains(where: { $0.id == bucket.id }) {
+            result.append(bucket)
+        }
+        return result
+    }
+
     /// The To-do half of the displayed day's plan. Live home: pointed
     /// To-dos due today or overdue. Past day: To-dos due or completed
     /// on that day.
@@ -1591,6 +1611,13 @@ extension Store {
 
         for task in planTasksToday {
             items.append(.task(task))
+        }
+
+        // Flexible blocks (buckets) from the agenda layer — surfaced on
+        // the flat list too so a day planned in blocks never looks empty
+        // here. Same swipe rules; tapping opens the honor sheet.
+        for bucket in planBucketsToday {
+            items.append(.bucket(bucket))
         }
 
         // Linked Cadence routines you launch-and-run, scheduled for
@@ -1636,16 +1663,20 @@ extension Store {
         let todoCount = todaysPlan.reduce(into: 0) { partial, item in
             if case .todo = item { partial += 1 }
         }
+        let blockCount = planBucketsToday.count
         let cadenceCount = todaysCadenceLinks.count
         let alertCount = alerts.count
 
-        if pinned == 0 && todoCount == 0 && cadenceCount == 0 {
+        if pinned == 0 && todoCount == 0 && blockCount == 0 && cadenceCount == 0 {
             return "no plan locked in yet"
         }
 
         var parts: [String] = []
         if pinned > 0 {
             parts.append("\(pinned) pinned")
+        }
+        if blockCount > 0 {
+            parts.append("\(blockCount) block\(blockCount == 1 ? "" : "s")")
         }
         if todoCount > 0 {
             parts.append("\(todoCount) to-do\(todoCount == 1 ? "" : "s")")
@@ -3213,6 +3244,27 @@ extension Store {
             }
         }
 
+        // Flexible blocks sweep off today the same way tasks do — one-off
+        // pins clear, single-date pins for today clear, and recurring
+        // blocks take a one-day skip so they return on schedule.
+        for idx in buckets.indices {
+            if let oneOff = buckets[idx].oneOffPinDate, cal.isDateInToday(oneOff) {
+                buckets[idx].oneOffPinDate = nil
+            }
+            switch buckets[idx].pinSchedule {
+            case .today:
+                buckets[idx].pinSchedule = .none
+            case .singleDate(let date) where cal.isDateInToday(date):
+                buckets[idx].pinSchedule = .none
+            case .daily, .daysOfWeek:
+                if buckets[idx].isPinnedFor(today) {
+                    buckets[idx].skipDate = today
+                }
+            default:
+                break
+            }
+        }
+
         persistAll()
     }
 
@@ -3789,6 +3841,9 @@ extension Store {
             case .todo(let todo):
                 total += 1
                 if todo.isCompleted { done += 1 }
+            case .bucket(let bucket):
+                total += 1
+                if hasLogEntryToday(forBucketId: bucket.id) { done += 1 }
             case .cadenceLink:
                 break
             }
