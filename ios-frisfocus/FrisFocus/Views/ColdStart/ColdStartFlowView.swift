@@ -25,8 +25,9 @@ struct ColdStartFlowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel = ColdStartViewModel()
     @State private var phase: Phase = .pick
+    @State private var didRestorePhase = false
 
-    private enum Phase { case pick, board, capstone, season }
+    private enum Phase: String { case pick, board, capstone, season }
 
     var body: some View {
         ZStack {
@@ -76,6 +77,9 @@ struct ColdStartFlowView: View {
                     viewModel: viewModel,
                     onBack: { advance(to: .capstone) },
                     onCreate: {
+                        // Committed for real — the kill-safe draft has
+                        // served its purpose.
+                        viewModel.clearDraft()
                         onComplete(
                             ColdStartResult(
                                 board: viewModel.finalBoard(),
@@ -89,6 +93,17 @@ struct ColdStartFlowView: View {
                     }
                 )
                 .transition(stageTransition)
+            }
+        }
+        .onAppear {
+            // Resume a build the last session never finished — the
+            // restored draft carries the screen the person was on.
+            guard !didRestorePhase else { return }
+            didRestorePhase = true
+            if let saved = Phase(rawValue: viewModel.savedPhase),
+               saved != .pick,
+               !viewModel.directions.isEmpty {
+                phase = saved
             }
         }
     }
@@ -110,6 +125,7 @@ struct ColdStartFlowView: View {
     }
 
     private func advance(to next: Phase) {
+        viewModel.savedPhase = next.rawValue
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.5)) {
             phase = next
         }

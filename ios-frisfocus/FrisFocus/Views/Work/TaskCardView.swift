@@ -111,6 +111,7 @@ struct TaskCardView: View {
                         .font(.sans(15, weight: .medium))
                         .foregroundStyle(ink.opacity(isCompleted ? 0.5 : 1.0))
                         .strikethrough(isCompleted, color: ink.opacity(0.6))
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 

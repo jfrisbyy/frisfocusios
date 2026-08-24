@@ -112,7 +112,9 @@ func dayHeadline(fraction: Double, hasAnything: Bool) -> String {
     }
 }
 
-/// The quiet sub-line under the headline — "6 of 8 done · most of the way".
+/// The quiet sub-line under the headline — "6 done · most of the way".
+/// Voice law: plain counts and sun language only — the shape phrase
+/// carries the proportion, never "N of N" or a fraction.
 func daySubline(done: Int, total: Int) -> String? {
     guard total > 0 else { return nil }
     let shape: String
@@ -124,7 +126,7 @@ func daySubline(done: Int, total: Int) -> String? {
     case 0.01..<0.4: shape = "early yet"
     default: shape = "the day's not over"
     }
-    return "\(done) of \(total) done · \(shape)"
+    return "\(done) done · \(shape)"
 }
 
 // MARK: - Task chips

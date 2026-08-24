@@ -44,6 +44,16 @@ private struct SchedulePayload: Codable {
     let swaps: [DaySwapRecord]
 }
 
+/// Wire payload for the log-entries slice: the entries plus delete
+/// tombstones (entry id → deleted-at), so a deliberate uncheck on one
+/// device removes the entry everywhere instead of resurrecting on the
+/// merge. Older builds wrote a bare `[LogEntry]` array — decoding
+/// falls back to that shape.
+private struct LogEntriesSyncPayload: Codable {
+    let entries: [LogEntry]
+    let tombstones: [String: Date]
+}
+
 /// One captured known-good state of a slice, kept on-device as a
 /// last-resort fallback if both the live copy and the cloud are wiped.
 private nonisolated struct SnapshotEntry: Codable, Sendable {
@@ -100,6 +110,13 @@ final class SeasonSyncService {
     /// Used as a live guard so an empty local slice can never be flushed
     /// over a cloud slice that still has data.
     @ObservationIgnored private var cloudNonEmptySlices: Set<String> = []
+    /// Delete tombstones for log entries (id-string → deleted-at),
+    /// merged with the cloud copy on every pull. Ids are never reused,
+    /// so a tombstone is terminal; ancient ones are pruned at upload.
+    @ObservationIgnored private var logTombstones: [String: Date] = [:]
+    /// Set by the log-entries merge when the union holds content the
+    /// cloud copy is missing — the pull loop re-queues the slice.
+    @ObservationIgnored private var logEntriesNeedUpsync = false
 
     private enum Keys {
         // Per-account state so two sign-ins on one device never share
@@ -108,6 +125,7 @@ final class SeasonSyncService {
         static func localStamps(_ userId: String) -> String { "seasonSync.localStamps.\(userId)" }
         static func uploadedMedia(_ userId: String) -> String { "seasonSync.uploadedMedia.\(userId)" }
         static func snapshots(_ userId: String) -> String { "seasonSync.snapshots.\(userId)" }
+        static func logTombstones(_ userId: String) -> String { "seasonSync.logTombstones.\(userId)" }
         // Pre-namespacing keys — adopted once by the first account that
         // loads them (the device owner), then removed.
         static let legacyPendingSlices = "seasonSync.pendingSlices"
@@ -196,6 +214,27 @@ final class SeasonSyncService {
         restoreConfirmed = false
     }
 
+    // MARK: Log-entry tombstones (called by Store deletion paths)
+
+    /// Record deliberate local deletions so the next merge removes the
+    /// entries everywhere instead of restoring them from the cloud.
+    func recordLogEntryDeletions(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let now = Date()
+        for id in ids { logTombstones[id.uuidString] = now }
+        persistState()
+    }
+
+    /// Forget tombstones for entries an undo just revived, so the merge
+    /// doesn't delete them again.
+    func clearLogEntryTombstones(_ ids: [UUID]) {
+        var changed = false
+        for id in ids where logTombstones.removeValue(forKey: id.uuidString) != nil {
+            changed = true
+        }
+        if changed { persistState() }
+    }
+
     // MARK: Up-sync hook (called by Store.flushPendingSaves)
 
     /// A season-scoped slice was just written locally. Stamp it, queue
@@ -235,7 +274,9 @@ final class SeasonSyncService {
         case "archivedSeasons": return store.archivedSeasons.isEmpty
         case "tasks": return store.tasks.isEmpty
         case "todos": return store.todos.isEmpty
-        case "logEntries": return store.logEntries.isEmpty
+        // Tombstones count as content: an all-deleted state still needs
+        // to travel so the deletions land on other devices.
+        case "logEntries": return store.logEntries.isEmpty && logTombstones.isEmpty
         case "boosters": return store.boosters.isEmpty
         case "habitTrains": return store.habitTrains.isEmpty
         case "avoidanceItems": return store.avoidanceItems.isEmpty
@@ -306,7 +347,11 @@ final class SeasonSyncService {
                 // applied over local content, no matter its stamp — so a
                 // blanked backup can't wipe a device that still holds the
                 // real season.
-                let shouldApply = remoteState == .content && ((remoteStamp > localStamp) || localEmpty)
+                // logEntries always merges: the per-entry union with
+                // tombstones is commutative and idempotent, so stamps
+                // can't drop one device's offline entries.
+                let shouldApply = remoteState == .content
+                    && ((remoteStamp > localStamp) || localEmpty || row.sliceKey == "logEntries")
                 guard shouldApply else { continue }
 
                 suppressedSlices.insert(row.sliceKey)
@@ -323,6 +368,13 @@ final class SeasonSyncService {
                     pendingSlices.remove(row.sliceKey)
                     captureSnapshot(slice: row.sliceKey, payload: row.payload, stamp: remoteStamp)
                     if row.sliceKey == "season" { appliedSeason = true }
+                    // The merge found local entries or tombstones the
+                    // cloud copy is missing — push the union back up.
+                    if row.sliceKey == "logEntries", logEntriesNeedUpsync {
+                        logEntriesNeedUpsync = false
+                        pendingSlices.insert("logEntries")
+                        localStamps["logEntries"] = Date()
+                    }
                     print("[SeasonSync] applied slice=\(row.sliceKey)")
                 }
             }
@@ -343,6 +395,7 @@ final class SeasonSyncService {
             // Self-healing pass: push up anything real that the cloud is
             // missing, every launch.
             queueStrandedLocalContent()
+            if !pendingSlices.isEmpty { scheduleFlush() }
             return true
         } catch {
             print("[SeasonSync] pull failed: \(error)")
@@ -371,7 +424,11 @@ final class SeasonSyncService {
         case "archivedSeasons": return arrayState(SeasonArchive.self)
         case "tasks": return arrayState(FFTask.self)
         case "todos": return arrayState(Todo.self)
-        case "logEntries": return arrayState(LogEntry.self)
+        case "logEntries":
+            if let wrapped = try? d.decode(LogEntriesSyncPayload.self, from: data) {
+                return (wrapped.entries.isEmpty && wrapped.tombstones.isEmpty) ? .empty : .content
+            }
+            return arrayState(LogEntry.self)
         case "boosters": return arrayState(WeeklyBooster.self)
         case "habitTrains": return arrayState(HabitTrain.self)
         case "avoidanceItems": return arrayState(AvoidanceItem.self)
@@ -407,8 +464,28 @@ final class SeasonSyncService {
             guard let value = try? decoder.decode([Todo].self, from: data) else { return false }
             store.todos = value
         case "logEntries":
-            guard let value = try? decoder.decode([LogEntry].self, from: data) else { return false }
-            store.logEntries = value
+            let remote: LogEntriesSyncPayload
+            if let wrapped = try? decoder.decode(LogEntriesSyncPayload.self, from: data) {
+                remote = wrapped
+            } else if let legacy = try? decoder.decode([LogEntry].self, from: data) {
+                remote = LogEntriesSyncPayload(entries: legacy, tombstones: [:])
+            } else { return false }
+            // Per-entry union merge — never whole-slice replace. Both
+            // devices' offline check-ins survive; deliberate deletions
+            // win via tombstones from either side.
+            for (id, at) in remote.tombstones where (logTombstones[id] ?? .distantPast) < at {
+                logTombstones[id] = at
+            }
+            var byId: [UUID: LogEntry] = [:]
+            for entry in remote.entries { byId[entry.id] = entry }
+            for entry in store.logEntries { byId[entry.id] = entry }
+            let merged = byId.values
+                .filter { logTombstones[$0.id.uuidString] == nil }
+                .sorted { $0.date < $1.date }
+            let remoteIds = Set(remote.entries.map(\.id))
+            logEntriesNeedUpsync = Set(merged.map(\.id)) != remoteIds
+                || logTombstones.contains { remote.tombstones[$0.key] == nil }
+            store.logEntries = merged
         case "boosters":
             guard let value = try? decoder.decode([WeeklyBooster].self, from: data) else { return false }
             store.boosters = value
@@ -451,7 +528,12 @@ final class SeasonSyncService {
         case "archivedSeasons": return encode(store.archivedSeasons)
         case "tasks": return encode(store.tasks)
         case "todos": return encode(store.todos)
-        case "logEntries": return encode(store.logEntries)
+        case "logEntries":
+            // Prune ancient tombstones so the payload stays bounded —
+            // ids are never reused, so an old tombstone has no target.
+            let cutoff = Date().addingTimeInterval(-120 * 86_400)
+            logTombstones = logTombstones.filter { $0.value > cutoff }
+            return encode(LogEntriesSyncPayload(entries: store.logEntries, tombstones: logTombstones))
         case "boosters": return encode(store.boosters)
         case "habitTrains": return encode(store.habitTrains)
         case "avoidanceItems": return encode(store.avoidanceItems)
@@ -813,6 +895,8 @@ final class SeasonSyncService {
         uploadedMedia = []
         snapshots = [:]
         cloudNonEmptySlices = []
+        logTombstones = [:]
+        logEntriesNeedUpsync = false
         restoreConfirmed = false
 
         let defaults = UserDefaults.standard
@@ -848,6 +932,10 @@ final class SeasonSyncService {
            let snaps = try? decoder.decode([String: [SnapshotEntry]].self, from: data) {
             snapshots = snaps
         }
+        if let data = defaults.data(forKey: Keys.logTombstones(userId)),
+           let stones = try? decoder.decode([String: Date].self, from: data) {
+            logTombstones = stones
+        }
     }
 
     private func persistState() {
@@ -858,5 +946,6 @@ final class SeasonSyncService {
         defaults.set(try? encoder.encode(localStamps), forKey: Keys.localStamps(myUserId))
         defaults.set(try? encoder.encode(Array(uploadedMedia)), forKey: Keys.uploadedMedia(myUserId))
         defaults.set(try? encoder.encode(snapshots), forKey: Keys.snapshots(myUserId))
+        defaults.set(try? encoder.encode(logTombstones), forKey: Keys.logTombstones(myUserId))
     }
 }

@@ -247,7 +247,7 @@ struct GoldenHourSettingsSheet: View {
                     statusRow(icon: "eye.fill", text: "Wall is open — closes in \(GoldenHourSchedule.wallCountdownString(until: moment.wallClosesAt, from: now))", highlight: true)
                 case .over:
                     let attendance = service.attendance(circleId: circleId, day: moment.day)
-                    statusRow(icon: "checkmark.seal.fill", text: "Done for today — \(attendance.made) of \(attendance.total) made it", highlight: false)
+                    statusRow(icon: "checkmark.seal.fill", text: "Done for today — \(attendance.made == 1 ? "1 made it" : "\(attendance.made) made it")", highlight: false)
                 case .upcoming:
                     upcomingRow(moment: moment, settings: liveSettings)
                 }

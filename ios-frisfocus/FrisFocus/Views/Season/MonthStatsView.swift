@@ -558,7 +558,7 @@ struct MonthStatsView: View {
                 Text(
                     diff == 0
                         ? "Even with the month before"
-                        : "\(abs(diff)) points \(trendingUp ? "ahead of" : "behind") the month before"
+                        : "\(abs(diff)) points \(trendingUp ? "above" : "below") the month before"
                 )
                 .font(.sans(13, weight: .medium))
                 .foregroundStyle(Theme.textCream)

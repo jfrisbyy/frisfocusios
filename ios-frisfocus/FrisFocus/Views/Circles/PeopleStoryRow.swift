@@ -24,6 +24,7 @@ import UIKit
 
 struct PeopleStoryRow: View {
     @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var social
 
     var userInitials: String = ""
     var userPhotoURL: URL? = nil
@@ -43,8 +44,15 @@ struct PeopleStoryRow: View {
                     photoURL: userPhotoURL,
                     thumbMedia: store.myStoryThumbMedia,
                     thumbCaption: store.myStoryThumbCaption,
+                    uploadFailed: !failedMyStoryIds.isEmpty,
                     action: onYouTap,
-                    addAction: onYouAddTap
+                    addAction: onYouAddTap,
+                    onRetry: {
+                        let ids = failedMyStoryIds
+                        Task {
+                            for id in ids { await social.retryStoryUpload(postId: id) }
+                        }
+                    }
                 )
                 .zoomSource(id: "mystory", in: zoomNamespace)
 
@@ -95,6 +103,13 @@ struct PeopleStoryRow: View {
         if store.hasAnyActiveStories(forFriendId: friend.id) { return .seen }
         return .none
     }
+
+    /// My local posts whose upload failed — the bubble offers a resend.
+    private var failedMyStoryIds: [UUID] {
+        store.storyPosts
+            .filter { $0.authorId == store.currentUserId && social.failedStoryUploadIds.contains($0.id) }
+            .map(\.id)
+    }
 }
 
 // MARK: - Ring states
@@ -114,8 +129,10 @@ private struct YourStoryBubble: View {
     var photoURL: URL? = nil
     var thumbMedia: MediaAsset? = nil
     var thumbCaption: String? = nil
+    var uploadFailed: Bool = false
     let action: () -> Void
     let addAction: () -> Void
+    var onRetry: (() -> Void)? = nil
 
     private let discSize: CGFloat = 63
     private let ringSize: CGFloat = 72
@@ -157,10 +174,32 @@ private struct YourStoryBubble: View {
                 .offset(x: 1, y: 1)
                 .accessibilityLabel("Add a story")
             }
+            .overlay(alignment: .topTrailing) {
+                if uploadFailed {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onRetry?()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(Theme.alertRed)
+                                .overlay(Circle().strokeBorder(Theme.warmWheat, lineWidth: 1.8))
+                            Image(systemName: "arrow.clockwise")
+                                .font(.sans(10, weight: .bold))
+                                .foregroundStyle(Theme.textCream)
+                        }
+                        .frame(width: 22, height: 22)
+                        .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 2, y: -2)
+                    .accessibilityLabel("Your story didn't send. Retry upload.")
+                }
+            }
 
-            Text("Your story")
+            Text(uploadFailed ? "Didn't send" : "Your story")
                 .font(.sans(11, weight: .medium))
-                .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                .foregroundStyle(uploadFailed ? Theme.alertRed : Theme.textPrimary.opacity(0.75))
                 .lineLimit(1)
         }
         .frame(width: 76)
@@ -545,6 +584,7 @@ private struct AddPersonBubble: View {
             onYouAddTap: {}
         )
         .environment(Store())
+        .environment(SocialSyncService())
     }
     .background(Theme.warmWheat)
 }

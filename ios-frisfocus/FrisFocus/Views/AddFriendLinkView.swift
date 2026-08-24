@@ -10,6 +10,7 @@
 
 import SwiftUI
 import UIKit
+import AuthenticationServices
 
 struct AddFriendLinkView: View {
     @Environment(AuthManager.self) private var auth
@@ -48,6 +49,10 @@ struct AddFriendLinkView: View {
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(28)
         .task { await load() }
+        .onChange(of: auth.user?.id) { _, newId in
+            guard newId != nil else { return }
+            Task { await reloadAfterSignIn() }
+        }
         .alert("Something went wrong", isPresented: $service.showError) {
             Button("OK") { }
         } message: {
@@ -128,7 +133,22 @@ struct AddFriendLinkView: View {
         case .friends:
             statusPill(text: "Already friends", systemImage: "checkmark.seal.fill", tint: Theme.alertGreen)
         case .requestSent:
-            statusPill(text: "Request sent", systemImage: "clock.fill")
+            VStack(spacing: 10) {
+                statusPill(text: "Request sent", systemImage: "clock.fill")
+                Button {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    guard let myId,
+                          let request = service.outgoing.first(where: { $0.profile.id == profile.id }) else { return }
+                    Task { await service.cancelRequest(request, myUserId: myId) }
+                } label: {
+                    Text("Cancel request")
+                        .font(.sans(14, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .underline()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancel the friend request")
+            }
         case .requestReceived:
             primaryButton(title: "Accept request", systemImage: "checkmark") {
                 guard let myId,
@@ -178,18 +198,60 @@ struct AddFriendLinkView: View {
     }
 
     private var signedOut: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "person.crop.circle.badge.questionmark")
+        VStack(spacing: 14) {
+            Image(systemName: "person.2.fill")
                 .font(.system(size: 30, weight: .light))
                 .foregroundStyle(Theme.textTertiary)
-            Text("Sign in to add friends")
+            Text("Sign in to add your friend")
                 .font(.serif(19, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Open your profile to sign in, then tap the invite link again.")
+            Text("This invite stays right here — sign in and you're connected.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
+
+            VStack(spacing: 10) {
+                SignInWithAppleButton(.continue) { request in
+                    request.requestedScopes = [.email, .fullName]
+                } onCompletion: { _ in
+                    Task { await auth.signIn(provider: "apple") }
+                }
+                .signInWithAppleButtonStyle(.black)
+                .frame(height: 50)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .disabled(auth.isSigningIn)
+
+                Button {
+                    Task { await auth.signIn(provider: "google") }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 16, weight: .semibold))
+                        Text("Continue with Google")
+                            .font(.sans(16, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(Theme.paperCream)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(Theme.textPrimary.opacity(0.14), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(auth.isSigningIn)
+            }
+            .padding(.top, 4)
+            .overlay(alignment: .top) {
+                if auth.isSigningIn {
+                    ProgressView()
+                        .tint(Theme.textPrimary)
+                        .padding(.top, -24)
+                }
+            }
         }
     }
 
@@ -201,6 +263,14 @@ struct AddFriendLinkView: View {
         if let myId { await service.load(myUserId: myId) }
         profile = await service.fetchProfile(id: userId)
         isLoadingProfile = false
+    }
+
+    /// Signing in right inside the sheet: reload the graph and the
+    /// profile so the Add control appears without re-tapping the link.
+    func reloadAfterSignIn() async {
+        didLoad = false
+        isLoadingProfile = true
+        await load()
     }
 }
 

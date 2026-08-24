@@ -106,8 +106,19 @@ struct DiscoverPeopleView: View {
     @ViewBuilder
     private var content: some View {
         if discover.isLoading && visibleSuggestions.isEmpty && !isSearchActive {
-            ProgressView()
-                .tint(Theme.textPrimary)
+            // Shape-true skeletons instead of a bare spinner — the list
+            // arrives into the same silhouette it loaded behind.
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(0..<6, id: \.self) { index in
+                        SkeletonPersonRow()
+                            .opacity(1.0 - Double(index) * 0.12)
+                    }
+                }
+                .padding(.horizontal, Theme.pageHorizontalPadding)
+                .padding(.top, 18)
+            }
+            .scrollDisabled(true)
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 22) {

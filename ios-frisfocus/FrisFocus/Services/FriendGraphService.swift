@@ -292,26 +292,19 @@ final class FriendGraphService {
         }
     }
 
-    /// Find real accounts by @username, name, or email — a single
-    /// case-insensitive search across all three. `profiles` is
-    /// world-readable, so this is a plain filtered select.
+    /// Find real accounts by @username, name, or exact email. Runs
+    /// through the `search_people` definer RPC so email addresses never
+    /// leave the server: the RPC matches emails only on exact equality
+    /// and returns no email column. It also excludes blocks in both
+    /// directions server-side.
     func searchPeople(query rawQuery: String, myUserId: String) async {
-        let cleaned = rawQuery
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "@", with: "")
-        // Keep only characters safe inside a PostgREST `or(...)` filter —
-        // commas, parens, and wildcards would break the filter grammar.
-        let safe = String(cleaned.filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." || $0 == "-" || $0 == " " })
-        guard safe.count >= 2 else { searchResults = []; return }
+        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { searchResults = []; return }
         isSearching = true
         defer { isSearching = false }
         do {
             let results: [RemoteProfile] = try await supabase
-                .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
-                .eq("is_test", value: false)
-                .or("username.ilike.*\(safe)*,name.ilike.*\(safe)*,email.ilike.*\(safe)*")
-                .limit(20)
+                .rpc("search_people", params: ["q": trimmed])
                 .execute()
                 .value
             searchResults = results.filter { $0.id != myUserId }
@@ -326,7 +319,7 @@ final class FriendGraphService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select("id, name, username, avatar_url, header_url")
                 .eq("id", value: id)
                 .limit(1)
                 .execute()
@@ -408,6 +401,23 @@ final class FriendGraphService {
             incoming.removeAll { $0.id == request.id }
         } catch {
             fail("Couldn't decline the request.", error)
+        }
+    }
+
+    /// Withdraw a request I sent while it's still pending. The row is
+    /// deleted (RLS lets the requester delete their own), so the other
+    /// person's inbox clears too — no ghost requests.
+    func cancelRequest(_ request: PendingFriendRequest, myUserId: String) async {
+        do {
+            try await supabase
+                .from("friend_requests")
+                .delete()
+                .eq("id", value: request.id.uuidString)
+                .eq("requester_id", value: myUserId)
+                .execute()
+            outgoing.removeAll { $0.id == request.id }
+        } catch {
+            fail("Couldn't cancel the request.", error)
         }
     }
 
@@ -520,7 +530,7 @@ final class FriendGraphService {
         guard !ids.isEmpty else { return [:] }
         let rows: [RemoteProfile] = try await supabase
             .from("profiles")
-            .select("id, email, name, username, avatar_url, header_url")
+            .select("id, name, username, avatar_url, header_url")
             .in("id", values: ids)
             .execute()
             .value

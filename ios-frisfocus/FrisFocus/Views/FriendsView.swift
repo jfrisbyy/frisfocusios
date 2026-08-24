@@ -289,7 +289,23 @@ struct FriendsView: View {
             sectionHeader("SENT", subtitle: nil)
             ForEach(service.outgoing) { request in
                 personRow(request.profile) {
-                    pill("Pending", filled: false).opacity(0.55)
+                    HStack(spacing: 8) {
+                        pill("Pending", filled: false).opacity(0.55)
+                        Button {
+                            guard let myId else { return }
+                            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                            Task { await service.cancelRequest(request, myUserId: myId) }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(Theme.textSecondary)
+                                .frame(width: 34, height: 34)
+                                .background(Theme.textPrimary.opacity(0.06))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Cancel the request to \(request.profile.displayName)")
+                    }
                 }
             }
         }

@@ -137,6 +137,23 @@ struct ProfileSheetView: View {
                 .padding(.top, 18)
                 .padding(.horizontal, 16)
 
+            HStack(spacing: 18) {
+                NavigationLink {
+                    LegalView(document: .terms)
+                } label: {
+                    Text("Terms of Use").underline()
+                }
+                NavigationLink {
+                    LegalView(document: .privacy)
+                } label: {
+                    Text("Privacy Policy").underline()
+                }
+            }
+            .font(.sans(11, weight: .medium))
+            .foregroundStyle(Theme.textSecondary)
+            .buttonStyle(.plain)
+            .padding(.top, 10)
+
             Spacer()
         }
     }
@@ -339,6 +356,32 @@ struct ProfileSheetView: View {
                     icon: "hand.raised.fill",
                     title: "Blocked",
                     subtitle: "People you've blocked"
+                )
+            }
+            .buttonStyle(.plain)
+
+            hubDivider
+
+            NavigationLink {
+                LegalView(document: .privacy)
+            } label: {
+                hubRow(
+                    icon: "lock.shield",
+                    title: "Privacy Policy",
+                    subtitle: "What we store and what friends see"
+                )
+            }
+            .buttonStyle(.plain)
+
+            hubDivider
+
+            NavigationLink {
+                LegalView(document: .terms)
+            } label: {
+                hubRow(
+                    icon: "doc.text",
+                    title: "Terms of Use",
+                    subtitle: "The agreement for using FrisFocus"
                 )
             }
             .buttonStyle(.plain)

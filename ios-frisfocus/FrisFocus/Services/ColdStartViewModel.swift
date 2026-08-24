@@ -19,7 +19,7 @@ import SwiftUI
 
 /// The three effort bands a card can land in. Order matters: floor is the
 /// cheapest ("even on a bad day"), ideal the most demanding.
-enum ColdStartBand: String, CaseIterable, Equatable, Hashable {
+enum ColdStartBand: String, CaseIterable, Equatable, Hashable, Codable {
     case floor
     case normal
     case ideal
@@ -96,35 +96,170 @@ final class ColdStartViewModel {
     // MARK: Selection (Screen 1)
 
     /// Focus-area ids chosen, in tap order.
-    var selectedAreaIds: [String] = []
+    var selectedAreaIds: [String] = [] { didSet { scheduleDraftSave() } }
     /// Genuinely unmapped free-text intents → each becomes a general
     /// fallback direction.
-    var customIntents: [String] = []
+    var customIntents: [String] = [] { didSet { scheduleDraftSave() } }
 
     // MARK: Board (Screen 2)
 
-    var directions: [Direction] = []
-    var index: Int = 0
+    var directions: [Direction] = [] { didSet { scheduleDraftSave() } }
+    var index: Int = 0 { didSet { scheduleDraftSave() } }
     /// Direction ids that already got the one-time "anything on a rough
     /// day?" nudge, so it never repeats.
-    var floorAskedDirectionIds: Set<String> = []
+    var floorAskedDirectionIds: Set<String> = [] { didSet { scheduleDraftSave() } }
 
     // MARK: Capstone (Screen A) — free-written milestones (north stars)
 
     /// The person's own words for what would make this season a win.
     /// Never pre-filled from a library. Each becomes a north-star
     /// milestone at a hidden default value on commit.
-    var milestones: [String] = []
+    var milestones: [String] = [] { didSet { scheduleDraftSave() } }
 
     // MARK: Season frame (Screen B)
 
     /// The season's name. Empty defaults to "Season One" on commit.
-    var seasonName: String = ""
+    var seasonName: String = "" { didSet { scheduleDraftSave() } }
     /// How the season ends. Open-ended is the calm default.
-    var seasonEndMode: SeasonEndMode = .openEnded
+    var seasonEndMode: SeasonEndMode = .openEnded { didSet { scheduleDraftSave() } }
     /// The chosen end date when `seasonEndMode == .date`. Never silently
     /// rounded — it's exactly the date the person picked.
-    var seasonEndDate: Date = Calendar.current.date(byAdding: .day, value: 90, to: Date()) ?? Date()
+    var seasonEndDate: Date = Calendar.current.date(byAdding: .day, value: 90, to: Date()) ?? Date() { didSet { scheduleDraftSave() } }
+
+    /// Which flow screen the person is on ("pick" / "board" /
+    /// "capstone" / "season") — persisted with the draft so a killed
+    /// app resumes exactly where they were.
+    var savedPhase: String = "pick" { didSet { scheduleDraftSave() } }
+
+    // MARK: Draft persistence (kill-safe onboarding)
+
+    /// Everything the flow needs to resume mid-build, as one Codable
+    /// snapshot. `Direction.area`/`tint` rebuild from the library by id.
+    private struct Draft: Codable {
+        struct DraftItem: Codable {
+            var id: String
+            var label: String
+            var blurb: String
+            var lifeArea: LibraryLifeArea
+            var band: ColdStartBand?
+            var isCustom: Bool
+            var subDirection: String?
+        }
+        struct DraftDirection: Codable {
+            var id: String
+            var areaId: String?
+            var title: String
+            var items: [DraftItem]
+            var selectedSubs: [String]
+        }
+        var selectedAreaIds: [String]
+        var customIntents: [String]
+        var directions: [DraftDirection]
+        var index: Int
+        var floorAsked: [String]
+        var milestones: [String]
+        var seasonName: String
+        var seasonEndMode: SeasonEndMode
+        var seasonEndDate: Date
+        var savedPhase: String
+    }
+
+    private static let draftKey = "coldStart.draft.v1"
+
+    @ObservationIgnored private var draftSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var isRestoringDraft = false
+
+    init() {
+        restoreDraftIfPresent()
+    }
+
+    /// Debounced save — bursts of drags coalesce into one write. Every
+    /// mutation lands within half a second, so a swipe-kill mid-board
+    /// never loses more than the last gesture.
+    private func scheduleDraftSave() {
+        guard !isRestoringDraft else { return }
+        draftSaveTask?.cancel()
+        draftSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.saveDraftNow()
+        }
+    }
+
+    private func saveDraftNow() {
+        let draft = Draft(
+            selectedAreaIds: selectedAreaIds,
+            customIntents: customIntents,
+            directions: directions.map { dir in
+                Draft.DraftDirection(
+                    id: dir.id,
+                    areaId: dir.area?.id,
+                    title: dir.title,
+                    items: dir.items.map {
+                        Draft.DraftItem(
+                            id: $0.id, label: $0.label, blurb: $0.blurb,
+                            lifeArea: $0.lifeArea, band: $0.band,
+                            isCustom: $0.isCustom, subDirection: $0.subDirection
+                        )
+                    },
+                    selectedSubs: Array(dir.selectedSubs)
+                )
+            },
+            index: index,
+            floorAsked: Array(floorAskedDirectionIds),
+            milestones: milestones,
+            seasonName: seasonName,
+            seasonEndMode: seasonEndMode,
+            seasonEndDate: seasonEndDate,
+            savedPhase: savedPhase
+        )
+        if let data = try? JSONEncoder().encode(draft) {
+            UserDefaults.standard.set(data, forKey: Self.draftKey)
+        }
+    }
+
+    /// Resume a build the last session never finished. Directions are
+    /// rebuilt from the library by id so tints and symbols stay true.
+    private func restoreDraftIfPresent() {
+        guard let data = UserDefaults.standard.data(forKey: Self.draftKey),
+              let draft = try? JSONDecoder().decode(Draft.self, from: data) else { return }
+        isRestoringDraft = true
+        defer { isRestoringDraft = false }
+        selectedAreaIds = draft.selectedAreaIds
+        customIntents = draft.customIntents
+        directions = draft.directions.map { dir in
+            let area = dir.areaId.flatMap { StarterLibrary.focusArea($0) }
+            return Direction(
+                id: dir.id,
+                area: area,
+                title: dir.title,
+                tint: area?.tint ?? Theme.sunOuter,
+                items: dir.items.map {
+                    Item(
+                        id: $0.id, label: $0.label, blurb: $0.blurb,
+                        lifeArea: $0.lifeArea, band: $0.band,
+                        isCustom: $0.isCustom, subDirection: $0.subDirection
+                    )
+                },
+                selectedSubs: Set(dir.selectedSubs)
+            )
+        }
+        index = min(max(0, draft.index), max(0, directions.count - 1))
+        floorAskedDirectionIds = Set(draft.floorAsked)
+        milestones = draft.milestones
+        seasonName = draft.seasonName
+        seasonEndMode = draft.seasonEndMode
+        seasonEndDate = draft.seasonEndDate
+        savedPhase = draft.savedPhase
+    }
+
+    /// The board was committed (or deliberately abandoned) — the draft
+    /// has served its purpose.
+    func clearDraft() {
+        draftSaveTask?.cancel()
+        draftSaveTask = nil
+        UserDefaults.standard.removeObject(forKey: Self.draftKey)
+    }
 
     /// True once the person has named at least one milestone — gates the
     /// "when my milestones land" end option.

@@ -22,9 +22,12 @@ struct GoldenHourWallView: View {
 
     @Environment(GoldenHourService.self) private var service
     @Environment(AuthManager.self) private var auth
+    @Environment(ModerationService.self) private var moderation
     @Environment(\.dismiss) private var dismiss
 
     @State private var fullScreenPost: GoldenHourPost?
+    @State private var reportTarget: ReportTarget?
+    @State private var blockCandidate: RemoteProfile?
 
     private var myUserId: String { auth.user?.id ?? "" }
     private var circle: GoldenCircle? { service.circle(moment.circleId) }
@@ -50,6 +53,29 @@ struct GoldenHourWallView: View {
         .fullScreenCover(item: $fullScreenPost) { post in
             GoldenHourMediaViewer(post: post)
         }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: target.messageId,
+                subjectName: target.subjectName
+            )
+        }
+        .confirmationDialog(
+            "Block \(blockCandidate?.displayName ?? "this member")?",
+            isPresented: Binding(
+                get: { blockCandidate != nil },
+                set: { if !$0 { blockCandidate = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: blockCandidate
+        ) { candidate in
+            Button("Block \(candidate.displayName)", role: .destructive) {
+                Task { await moderation.block(candidate.id, myUserId: myUserId) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("They won't be able to message you or send requests, and you won't see each other's shared moments.")
+        }
     }
 
     // MARK: - Wall
@@ -58,8 +84,9 @@ struct GoldenHourWallView: View {
     private func wall(now: Date) -> some View {
         let phase = moment.phase(at: now)
         let posts = service.posts(circleId: moment.circleId, day: moment.day)
+            .filter { !moderation.isBlocked($0.userId) && !moderation.isGoldenHourHidden($0.id) }
         let postedIds = Set(posts.map(\.userId))
-        let waiting = (circle?.members ?? []).filter { !postedIds.contains($0.id) }
+        let waiting = (circle?.members ?? []).filter { !postedIds.contains($0.id) && !moderation.isBlocked($0.id) }
 
         VStack(spacing: 0) {
             header
@@ -103,6 +130,20 @@ struct GoldenHourWallView: View {
                                 guard iPosted, post.mediaPath != nil else { return }
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 fullScreenPost = post
+                            },
+                            onReport: {
+                                reportTarget = ReportTarget(
+                                    reportedUserId: post.userId,
+                                    messageId: nil,
+                                    subjectName: circle?.profile(post.userId)?.displayName ?? "this member"
+                                )
+                            },
+                            onHide: {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                moderation.hideGoldenHourPost(post.id)
+                            },
+                            onBlock: {
+                                blockCandidate = circle?.profile(post.userId)
                             }
                         )
                     }
@@ -161,7 +202,7 @@ struct GoldenHourWallView: View {
         let attendance = service.attendance(circleId: moment.circleId, day: moment.day)
         let streak = service.streak(circleId: moment.circleId, userId: myUserId)
         VStack(spacing: 10) {
-            Text("\(attendance.made) of \(attendance.total) made it")
+            Text(attendance.made == 1 ? "1 made it" : "\(attendance.made) made it")
                 .font(.serif(16, weight: .medium))
                 .foregroundStyle(GoldenTheme.cream.opacity(0.85))
             if streak > 0 {
@@ -194,10 +235,10 @@ struct GoldenHourWallView: View {
             Image(systemName: "lock.fill")
                 .font(.system(size: 30, weight: .regular))
                 .foregroundStyle(GoldenTheme.gold)
-            Text("You missed today's Golden Hour")
+            Text("Today's Golden Hour has passed")
                 .font(.serif(21, weight: .medium))
                 .foregroundStyle(GoldenTheme.cream)
-            Text("The wall stays blurred for you — the hour will pass and you'll never see what happened. Show up tomorrow.")
+            Text("The wall stays blurred this time — it belongs to the ones who caught the light. Tomorrow's hour is yours.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(GoldenTheme.cream.opacity(0.7))
                 .multilineTextAlignment(.center)
@@ -226,6 +267,9 @@ private struct GoldenPostTile: View {
     let isMine: Bool
     let isBlurred: Bool
     let onTap: () -> Void
+    var onReport: (() -> Void)? = nil
+    var onHide: (() -> Void)? = nil
+    var onBlock: (() -> Void)? = nil
 
     @Environment(GoldenHourService.self) private var service
     @State private var signedURL: URL?
@@ -247,11 +291,31 @@ private struct GoldenPostTile: View {
                 )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if !isMine {
+                Button {
+                    onReport?()
+                } label: {
+                    Label("Report", systemImage: "flag")
+                }
+                Button {
+                    onHide?()
+                } label: {
+                    Label("Hide this capture", systemImage: "eye.slash")
+                }
+                Button(role: .destructive) {
+                    onBlock?()
+                } label: {
+                    Label("Block \(profile?.displayName ?? "member")", systemImage: "hand.raised")
+                }
+            }
+        }
         .task(id: post.mediaPath) {
             guard let path = post.mediaPath, signedURL == nil, post.mediaKind == .photo else { return }
             signedURL = await service.signedURL(forMediaPath: path)
         }
         .accessibilityLabel("\(profile?.displayName ?? "A member")'s Golden Hour capture")
+        .accessibilityHint(isMine ? "" : "Touch and hold for report, hide, and block options")
     }
 
     @ViewBuilder
@@ -355,7 +419,7 @@ private struct GoldenEmptySlot: View {
                             .font(.sans(10, weight: .semibold).monospacedDigit())
                             .foregroundStyle(GoldenTheme.gold)
                     } else {
-                        Text("missed it")
+                        Text("quiet today")
                             .font(.sans(10, weight: .semibold))
                             .foregroundStyle(GoldenTheme.cream.opacity(0.4))
                     }
@@ -366,7 +430,7 @@ private struct GoldenEmptySlot: View {
             .accessibilityLabel(
                 stillHasTime
                     ? "\(profile.displayName) still has time to post"
-                    : "\(profile.displayName) missed it"
+                    : "\(profile.displayName) was quiet today"
             )
     }
 }

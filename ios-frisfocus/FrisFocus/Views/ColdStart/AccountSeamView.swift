@@ -189,6 +189,7 @@ private struct SaveYourStartStep: View {
     @Environment(AuthManager.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown: Bool = false
+    @State private var legalDoc: LegalDocument?
 
     var body: some View {
         @Bindable var auth = auth
@@ -239,11 +240,17 @@ private struct SaveYourStartStep: View {
 
                 googleButton
 
-                Text("By continuing you agree to our Terms & Privacy.")
+                Text(.init("By continuing you agree to our [Terms of Use](frisfocus://legal/terms) and [Privacy Policy](frisfocus://legal/privacy)."))
                     .font(.sans(11.5, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.6))
+                    .tint(Theme.textCream.opacity(0.95))
                     .multilineTextAlignment(.center)
                     .padding(.top, 2)
+                    .environment(\.openURL, OpenURLAction { url in
+                        if url.absoluteString.hasSuffix("terms") { legalDoc = .terms; return .handled }
+                        if url.absoluteString.hasSuffix("privacy") { legalDoc = .privacy; return .handled }
+                        return .systemAction
+                    })
             }
             .opacity(shown ? 1 : 0)
             .offset(y: shown ? 0 : 14)
@@ -267,6 +274,17 @@ private struct SaveYourStartStep: View {
             Button("OK") {}
         } message: {
             Text(auth.errorMessage)
+        }
+        .sheet(item: $legalDoc) { doc in
+            NavigationStack {
+                LegalView(document: doc)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { legalDoc = nil }
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                    }
+            }
         }
     }
 

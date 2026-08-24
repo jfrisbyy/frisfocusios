@@ -64,6 +64,10 @@ struct FrisFocusApp: App {
                 .environment(appDelegate.notifications)
                 .preferredColorScheme(.light)
                 .statusBarHidden(false)
+                // Dynamic Type rides through the Theme fonts (UIFontMetrics).
+                // Accessibility sizes cap at AX2 so the largest settings
+                // still read beautifully instead of shattering the layout.
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         }
     }
 }

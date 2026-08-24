@@ -128,8 +128,15 @@ struct ContentView: View {
             }
             .onOpenURL { url in
                 // A shared invite link (or scanned QR) opens us straight
-                // to the inviter's profile with an Add control.
+                // to the inviter's profile with an Add control. Arriving
+                // signed out, the invite is also remembered so it replays
+                // right after sign-in — the link never has to be re-tapped.
                 if let userId = InviteLink.userId(from: url) {
+                    if auth.user == nil {
+                        UserDefaults.standard.set(userId, forKey: "pendingInviteUserId")
+                    } else {
+                        UserDefaults.standard.removeObject(forKey: "pendingInviteUserId")
+                    }
                     pendingInvite = InviteTarget(id: userId)
                 }
             }
@@ -144,6 +151,14 @@ struct ContentView: View {
                 if let myId = auth.user?.id {
                     print("[FrisFocus] startup: signed in as user=\(myId) — loading account data")
                     notifications.setUserId(myId)
+                    // Replay an invite link that arrived before sign-in —
+                    // the inviter's profile reopens with a live Add control.
+                    if let storedInvite = UserDefaults.standard.string(forKey: "pendingInviteUserId") {
+                        UserDefaults.standard.removeObject(forKey: "pendingInviteUserId")
+                        if storedInvite != myId {
+                            pendingInvite = InviteTarget(id: storedInvite)
+                        }
+                    }
                     // Messaging is app-wide: load the recent window and
                     // subscribe to realtime once, so unread badges stay
                     // live on every screen — not just inside Circles.

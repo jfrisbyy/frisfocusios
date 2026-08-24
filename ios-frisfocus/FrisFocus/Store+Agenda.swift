@@ -110,7 +110,7 @@ extension Store {
     func unhonorBucket(_ bucket: Bucket) {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        logEntries.removeAll { entry in
+        removeLogEntries { entry in
             entry.bucketId == bucket.id
                 && cal.isDate(entry.date, inSameDayAs: today)
                 && entry.entryType == .completed

@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 enum Theme {
     // MARK: - Backgrounds
@@ -169,17 +170,39 @@ extension Color {
 }
 
 // MARK: - Typography helpers
+
+/// Dynamic Type for the app's designed sizes: every Theme font routes
+/// its fixed point size through UIFontMetrics, so the whole interface
+/// scales with the user's text-size setting while keeping its designed
+/// proportions. Display sizes ride gentler ramps than body text —
+/// mirroring Apple's own type styles — so big serif headlines grow
+/// without shattering layouts.
+private func scaledFontSize(_ size: CGFloat) -> CGFloat {
+    let style: UIFont.TextStyle
+    switch size {
+    case ..<12: style = .caption2
+    case ..<14: style = .footnote
+    case ..<16: style = .subheadline
+    case ..<19: style = .body
+    case ..<23: style = .title3
+    case ..<29: style = .title2
+    case ..<36: style = .title1
+    default: style = .largeTitle
+    }
+    return UIFontMetrics(forTextStyle: style).scaledValue(for: size)
+}
+
 extension Font {
     static func serif(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
-        .system(size: size, weight: weight, design: .serif)
+        .system(size: scaledFontSize(size), weight: weight, design: .serif)
     }
 
     static func serifItalic(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
-        .system(size: size, weight: weight, design: .serif).italic()
+        .system(size: scaledFontSize(size), weight: weight, design: .serif).italic()
     }
 
     static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .default)
+        .system(size: scaledFontSize(size), weight: weight, design: .default)
     }
 }
 

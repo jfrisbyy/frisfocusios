@@ -381,7 +381,15 @@ final class Store {
         guard let snap = undoStack.popLast() else { return nil }
         tasks = snap.tasks
         todos = snap.todos
+        // Keep sync deletions honest across the undo: entries the undo
+        // removes get tombstones (so they don't resurrect from the
+        // cloud), and entries the undo revives get their tombstones
+        // cleared (so the merge doesn't kill them again).
+        let restoredIds = Set(snap.logEntries.map(\.id))
+        let removedIds = logEntries.map(\.id).filter { !restoredIds.contains($0) }
         logEntries = snap.logEntries
+        if !removedIds.isEmpty { seasonSync?.recordLogEntryDeletions(removedIds) }
+        seasonSync?.clearLogEntryTombstones(Array(restoredIds))
         signalFacts = snap.signalFacts
         persistAll()
         return snap.label
@@ -2031,7 +2039,7 @@ extension Store {
     func uncompleteTask(_ task: FFTask) {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        logEntries.removeAll { entry in
+        removeLogEntries { entry in
             entry.taskId == task.id
                 && cal.isDate(entry.date, inSameDayAs: today)
                 && entry.entryType == .completed
@@ -3041,8 +3049,12 @@ extension Store {
 
         if todos[idx].isCompleted {
             todos[idx].isCompleted = false
+            let completedDay = todos[idx].completedAt ?? Date()
             todos[idx].completedAt = nil
-            logEntries.removeAll { $0.todoId == todo.id }
+            // Only the entry from the completion's own day is removed —
+            // unchecking today must never erase a past day's record.
+            let cal = Calendar.current
+            removeLogEntries { $0.todoId == todo.id && cal.isDate($0.date, inSameDayAs: completedDay) }
         } else {
             todos[idx].isCompleted = true
             todos[idx].completedAt = Date()
@@ -3082,7 +3094,10 @@ extension Store {
         if completed {
             guard !alreadyDone else { return }
             let when = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
-            let earned = task.scoring.points(forQuantity: nil, flatValue: task.pointValue)
+            // Backdated completions can't capture an exact amount, so a
+            // tiered/quantity task counts at its baseline value instead
+            // of silently earning zero.
+            let earned = task.scoring.baselinePoints(flatValue: task.pointValue)
             logEntries.append(LogEntry(
                 date: when,
                 taskId: task.id,
@@ -3092,7 +3107,7 @@ extension Store {
                 title: task.title
             ))
         } else {
-            logEntries.removeAll {
+            removeLogEntries {
                 $0.taskId == task.id
                     && cal.isDate($0.date, inSameDayAs: day)
                     && $0.entryType == .completed
@@ -3123,16 +3138,27 @@ extension Store {
             }
         } else {
             todos[idx].isCompleted = false
+            let completedDay = todos[idx].completedAt ?? day
             todos[idx].completedAt = nil
-            logEntries.removeAll { $0.todoId == todo.id }
+            removeLogEntries { $0.todoId == todo.id && cal.isDate($0.date, inSameDayAs: completedDay) }
         }
         persistAll()
     }
 
     /// Remove one specific log entry — the "edit a previous day" eraser.
     func removeLogEntry(_ entry: LogEntry) {
-        logEntries.removeAll { $0.id == entry.id }
+        removeLogEntries { $0.id == entry.id }
         persistAll()
+    }
+
+    /// Remove log entries and hand their ids to season sync as delete
+    /// tombstones, so a removal made on this device propagates across
+    /// devices instead of resurrecting on the next merge.
+    func removeLogEntries(where predicate: (LogEntry) -> Bool) {
+        let removedIds = logEntries.filter(predicate).map(\.id)
+        guard !removedIds.isEmpty else { return }
+        logEntries.removeAll(where: predicate)
+        seasonSync?.recordLogEntryDeletions(removedIds)
     }
 
     // MARK: - Task scheduling & lifecycle
@@ -3332,13 +3358,33 @@ extension Store {
         for i in habitTrains.indices {
             habitTrains[i].steps.removeAll { $0.type == .task && $0.taskId == task.id }
         }
+        recalibrateDailyGoalIfProvisional()
         persistAll()
+    }
+
+    /// Keep the sun's target honest while the season is still the
+    /// provisional cold-start build: the daily goal tracks 60% of the
+    /// daily board's total value — exactly the formula used the day it
+    /// was created — so pruning or adding tasks can never leave the sun
+    /// mathematically un-fillable. Graduated seasons (edited through
+    /// the full season conversation) keep their deliberate goal.
+    func recalibrateDailyGoalIfProvisional() {
+        guard currentSeason.isProvisional else { return }
+        let dailyTasks = tasks.filter { $0.pinSchedule == .daily }
+        guard !dailyTasks.isEmpty else { return }
+        let valueSum = dailyTasks.reduce(0) {
+            $0 + max(1, $1.scoring.headlineValue(flatValue: $1.pointValue))
+        }
+        let goal = max(1, Int((0.60 * Double(valueSum)).rounded()))
+        guard goal != currentSeason.dailyGoal else { return }
+        currentSeason.dailyGoal = goal
+        currentSeason.weeklyGoal = goal * 7
     }
 
     /// Permanently delete a To-do, removing any score it contributed.
     func deleteTodo(_ todo: Todo) {
         todos.removeAll { $0.id == todo.id }
-        logEntries.removeAll { $0.todoId == todo.id }
+        removeLogEntries { $0.todoId == todo.id }
         persistAll()
     }
 
@@ -4290,27 +4336,6 @@ extension Store {
     /// same caption-card fallback when its image file is gone.
     var myStoryThumbCaption: String? {
         activeMyStories.last(where: { $0.mediaId != nil })?.caption
-    }
-
-    // MARK: - Exact-points permission
-
-    /// Ask a friend to share their exact point values. Point values are
-    /// private calibration — they only ever surface behind this explicit
-    /// ask. Full-tier friends (who already share their whole day) say
-    /// yes shortly after; everyone else leaves the ask pending.
-    func requestExactPoints(friendId: UUID) {
-        guard let idx = friends.firstIndex(where: { $0.id == friendId }),
-              friends[idx].pointsAccess == nil else { return }
-        friends[idx].pointsAccess = .requested
-        persistAll()
-    }
-
-    /// The friend said yes — their exact points are now visible to me.
-    func grantExactPoints(friendId: UUID) {
-        guard let idx = friends.firstIndex(where: { $0.id == friendId }),
-              friends[idx].pointsAccess == .requested else { return }
-        friends[idx].pointsAccess = .granted
-        persistAll()
     }
 
     /// "To Maya" / "To Morning Run" / "From Aaron" — the counterpart

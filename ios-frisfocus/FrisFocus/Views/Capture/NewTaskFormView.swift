@@ -540,6 +540,7 @@ struct NewTaskFormView: View {
             updated.penalty = penaltyRule
             store.tasks[idx] = updated
             store.evaluatePenaltyForTask(updated)
+            store.recalibrateDailyGoalIfProvisional()
         } else {
             let task = FFTask(
                 title: trimmedTitle,
@@ -553,6 +554,7 @@ struct NewTaskFormView: View {
             )
             store.tasks.append(task)
             store.evaluatePenaltyForTask(task)
+            store.recalibrateDailyGoalIfProvisional()
         }
         store.persistAll()
 

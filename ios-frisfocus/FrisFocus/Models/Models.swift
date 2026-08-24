@@ -164,6 +164,19 @@ struct ScoringConfig: Codable, Equatable {
         }
     }
 
+    /// The floor a completion is worth when no amount was captured —
+    /// used by backdated check-offs, where asking for an exact quantity
+    /// days later would be guesswork. Flat → the task value; tiered →
+    /// the lowest tier; quantity → the base payout. Never zero for a
+    /// real completion.
+    func baselinePoints(flatValue: Int) -> Int {
+        switch type {
+        case .flat: return flatValue
+        case .tiered: return sortedTiers.first?.points ?? flatValue
+        case .quantity: return max(basePoints, 1)
+        }
+    }
+
     /// Sorted tiers (ascending threshold) for display and evaluation.
     var sortedTiers: [ScoreTier] {
         tiers.sorted { $0.threshold < $1.threshold }

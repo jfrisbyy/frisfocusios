@@ -629,7 +629,7 @@ struct FriendDetailView: View {
     private var recordBelow: some View {
         VStack(alignment: .leading, spacing: 22) {
             if tier != .quiet {
-                exactPointsRow
+                pointsPrivateRow
             }
 
             if let witness = witnessLine {
@@ -658,65 +658,20 @@ struct FriendDetailView: View {
 
     // MARK: Points — privacy as a feature
 
-    @ViewBuilder
-    private var exactPointsRow: some View {
-        switch liveFriend.pointsAccess {
-        case .granted:
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "lock.open")
-                    .font(.sans(13, weight: .medium))
-                    .foregroundStyle(Theme.alertGreen)
-                Text("\(day.todayLogged) points today")
-                    .font(.sans(14, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
-                Text("· shared with you")
-                    .font(.sans(12.5, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
-                Spacer(minLength: 0)
-            }
-            .accessibilityLabel("\(friend.displayName) logged \(day.todayLogged) points today")
-
-        case .requested:
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "hourglass")
-                    .font(.sans(13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
-                Text("Asked to see exact points · waiting on \(friend.displayName)")
-                    .font(.sans(13, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
-                Spacer(minLength: 0)
-            }
-            .accessibilityLabel("Waiting on \(friend.displayName) to share exact points")
-
-        case nil:
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "lock")
-                    .font(.sans(12, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
-                Text("Points are private — friends ask, you approve each one.")
-                    .font(.sans(12, weight: .regular))
-                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        store.requestExactPoints(friendId: friend.id)
-                    }
-                } label: {
-                    HStack(spacing: 2) {
-                        Text("Ask")
-                            .font(.sans(13, weight: .semibold))
-                        Image(systemName: "chevron.right")
-                            .font(.sans(9, weight: .bold))
-                    }
-                    .foregroundStyle(accent)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Ask \(friend.displayName) to see exact points")
-            }
+    /// One honest line: points never leave their owner. Friends see the
+    /// shape of a day — never the numbers. No ask flow, no exceptions.
+    private var pointsPrivateRow: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "lock")
+                .font(.sans(12, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            Text("Points stay private — you see the shape of \(friend.displayName)'s day, never the numbers.")
+                .font(.sans(12, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
+        .accessibilityLabel("\(friend.displayName)'s points are private")
     }
 
     // MARK: Destinations

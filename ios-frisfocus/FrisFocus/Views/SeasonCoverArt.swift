@@ -495,8 +495,10 @@ struct PastSeasonChapterCard: View {
                     .font(.sans(8.5, weight: .medium))
                     .tracking(1.2)
                     .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                if showsMilestones, chapter.milestonesTotal > 0 {
-                    Text("\(chapter.milestonesReached) of \(chapter.milestonesTotal) milestones")
+                if showsMilestones, chapter.milestonesReached > 0 {
+                    Text(chapter.milestonesReached == 1
+                        ? "1 milestone reached"
+                        : "\(chapter.milestonesReached) milestones reached")
                         .font(.sans(11, weight: .medium))
                         .foregroundStyle(Theme.textPrimary.opacity(0.75))
                 } else {

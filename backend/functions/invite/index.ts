@@ -186,7 +186,7 @@ ${ogImage}
     ${valid ? `<a class="open" href="${appLink}">Open FrisFocus</a>` : ""}
     <p class="note">${
       valid
-        ? "Nothing happened? FrisFocus isn't installed on this phone yet — install it first, then tap this link again."
+        ? "Nothing happened? Install FrisFocus first, then open this link once more — your friend's invite will be waiting, even if you sign in later."
         : ""
     }</p>
   </main>

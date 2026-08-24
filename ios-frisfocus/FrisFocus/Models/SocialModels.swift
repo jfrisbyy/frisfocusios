@@ -174,25 +174,11 @@ struct Friend: Codable, Identifiable {
     /// synthesized decoder treats a missing key as nil).
     var connectedAt: Date?
 
-    /// Whether this friend has let me see their exact point values.
-    /// Points encode what's personally hard for someone — private
-    /// calibration — so they sit behind an explicit ask, never a
-    /// default. nil = locked (never asked). Optional so friends
-    /// persisted before this landed decode cleanly.
-    var pointsAccess: PointsAccess?
-
     /// The friend's published season card — cover, chosen accent,
     /// intention line, season info, and past chapters. Mirrored from
     /// their profile row on every friends refresh. Optional so
     /// persisted friends decode cleanly.
     var seasonCard: SeasonCard?
-}
-
-/// The two post-ask states of the exact-points permission. The locked
-/// default is the absence of a value (nil on `Friend.pointsAccess`).
-enum PointsAccess: String, Codable, Equatable {
-    case requested
-    case granted
 }
 
 // MARK: - FFCircle

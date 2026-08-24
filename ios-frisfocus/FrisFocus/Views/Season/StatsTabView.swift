@@ -729,7 +729,7 @@ struct StatsTabView: View {
                 Text(
                     diff == 0
                         ? "Even with the week before"
-                        : "\(abs(diff)) points \(trendingUp ? "ahead of" : "behind") the week before"
+                        : "\(abs(diff)) points \(trendingUp ? "above" : "below") the week before"
                 )
                 .font(.sans(13, weight: .medium))
                 .foregroundStyle(Theme.textCream)

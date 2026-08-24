@@ -156,7 +156,7 @@ final class ContactsMatchService {
             } else {
                 let profiles: [RemoteProfile] = try await supabase
                     .from("profiles")
-                    .select("id, email, name, username, avatar_url, header_url, area_key, area_name")
+                    .select("id, name, username, avatar_url, header_url, area_key, area_name")
                     .in("id", values: Array(matchedIds))
                     .execute()
                     .value

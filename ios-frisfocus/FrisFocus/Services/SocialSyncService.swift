@@ -126,6 +126,14 @@ final class SocialSyncService {
     @ObservationIgnored private var realtimeTask: Task<Void, Never>?
     @ObservationIgnored private var refreshDebounces: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var activeMediaDownloads: Set<UUID> = []
+    /// Story posts whose upload to the server failed — drives the
+    /// "didn't send" retry affordance on the Your-story bubble.
+    var failedStoryUploadIds: Set<UUID> = []
+    /// Locally-created posts not yet confirmed by the server (in flight
+    /// or failed). Protected from the optimistic prune and retried on
+    /// launch — persisted per account so an app kill never silently
+    /// drops a story.
+    @ObservationIgnored var pendingStoryUploadIds: Set<UUID> = []
 
     // MARK: Lifecycle
 
@@ -137,11 +145,15 @@ final class SocialSyncService {
         self.store = store
         store.social = self
         registerMapping(remote: myUserId, local: store.currentUserId)
+        loadStoryUploadState(for: myUserId)
 
         isSyncing = true
         await migratePendingLocalStories()
         await refreshAll()
         isSyncing = false
+        // Re-attempt any story upload a previous session left unconfirmed
+        // (killed mid-flight or failed) — nothing evaporates silently.
+        await retryPendingStoryUploads()
         startRealtime()
     }
 
@@ -158,6 +170,8 @@ final class SocialSyncService {
         refreshDebounces = [:]
         guard myUserId != nil else { return }
         myUserId = nil
+        failedStoryUploadIds = []
+        pendingStoryUploadIds = []
         if let store {
             store.friends = []
             store.storyPosts = []
@@ -224,7 +238,7 @@ final class SocialSyncService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select("id, name, username, avatar_url, header_url")
                 .in("id", values: Array(missing))
                 .execute()
                 .value
@@ -251,7 +265,7 @@ final class SocialSyncService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select("id, name, username, avatar_url, header_url")
                 .in("id", values: ids)
                 .execute()
                 .value

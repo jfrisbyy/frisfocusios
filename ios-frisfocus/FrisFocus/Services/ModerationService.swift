@@ -68,6 +68,8 @@ final class ModerationService {
     var hiddenStoryPostIds: Set<UUID> = []
     /// Direct proofs this account chose to hide from their threads.
     var hiddenProofIds: Set<UUID> = []
+    /// Golden Hour captures this account chose to hide from its walls.
+    var hiddenGoldenHourPostIds: Set<UUID> = []
     var isWorking = false
     var errorMessage: String?
     var showError = false
@@ -79,6 +81,7 @@ final class ModerationService {
     func isBlocked(_ id: String) -> Bool { blockedIds.contains(id) }
     func isStoryHidden(_ postId: UUID) -> Bool { hiddenStoryPostIds.contains(postId) }
     func isProofHidden(_ messageId: UUID) -> Bool { hiddenProofIds.contains(messageId) }
+    func isGoldenHourHidden(_ postId: UUID) -> Bool { hiddenGoldenHourPostIds.contains(postId) }
 
     // MARK: Load
 
@@ -86,6 +89,7 @@ final class ModerationService {
         hiddenOwnerUserId = myUserId
         hiddenStoryPostIds = Self.persistedHiddenStories(userId: myUserId)
         hiddenProofIds = Self.persistedHiddenProofs(userId: myUserId)
+        hiddenGoldenHourPostIds = Self.persistedHiddenGoldenHour(userId: myUserId)
         do {
             let rows: [BlockRow] = try await supabase
                 .from("blocks")
@@ -103,6 +107,7 @@ final class ModerationService {
         blockedIds = []
         hiddenStoryPostIds = []
         hiddenProofIds = []
+        hiddenGoldenHourPostIds = []
         hiddenOwnerUserId = nil
     }
 
@@ -110,6 +115,7 @@ final class ModerationService {
 
     private static func hiddenStoriesKey(_ userId: String) -> String { "moderation.hiddenStories.\(userId)" }
     private static func hiddenProofsKey(_ userId: String) -> String { "moderation.hiddenProofs.\(userId)" }
+    private static func hiddenGoldenHourKey(_ userId: String) -> String { "moderation.hiddenGoldenHour.\(userId)" }
 
     /// The persisted hidden-story ids for an account — readable by sync
     /// services at ingest without holding the live instance.
@@ -121,6 +127,12 @@ final class ModerationService {
     /// The persisted hidden-proof ids for an account.
     static func persistedHiddenProofs(userId: String) -> Set<UUID> {
         let raw = UserDefaults.standard.stringArray(forKey: hiddenProofsKey(userId)) ?? []
+        return Set(raw.compactMap(UUID.init(uuidString:)))
+    }
+
+    /// The persisted hidden Golden Hour capture ids for an account.
+    static func persistedHiddenGoldenHour(userId: String) -> Set<UUID> {
+        let raw = UserDefaults.standard.stringArray(forKey: hiddenGoldenHourKey(userId)) ?? []
         return Set(raw.compactMap(UUID.init(uuidString:)))
     }
 
@@ -145,6 +157,17 @@ final class ModerationService {
         )
     }
 
+    /// Hide one Golden Hour capture from this account's walls. Quiet
+    /// and instant — nothing is sent to the author.
+    func hideGoldenHourPost(_ postId: UUID) {
+        hiddenGoldenHourPostIds.insert(postId)
+        guard let userId = hiddenOwnerUserId else { return }
+        UserDefaults.standard.set(
+            hiddenGoldenHourPostIds.map(\.uuidString),
+            forKey: Self.hiddenGoldenHourKey(userId)
+        )
+    }
+
     /// Profiles for the people the user has blocked — for the
     /// blocked-accounts management screen.
     func loadBlockedProfiles() async -> [RemoteProfile] {
@@ -152,7 +175,7 @@ final class ModerationService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url")
+                .select("id, name, username, avatar_url, header_url")
                 .in("id", values: Array(blockedIds))
                 .execute()
                 .value

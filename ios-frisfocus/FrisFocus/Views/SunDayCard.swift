@@ -330,7 +330,7 @@ private struct DayTaskGroupView: View {
                     .tracking(0.6)
                     .foregroundStyle(Theme.textPrimary.opacity(0.55))
                 Spacer(minLength: 0)
-                Text("\(group.done) of \(group.total)")
+                Text("\(group.done) done")
                     .font(.sans(11.5, weight: .semibold))
                     .foregroundStyle(tint.darkenedForLabel.opacity(0.85))
             }
@@ -420,7 +420,7 @@ private struct DayCategorySummaryRow: View {
 
             Spacer(minLength: 8)
 
-            Text("\(done) of \(total)")
+            Text("\(done) done")
                 .font(.sans(12.5, weight: .semibold))
                 .foregroundStyle(tint.darkenedForLabel.opacity(0.9))
         }
@@ -432,7 +432,7 @@ private struct DayCategorySummaryRow: View {
                 .fill(tint.opacity(0.05 + 0.07 * fraction))
         )
         .accessibilityElement()
-        .accessibilityLabel("\(chip.category?.displayName ?? chip.title), \(done) of \(total) done")
+        .accessibilityLabel("\(chip.category?.displayName ?? chip.title), \(done) done")
     }
 }
 

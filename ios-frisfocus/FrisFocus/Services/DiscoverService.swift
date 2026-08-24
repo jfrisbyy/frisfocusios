@@ -50,7 +50,7 @@ final class DiscoverService {
 
     /// The columns every discover read pulls — includes the opt-in
     /// Near-you area so rows can whisper "Near Austin".
-    static let profileColumns = "id, email, name, username, avatar_url, header_url, area_key, area_name"
+    static let profileColumns = "id, name, username, avatar_url, header_url, area_key, area_name"
 
     /// How many newest-member profiles to pull as the long tail behind
     /// the friends-of-friends tier.
@@ -173,14 +173,13 @@ final class DiscoverService {
 
     // MARK: - Live search
 
-    /// Case-insensitive as-you-type search across @username, name, and
-    /// email. Same grammar-safety filtering as the Friends page search.
+    /// Case-insensitive as-you-type search across @username and name,
+    /// plus exact-email lookup — all server-side via the `search_people`
+    /// definer RPC, which never returns email addresses and excludes
+    /// blocks in both directions.
     func search(query rawQuery: String, myUserId: String) async {
-        let cleaned = rawQuery
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "@", with: "")
-        let safe = String(cleaned.filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." || $0 == "-" || $0 == " " })
-        guard safe.count >= 2 else {
+        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else {
             searchResults = []
             return
         }
@@ -188,11 +187,7 @@ final class DiscoverService {
         defer { isSearching = false }
         do {
             let results: [RemoteProfile] = try await supabase
-                .from("profiles")
-                .select(Self.profileColumns)
-                .eq("is_test", value: false)
-                .or("username.ilike.*\(safe)*,name.ilike.*\(safe)*,email.ilike.*\(safe)*")
-                .limit(20)
+                .rpc("search_people", params: ["q": trimmed])
                 .execute()
                 .value
             searchResults = results.filter { $0.id != myUserId }

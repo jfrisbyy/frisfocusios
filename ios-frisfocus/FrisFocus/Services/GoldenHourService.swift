@@ -814,7 +814,7 @@ final class GoldenHourService {
         guard !ids.isEmpty else { return [:] }
         let rows: [RemoteProfile] = try await supabase
             .from("profiles")
-            .select("id, email, name, username, avatar_url, header_url")
+            .select("id, name, username, avatar_url, header_url")
             .in("id", values: ids)
             .execute()
             .value

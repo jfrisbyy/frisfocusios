@@ -180,6 +180,15 @@ extension SocialSyncService {
             let existingById = Dictionary(store.storyPosts.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             let serverIds = Set(rows.map { $0.id })
 
+            // Uploads the server has now echoed are confirmed — clear
+            // their pending/failed flags.
+            let echoed = pendingStoryUploadIds.intersection(serverIds)
+            if !echoed.isEmpty {
+                pendingStoryUploadIds.subtract(echoed)
+                failedStoryUploadIds.subtract(echoed)
+                persistStoryUploadState()
+            }
+
             var mapped: [StoryPost] = rows.map { row in
                 var post = StoryPost(
                     id: row.id,
@@ -207,7 +216,9 @@ extension SocialSyncService {
             let optimistic = store.storyPosts.filter { post in
                 post.authorId == store.currentUserId
                     && !serverIds.contains(post.id)
-                    && (post.circleId != nil || post.createdAt > optimisticWindow)
+                    && (post.circleId != nil
+                        || post.createdAt > optimisticWindow
+                        || pendingStoryUploadIds.contains(post.id))
             }
             mapped.append(contentsOf: optimistic)
             mapped.sort { $0.createdAt > $1.createdAt }
@@ -339,6 +350,9 @@ extension SocialSyncService {
 
     private func uploadStory(post: StoryPost, asset: MediaAsset?) async {
         guard let myUserId else { return }
+        pendingStoryUploadIds.insert(post.id)
+        failedStoryUploadIds.remove(post.id)
+        persistStoryUploadState()
         do {
             var mediaPath: String?
             var mediaKind: String?
@@ -347,13 +361,17 @@ extension SocialSyncService {
                 let ext = asset.type == .photo ? "jpg" : "mov"
                 let contentType = asset.type == .photo ? "image/jpeg" : "video/quicktime"
                 let path = "\(myUserId)/\(post.id.uuidString.lowercased()).\(ext)"
-                try await StorageUploadClient.upload(
-                    data: data,
-                    bucket: "stories",
-                    path: path,
-                    contentType: contentType,
-                    onProgress: { _ in }
-                )
+                do {
+                    try await StorageUploadClient.upload(
+                        data: data,
+                        bucket: "stories",
+                        path: path,
+                        contentType: contentType,
+                        onProgress: { _ in }
+                    )
+                } catch StorageUploadError.badResponse(let status) where status == 409 {
+                    // Already in the bucket from a previous attempt.
+                }
                 mediaPath = path
                 mediaKind = asset.type.rawValue
             }
@@ -368,14 +386,76 @@ extension SocialSyncService {
                 attachedTaskId: post.attachedCircleTaskId?.uuidString,
                 createdAt: SyncDates.iso(post.createdAt)
             )).execute()
+            pendingStoryUploadIds.remove(post.id)
+            failedStoryUploadIds.remove(post.id)
+            persistStoryUploadState()
         } catch {
+            let text = String(describing: error)
+            if text.contains("23505") || text.localizedCaseInsensitiveContains("duplicate") {
+                // The row landed on a previous attempt — that's a success.
+                pendingStoryUploadIds.remove(post.id)
+                failedStoryUploadIds.remove(post.id)
+                persistStoryUploadState()
+                return
+            }
             print("[SocialSync] story upload failed: \(error)")
+            failedStoryUploadIds.insert(post.id)
+            persistStoryUploadState()
         }
+    }
+
+    // MARK: Upload retry (visible, never silent)
+
+    /// Re-attempt one story upload — wired to the "didn't send" retry
+    /// affordance and the launch-time recovery pass.
+    func retryStoryUpload(postId: UUID) async {
+        guard let store, let post = store.storyPosts.first(where: { $0.id == postId }) else {
+            // The post is gone locally — nothing to send anymore.
+            pendingStoryUploadIds.remove(postId)
+            failedStoryUploadIds.remove(postId)
+            persistStoryUploadState()
+            return
+        }
+        let asset = post.mediaId.flatMap { store.media(by: $0) }
+        await uploadStory(post: post, asset: asset)
+    }
+
+    /// On launch, re-attempt every upload a previous session left
+    /// unconfirmed (killed mid-flight or failed offline).
+    func retryPendingStoryUploads() async {
+        for id in pendingStoryUploadIds {
+            await retryStoryUpload(postId: id)
+        }
+    }
+
+    private static func pendingUploadsKey(_ userId: String) -> String { "socialSync.pendingStoryUploads.\(userId)" }
+    private static func failedUploadsKey(_ userId: String) -> String { "socialSync.failedStoryUploads.\(userId)" }
+
+    /// Restore the per-account upload bookkeeping on start.
+    func loadStoryUploadState(for userId: String) {
+        let defaults = UserDefaults.standard
+        pendingStoryUploadIds = Set(
+            (defaults.stringArray(forKey: Self.pendingUploadsKey(userId)) ?? []).compactMap(UUID.init(uuidString:))
+        )
+        failedStoryUploadIds = Set(
+            (defaults.stringArray(forKey: Self.failedUploadsKey(userId)) ?? []).compactMap(UUID.init(uuidString:))
+        )
+    }
+
+    private func persistStoryUploadState() {
+        guard let myUserId else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(pendingStoryUploadIds.map(\.uuidString), forKey: Self.pendingUploadsKey(myUserId))
+        defaults.set(failedStoryUploadIds.map(\.uuidString), forKey: Self.failedUploadsKey(myUserId))
     }
 
     nonisolated func storyDeleted(postId: UUID) {
         Task { @MainActor [weak self] in
             guard let self, let myUserId = self.myUserId else { return }
+            // A deleted post needs no retry.
+            self.pendingStoryUploadIds.remove(postId)
+            self.failedStoryUploadIds.remove(postId)
+            self.persistStoryUploadState()
             do {
                 try await supabase.from("story_posts")
                     .delete()

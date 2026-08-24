@@ -321,7 +321,9 @@ struct WorkZoneView: View {
     private var scrollingPlanList: some View {
         let maxHeight = Self.approxRowHeight * CGFloat(Self.planScrollThreshold)
         ScrollView(.vertical, showsIndicators: true) {
-            VStack(spacing: 10) {
+            // Lazy: a 60-task board builds rows as they scroll into view
+            // instead of all at once on every invalidation.
+            LazyVStack(spacing: 10) {
                 ForEach(store.todaysPlan) { item in
                     planRow(for: item)
                 }
