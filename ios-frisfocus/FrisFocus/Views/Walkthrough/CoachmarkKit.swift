@@ -80,6 +80,33 @@ struct SwipeArrowHint: View {
     }
 }
 
+/// A calendar with a gently breathing repeat mark — the hint for the
+/// rhythm lesson (recurring schedules). Reduced motion holds it still.
+struct RhythmHint: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var tint: Color = Theme.sunWarm
+    @State private var breathe = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "calendar")
+                .font(.system(size: 18, weight: .regular))
+            Image(systemName: "repeat")
+                .font(.system(size: 13, weight: .semibold))
+                .opacity(reduceMotion ? 0.8 : (breathe ? 1.0 : 0.3))
+        }
+        .foregroundStyle(tint)
+        .frame(height: 50)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                breathe = true
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 /// A small sun easing down to (and below) a horizon line — the hint
 /// for the tour's closing "tomorrow" beat. Reduced motion holds the
 /// sun resting on the line.
@@ -117,11 +144,18 @@ struct SunsetHint: View {
 struct CoachmarkCard<Hint: View>: View {
     let title: String
     let message: String
-    /// Quiet "Skip tour" link, hidden when nil.
+    /// Quiet "Skip tour" link, hidden when nil. The ONLY skip — the
+    /// other buttons always DO something (advance, or act for you).
     var onSkip: (() -> Void)? = nil
-    /// Tap-through "Continue" — appears only when the user seems stuck.
+    /// Stuck fallback — appears only after a short idle. Renders as the
+    /// filled capsule when the step has no primary action, or as a quiet
+    /// text link beside it when it does.
     var continueTitle: String? = nil
     var onContinue: (() -> Void)? = nil
+    /// The step's always-visible primary doing-button (e.g. "Set a
+    /// rhythm") — used when the real action can't be a page gesture.
+    var actionTitle: String? = nil
+    var onAction: (() -> Void)? = nil
     @ViewBuilder var hint: () -> Hint
 
     var body: some View {
@@ -141,7 +175,7 @@ struct CoachmarkCard<Hint: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if onSkip != nil || onContinue != nil {
+            if onSkip != nil || onContinue != nil || onAction != nil {
                 HStack(spacing: 12) {
                     if let onSkip {
                         Button(action: onSkip) {
@@ -153,19 +187,20 @@ struct CoachmarkCard<Hint: View>: View {
                     }
                     Spacer(minLength: 0)
                     if let continueTitle, let onContinue {
-                        Button(action: onContinue) {
-                            HStack(spacing: 5) {
+                        if onAction != nil {
+                            // Quiet link beside the filled primary.
+                            Button(action: onContinue) {
                                 Text(continueTitle)
-                                    .font(.sans(13.5, weight: .semibold))
-                                Image(systemName: "arrow.right")
-                                    .font(.system(size: 11, weight: .bold))
+                                    .font(.sans(13, weight: .semibold))
+                                    .foregroundStyle(Theme.textCream.opacity(0.75))
                             }
-                            .foregroundStyle(Theme.textPrimary)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(Capsule().fill(Theme.sunWarm))
+                            .buttonStyle(.plain)
+                        } else {
+                            filledCapsule(continueTitle, action: onContinue)
                         }
-                        .buttonStyle(.plain)
+                    }
+                    if let actionTitle, let onAction {
+                        filledCapsule(actionTitle, action: onAction)
                     }
                 }
                 .padding(.top, 2)
@@ -182,6 +217,24 @@ struct CoachmarkCard<Hint: View>: View {
                 .strokeBorder(Theme.sunWarm.opacity(0.4), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.28), radius: 20, y: 10)
+    }
+
+    /// The warm filled capsule shared by the primary action and the
+    /// no-action fallback.
+    private func filledCapsule(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(.sans(13.5, weight: .semibold))
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Theme.sunWarm))
+        }
+        .buttonStyle(.plain)
     }
 }
 

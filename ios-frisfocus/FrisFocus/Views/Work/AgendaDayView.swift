@@ -57,6 +57,10 @@ struct AgendaDayView: View {
     @State private var showSaveTemplate: Bool = false
     @State private var dropTarget: PartOfDay?
     @State private var addToBand: PartOfDay?
+    /// One-time teaching card — the agenda's core moves, shown on the
+    /// first open (which for a new user is the tour's agenda lesson).
+    /// Device-local; gone for good once dismissed.
+    @AppStorage("agenda.introSeen.v1") private var agendaIntroSeen: Bool = false
 
     private var isToday: Bool { Calendar.current.isDateInToday(selectedDay) }
 
@@ -64,6 +68,12 @@ struct AgendaDayView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if !agendaIntroSeen {
+                        agendaIntroCard
+                            .padding(.horizontal, 18)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
                     WeekStripView(selectedDay: $selectedDay)
                         .padding(.horizontal, 18)
 
@@ -150,6 +160,88 @@ struct AgendaDayView: View {
         .sheet(item: $addToBand) { band in
             AddToSectionSheet(band: band, day: selectedDay)
                 .environment(store)
+        }
+    }
+
+    // MARK: - First-open teaching card
+
+    /// The agenda's moves, taught once in plain lines — drag between
+    /// bands, flexible blocks, rhythms, and day templates. Dismisses
+    /// with "Got it" and never returns.
+    @ViewBuilder
+    private var agendaIntroCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.sunOuter)
+                Text("How the agenda works")
+                    .font(.serifItalic(16, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 9) {
+                introRow(
+                    icon: "hand.draw",
+                    text: "Drag cards between Morning, Afternoon and Evening — or into Anytime to take them off the clock."
+                )
+                introRow(
+                    icon: "plus.rectangle.on.rectangle",
+                    text: "Add bucket makes a flexible block — “Movement” with options inside, honored once for its value."
+                )
+                introRow(
+                    icon: "calendar",
+                    text: "Hold any card → Edit schedule to give it a rhythm on the days you choose."
+                )
+                introRow(
+                    icon: "square.on.square.dashed",
+                    text: "Save a day as a template and assign it to weekdays — those days then build themselves."
+                )
+            }
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+                    agendaIntroSeen = true
+                }
+            } label: {
+                Text("Got it")
+                    .font(.sans(13.5, weight: .semibold))
+                    .foregroundStyle(Theme.warmWheat)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(Theme.textPrimary)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .fill(Color.white)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
+                .strokeBorder(Theme.sunWarm.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func introRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.sunOuter)
+                .frame(width: 20, alignment: .center)
+                .padding(.top, 1)
+            Text(text)
+                .font(.sans(12.5, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

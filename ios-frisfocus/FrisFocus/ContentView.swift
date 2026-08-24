@@ -335,20 +335,26 @@ struct ContentView: View {
 // MARK: - Mechanics tour kickoff
 
 extension ContentView {
-    /// Launch the Layer-A mechanics tour for a brand-new user who just
-    /// built a season (either path), flagging the quantity lesson only
-    /// when their board actually has a tiered/increment task to log.
+    /// Launch the Layer-A guided tour for a brand-new user who just
+    /// built a season (either path). A fresh season's tasks live on the
+    /// board UNPINNED — Today's Plan starts empty — so the tour opens
+    /// with the pin lesson and teaches the whole loop: build the day,
+    /// do the work, set the rhythm, meet the agenda.
     fileprivate func startMechanicsTourIfFresh() {
-        // An empty board (every setup page skipped) has nothing to
-        // practice on — the gesture tour would point at a task that
-        // doesn't exist. The plan's own "add" affordance and the coach
-        // banner lead instead; the tour stays available for later.
-        guard !store.todaysPlan.isEmpty else { return }
+        // A completely empty board (every setup page skipped) has
+        // nothing to practice on — the plan's own "add" affordance and
+        // the coach banner lead instead; the tour stays available later.
+        let hasBoard = !store.tasks.isEmpty
+        let hasPlan = !store.todaysPlan.isEmpty
+        guard hasBoard || hasPlan else { return }
         let hasQuantity = store.todaysPlan.contains { item in
             if case .task(let task) = item { return task.requiresQuantityLogging }
             return false
         }
-        walkthrough.startMechanicsTour(includesQuantity: hasQuantity)
+        walkthrough.startMechanicsTour(
+            startsAtPinning: !hasPlan,
+            includesQuantity: hasQuantity
+        )
     }
 }
 

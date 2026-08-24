@@ -4046,12 +4046,15 @@ extension Store {
 
     /// Commit the 60-second cold-start board. Builds a real (named)
     /// season from the chosen directions so the sun has a ratio to
-    /// compute, pins every kept task to today's plan, and lands the
-    /// person on their live home with the sun low. The season is named,
-    /// so `needsSeasonSetup` reads false and the deep season conversation
-    /// never auto-launches — it stays optional, ready to absorb this
-    /// board later. Tasks score on an invisible flat default; no point
-    /// number is shown until the season conversation assigns real values.
+    /// compute, and lands the person on their live home. The kept tasks
+    /// live on the season board UNPINNED — Today's Plan starts empty on
+    /// purpose, and the guided tour's first beat teaches the daily
+    /// ritual of pulling tasks onto the day (one-off pins or recurring
+    /// rhythms). The season is named, so `needsSeasonSetup` reads false
+    /// and the deep season conversation never auto-launches — it stays
+    /// optional, ready to absorb this board later. Tasks score on an
+    /// invisible flat default; no point number is shown until the season
+    /// conversation assigns real values.
     func commitColdStart(_ result: ColdStartResult) {
         // No wipe here: the account now exists BEFORE the season is
         // built, so anything already local (a returning user's synced
@@ -4074,12 +4077,14 @@ extension Store {
             )
         }
 
-        // Daily plan tasks — pinned daily, priced by the band + rank the
-        // person placed each card in (values are invisible; the sun
-        // carries them). Grouped by the suggested life-area's mapped
-        // category. A quiet keyword/category match tags a task toward a
-        // milestone it plausibly builds toward — no tray reshaping, no
-        // task derivation.
+        // Board tasks — priced by the band + rank the person placed each
+        // card in (values are invisible; the sun carries them). Grouped
+        // by the suggested life-area's mapped category. NO pin schedule:
+        // tasks live in the season library and the person deliberately
+        // places them onto days (the tour teaches this) — nothing is
+        // auto-assigned to today. A quiet keyword/category match tags a
+        // task toward a milestone it plausibly builds toward — no tray
+        // reshaping, no task derivation.
         var built: [FFTask] = []
         for item in board {
             var task = FFTask(
@@ -4087,7 +4092,7 @@ extension Store {
                 category: item.lifeArea.appCategory,
                 pointValue: max(1, item.value),
                 tier: .should,
-                pinSchedule: .daily,
+                pinSchedule: .none,
                 isCustom: item.isCustom
             )
             task.milestoneLink = Store.milestoneLink(for: item, among: result.milestones)

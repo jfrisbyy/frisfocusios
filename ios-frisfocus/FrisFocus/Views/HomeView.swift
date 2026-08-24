@@ -317,12 +317,17 @@ struct HomeView: View {
                     }
                 }
             }
-            // Mechanics tour: bring the Today plan into view on each
-            // gesture step so the real cards are there to act on.
+            // Mechanics tour: bring the right zone into view on each
+            // step so the real cards are there to act on — the sunset
+            // close returns to the sun it's talking about.
             .onChange(of: walkthrough.tourStep) { _, step in
-                guard step != nil else { return }
+                guard let step else { return }
                 withAnimation(.easeInOut(duration: 0.5)) {
-                    scrollProxy.scrollTo(HomeZone.work.anchorID, anchor: .top)
+                    if step == .sunset {
+                        scrollProxy.scrollTo(HomeZone.sun.anchorID, anchor: .top)
+                    } else {
+                        scrollProxy.scrollTo(HomeZone.work.anchorID, anchor: .top)
+                    }
                 }
             }
             // The check-off lesson advances on the real check; the

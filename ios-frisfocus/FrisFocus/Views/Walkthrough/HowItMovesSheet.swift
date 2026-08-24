@@ -16,7 +16,11 @@ struct HowItMovesSheet: View {
     @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.dismiss) private var dismiss
 
-    private var canReplayTour: Bool { !store.todaysPlan.isEmpty }
+    /// The tour teaches on real cards — it needs a board task or a plan
+    /// item to exist. (The pin lesson itself covers the empty-plan case.)
+    private var canReplayTour: Bool {
+        !store.tasks.isEmpty || !store.todaysPlan.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,6 +43,11 @@ struct HowItMovesSheet: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 10) {
                     gestureRow(
+                        icon: "pin",
+                        title: "Pull tasks onto today",
+                        line: "Your tasks wait in the season — “Add to today” builds the day's plan."
+                    )
+                    gestureRow(
                         icon: "checkmark.circle",
                         title: "Tap a task's circle",
                         line: "Checks it off — your sun rises a little."
@@ -47,6 +56,16 @@ struct HowItMovesSheet: View {
                         icon: "hand.draw",
                         title: "Swipe a plan row",
                         line: "Right completes it; left takes it off today."
+                    )
+                    gestureRow(
+                        icon: "calendar",
+                        title: "Hold a card → Pin to days…",
+                        line: "Sets a rhythm — every day, or the weekdays you choose."
+                    )
+                    gestureRow(
+                        icon: "rectangle.3.group",
+                        title: "AGENDA above the plan",
+                        line: "Bands, flexible blocks, and day templates for weekdays."
                     )
                     gestureRow(
                         icon: "camera",
@@ -88,7 +107,10 @@ struct HowItMovesSheet: View {
                             if case .task(let task) = item { return task.requiresQuantityLogging }
                             return false
                         }
-                        walkthrough.replayMechanicsTour(includesQuantity: hasQuantity)
+                        walkthrough.replayMechanicsTour(
+                            startsAtPinning: store.todaysPlan.isEmpty,
+                            includesQuantity: hasQuantity
+                        )
                     }
                 } label: {
                     HStack(spacing: 8) {
@@ -109,7 +131,7 @@ struct HowItMovesSheet: View {
                 .disabled(!canReplayTour)
 
                 if !canReplayTour {
-                    Text("Add something to today's plan first — the tour teaches on your real cards.")
+                    Text("Your season needs at least one task first — the tour teaches on your real cards.")
                         .font(.sans(11.5, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.45))
                         .multilineTextAlignment(.center)

@@ -106,6 +106,13 @@ struct WorkZoneView: View {
                 showAgenda = true
             }
         }
+        // Tour: the agenda lesson advances once the user has actually
+        // been inside the agenda and come back to the plan.
+        .onChange(of: showAgenda) { _, showing in
+            if !showing, walkthrough.tourActive, walkthrough.tourStep == .agenda {
+                walkthrough.advanceTour()
+            }
+        }
         .confirmationDialog(
             "Clear today's plan?",
             isPresented: $showClearConfirm,

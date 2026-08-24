@@ -4,10 +4,15 @@
 //
 //  The first-run teaching layer, in two parts:
 //
-//   • Layer A — the interactive MECHANICS tour. A handful of gesture
-//     lessons the user performs right after setup (check a task off,
-//     swipe a finished task to capture, log a quantity). It advances on
-//     the real performed gesture, is always skippable, and runs once.
+//   • Layer A — the interactive MECHANICS tour. Seven doing-lessons the
+//     user performs right after their season lands, on the real UI:
+//     pull a task from the season onto today (the board starts empty —
+//     nothing is auto-assigned), check it off and watch the sun rise,
+//     swipe a finished task to capture proof, log an amount (only when
+//     the plan has one), give a task a recurring rhythm in the real
+//     schedule editor, open the agenda to meet blocks and templates,
+//     and the sunset close. Every step advances on the real performed
+//     action, every step is skippable, and the whole tour runs once.
 //
 //   • Layer B — the contextual CONCEPT layer. Quiet just-in-time lessons
 //     that fire the first time the user naturally reaches each surface
@@ -85,13 +90,27 @@ final class WalkthroughManager {
 
     // MARK: - Layer A · Mechanics tour
 
-    /// The ordered gesture lessons. `quantity` is included only when the
-    /// board actually has a tiered/increment task. `sunset` is the final
-    /// beat — tomorrow's promise and the quiet widget suggestion.
+    /// The ordered doing-lessons, in the order a real day works:
+    /// build the plan → do the work → set up the rhythm that carries
+    /// tomorrow. `pinFirst` opens the run when today is empty (the
+    /// default for a fresh season — tasks live in the season, unpinned).
+    /// `quantity` joins only when the plan actually holds a tiered /
+    /// increment task. `sunset` is the final beat — tomorrow's promise
+    /// and the quiet widget suggestion.
     enum MechanicsStep: Int, Equatable {
+        /// Pull the first task from the season board onto today's plan.
+        case pinFirst
+        /// Tap the circle — the sun rises.
         case checkOff
+        /// Swipe a finished task to capture proof.
         case swipeCapture
+        /// Log an amount on a tiered/increment task.
         case quantity
+        /// Give a task a recurring rhythm (every day / chosen weekdays).
+        case rhythm
+        /// Open the agenda — bands, flexible blocks, day templates.
+        case agenda
+        /// The close: tomorrow starts new; rhythms return on their own.
         case sunset
     }
 
@@ -100,7 +119,9 @@ final class WalkthroughManager {
     /// The step currently being taught, or nil when idle.
     var tourStep: MechanicsStep? = nil
 
-    /// Whether this run includes the quantity lesson (set at start).
+    /// Whether the quantity lesson applies — refreshed live as the plan
+    /// changes (the user builds the plan mid-tour, so this can't be
+    /// frozen at start).
     private var tourIncludesQuantity: Bool = false
 
     // MARK: - Layer B · Contextual concept lessons
@@ -123,23 +144,37 @@ final class WalkthroughManager {
     /// True once the mechanics tour has completed or been skipped.
     var mechanicsTourCompleted: Bool { defaults.bool(forKey: tourDoneKey) }
 
-    /// Begin the mechanics tour, unless it has already run.
-    func startMechanicsTour(includesQuantity: Bool) {
+    /// Begin the mechanics tour, unless it has already run. Starts at
+    /// the pin lesson when today's plan is empty (the fresh-season
+    /// default), otherwise straight at the first check.
+    func startMechanicsTour(startsAtPinning: Bool, includesQuantity: Bool) {
         guard !mechanicsTourCompleted, !tourActive else { return }
         tourIncludesQuantity = includesQuantity
         tourActive = true
-        tourStep = .checkOff
+        tourStep = startsAtPinning ? .pinFirst : .checkOff
+    }
+
+    /// Keep the quantity lesson's availability honest as the plan
+    /// changes mid-tour (the user pins tasks during the first step).
+    func setQuantityAvailable(_ available: Bool) {
+        tourIncludesQuantity = available
     }
 
     /// Move to the next applicable step, or finish the tour.
     func advanceTour() {
         guard tourActive else { return }
         switch tourStep {
+        case .pinFirst:
+            tourStep = .checkOff
         case .checkOff:
             tourStep = .swipeCapture
         case .swipeCapture:
-            tourStep = tourIncludesQuantity ? .quantity : .sunset
+            tourStep = tourIncludesQuantity ? .quantity : .rhythm
         case .quantity:
+            tourStep = .rhythm
+        case .rhythm:
+            tourStep = .agenda
+        case .agenda:
             tourStep = .sunset
         case .sunset, .none:
             finishTour()
@@ -149,13 +184,13 @@ final class WalkthroughManager {
     /// Skip the rest of the tour and jump straight to the live app.
     func skipTour() { finishTour() }
 
-    /// Re-run the gesture tour on demand (from the "How FrisFocus
+    /// Re-run the guided tour on demand (from the "How FrisFocus
     /// moves" sheet) — works even after the first run completed.
-    func replayMechanicsTour(includesQuantity: Bool) {
+    func replayMechanicsTour(startsAtPinning: Bool, includesQuantity: Bool) {
         guard !tourActive else { return }
         tourIncludesQuantity = includesQuantity
         tourActive = true
-        tourStep = .checkOff
+        tourStep = startsAtPinning ? .pinFirst : .checkOff
     }
 
     private func finishTour() {
