@@ -308,7 +308,7 @@ final class FriendGraphService {
         do {
             let results: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url, season_card")
+                .select("id, email, name, username, avatar_url, header_url")
                 .eq("is_test", value: false)
                 .or("username.ilike.*\(safe)*,name.ilike.*\(safe)*,email.ilike.*\(safe)*")
                 .limit(20)
@@ -326,7 +326,7 @@ final class FriendGraphService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url, season_card")
+                .select("id, email, name, username, avatar_url, header_url")
                 .eq("id", value: id)
                 .limit(1)
                 .execute()
@@ -520,7 +520,7 @@ final class FriendGraphService {
         guard !ids.isEmpty else { return [:] }
         let rows: [RemoteProfile] = try await supabase
             .from("profiles")
-            .select("id, email, name, username, avatar_url, header_url, season_card")
+            .select("id, email, name, username, avatar_url, header_url")
             .in("id", values: ids)
             .execute()
             .value

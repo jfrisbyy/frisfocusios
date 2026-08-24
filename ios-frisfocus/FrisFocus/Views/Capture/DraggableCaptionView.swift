@@ -41,6 +41,10 @@ struct DraggableCaptionView: View {
     /// the parent reveals the "drop to delete" zone only while an item is
     /// actually being dragged (not on a tap-to-select).
     let onDragStateChanged: (Bool) -> Void
+    /// Fires when the dragged block crosses into (or out of) the canvas'
+    /// vertical centerline — the parent draws the snap guide. Optional so
+    /// existing call sites keep working.
+    var onCenterSnapChanged: ((Bool) -> Void)? = nil
 
     @GestureState private var dragTranslation: CGSize = .zero
     @GestureState private var gestureScale: CGFloat = 1.0
@@ -48,6 +52,11 @@ struct DraggableCaptionView: View {
 
     @State private var isDragging: Bool = false
     @State private var wasOverTrash: Bool = false
+    @State private var isCenterSnapped: Bool = false
+
+    /// How close (pt) the block's center must be to the canvas centerline
+    /// before the magnetism engages.
+    private let snapThreshold: CGFloat = 9
 
     private var pixelPos: CGPoint {
         CGPoint(
@@ -99,23 +108,59 @@ struct DraggableCaptionView: View {
                     wasOverTrash = over
                     onTrashHoverChanged(over)
                 }
+                // Centerline magnetism: a haptic tick + guide line when
+                // the block's center rides within the snap band.
+                let liveX = pixelPos.x + value.translation.width
+                let snapped = !over && abs(liveX - canvasSize.width / 2) < snapThreshold
+                if snapped != isCenterSnapped {
+                    isCenterSnapped = snapped
+                    onCenterSnapChanged?(snapped)
+                    if snapped { UISelectionFeedbackGenerator().selectionChanged() }
+                }
             }
             .onEnded { value in
                 isDragging = false
-                if wasOverTrash {
-                    onDropDelete()
-                } else {
-                    let dx = value.translation.width / max(canvasSize.width, 1)
-                    let dy = value.translation.height / max(canvasSize.height, 1)
-                    let newPos = CGPoint(
-                        x: min(1, max(0, block.position.x + dx)),
-                        y: min(1, max(0, block.position.y + dy))
-                    )
-                    onCommitPosition(newPos)
+                let snapped = isCenterSnapped
+                if isCenterSnapped {
+                    isCenterSnapped = false
+                    onCenterSnapChanged?(false)
                 }
                 if wasOverTrash {
+                    onDropDelete()
                     wasOverTrash = false
                     onTrashHoverChanged(false)
+                    onDragStateChanged(false)
+                    return
+                }
+                // Seamless first commit exactly under the finger …
+                let dx = value.translation.width / max(canvasSize.width, 1)
+                let dy = value.translation.height / max(canvasSize.height, 1)
+                let exact = CGPoint(
+                    x: min(1, max(0, block.position.x + dx)),
+                    y: min(1, max(0, block.position.y + dy))
+                )
+                onCommitPosition(exact)
+                // …then a soft second beat: settle onto the centerline
+                // when snapped, or glide with a fraction of the throw.
+                var settle = exact
+                if snapped {
+                    settle.x = 0.5
+                } else {
+                    let extraW = (value.predictedEndTranslation.width - value.translation.width) * 0.18
+                    let extraH = (value.predictedEndTranslation.height - value.translation.height) * 0.18
+                    let glideX = max(-48, min(48, extraW)) / max(canvasSize.width, 1)
+                    let glideY = max(-48, min(48, extraH)) / max(canvasSize.height, 1)
+                    settle = CGPoint(
+                        x: min(0.96, max(0.04, exact.x + glideX)),
+                        y: min(0.94, max(0.06, exact.y + glideY))
+                    )
+                }
+                if settle != exact {
+                    Task { @MainActor in
+                        withAnimation(.spring(response: 0.36, dampingFraction: 0.76)) {
+                            onCommitPosition(settle)
+                        }
+                    }
                 }
                 onDragStateChanged(false)
             }
@@ -140,7 +185,19 @@ struct DraggableCaptionView: View {
             }
             .onChanged { _ in onActivate() }
             .onEnded { value in
-                onCommitRotation(block.rotation + value.rotation)
+                onCommitRotation(Self.snappedRotation(block.rotation + value.rotation))
             }
+    }
+
+    /// Magnetic right angles: within a few degrees of 0°/90°/180°/270°
+    /// the block clicks square, with a tick to say so.
+    static func snappedRotation(_ angle: Angle) -> Angle {
+        let degrees = angle.degrees
+        let nearest = (degrees / 90).rounded() * 90
+        if abs(degrees - nearest) < 4 {
+            UISelectionFeedbackGenerator().selectionChanged()
+            return .degrees(nearest)
+        }
+        return angle
     }
 }

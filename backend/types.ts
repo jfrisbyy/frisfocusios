@@ -706,6 +706,7 @@ export type Database = {
           read_at: string | null
           recipient_id: string
           sender_id: string
+          story_post_id: string | null
           watched_at: string | null
         }
         Insert: {
@@ -719,6 +720,7 @@ export type Database = {
           read_at?: string | null
           recipient_id: string
           sender_id: string
+          story_post_id?: string | null
           watched_at?: string | null
         }
         Update: {
@@ -732,6 +734,7 @@ export type Database = {
           read_at?: string | null
           recipient_id?: string
           sender_id?: string
+          story_post_id?: string | null
           watched_at?: string | null
         }
         Relationships: [
@@ -747,6 +750,13 @@ export type Database = {
             columns: ["sender_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "direct_messages_story_post_id_fkey"
+            columns: ["story_post_id"]
+            isOneToOne: false
+            referencedRelation: "story_posts"
             referencedColumns: ["id"]
           },
         ]
@@ -1364,6 +1374,32 @@ export type Database = {
           },
         ]
       }
+      season_cards: {
+        Row: {
+          card: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          card?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          card?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "season_cards_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       season_sync: {
         Row: {
           payload: string
@@ -1384,6 +1420,42 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      share_tiers: {
+        Row: {
+          friend_id: string
+          owner_id: string
+          tier: string
+          updated_at: string
+        }
+        Insert: {
+          friend_id: string
+          owner_id: string
+          tier: string
+          updated_at?: string
+        }
+        Update: {
+          friend_id?: string
+          owner_id?: string
+          tier?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "share_tiers_friend_id_fkey"
+            columns: ["friend_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "share_tiers_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       story_comments: {
         Row: {
@@ -1592,6 +1664,14 @@ export type Database = {
         }[]
       }
       esengo_has_product: { Args: { p_product: string }; Returns: boolean }
+      get_season_cards: {
+        Args: { target_ids: string[] }
+        Returns: {
+          card: string
+          tier: string
+          user_id: string
+        }[]
+      }
       in_focus_block: { Args: { p_block_id: string }; Returns: boolean }
       is_blocked: { Args: { other_id: string }; Returns: boolean }
       is_circle_member: { Args: { p_circle_id: string }; Returns: boolean }
@@ -1611,6 +1691,7 @@ export type Database = {
       my_circle_role: { Args: { p_circle_id: string }; Returns: string }
       owns_circle: { Args: { p_circle_id: string }; Returns: boolean }
       shares_circle_with: { Args: { other_id: string }; Returns: boolean }
+      try_jsonb: { Args: { t: string }; Returns: Json }
       user_id: { Args: never; Returns: string }
     }
     Enums: {

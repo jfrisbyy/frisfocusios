@@ -58,6 +58,7 @@ struct StoryPlayerView: View {
     @Environment(SocialSyncService.self) private var socialSync
     @Environment(ModerationService.self) private var moderation
     @Environment(AuthManager.self) private var auth
+    @Environment(MessageGraphService.self) private var messageGraph
     @Environment(\.dismiss) private var dismiss
 
     let mode: StoryPlayerMode
@@ -115,6 +116,17 @@ struct StoryPlayerView: View {
 
     @State private var draft: String = ""
     @FocusState private var replyFocused: Bool
+    /// Confirmation pill after a friend-tape reply lands in the thread.
+    @State private var replyToast: String?
+
+    // MARK: - Async media decode
+
+    /// Display-ready images per post — decoded off the main thread and
+    /// filled one segment ahead of the playhead, so advancing between
+    /// friends never decodes (or hitches) on the render path.
+    @State private var decodedImages: [UUID: UIImage] = [:]
+    /// Decodes already in flight, so a fast tap-through never doubles.
+    @State private var decodingIds: Set<UUID> = []
 
     // MARK: - Circle mode state
 
@@ -353,6 +365,16 @@ struct StoryPlayerView: View {
         .onChange(of: currentIndex) { _, _ in
             markCurrentViewed()
         }
+        // Decode the current segment + pre-warm the next one (image
+        // decode or video asset touch) whenever the playhead moves.
+        .task(id: prefetchKey) {
+            await ensureDecodedWindow()
+        }
+    }
+
+    /// Re-runs the decode window whenever the playhead or tape changes.
+    private var prefetchKey: String {
+        "\(currentPost?.id.uuidString ?? "none")·\(posts.count)"
     }
 
     // MARK: - Card
@@ -379,6 +401,29 @@ struct StoryPlayerView: View {
                     Color.black.opacity(0.001)
                         .contentShape(Rectangle())
                         .gesture(unifiedGesture(width: geo.size.width))
+                }
+
+                // Reply confirmation — a quiet pill floating above the
+                // composer after a friend-tape reply lands in the thread.
+                if let replyToast {
+                    VStack {
+                        Spacer()
+                        HStack(spacing: 7) {
+                            Image(systemName: "paperplane.fill")
+                                .font(.sans(11, weight: .semibold))
+                            Text(replyToast)
+                                .font(.sans(13, weight: .semibold))
+                        }
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Capsule(style: .continuous).fill(Theme.textCream.opacity(0.95)))
+                        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+                        .padding(.bottom, 118)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .allowsHitTesting(false)
+                    .zIndex(2)
                 }
 
                 // Chrome: progress + header at the top, caption +
@@ -823,14 +868,70 @@ struct StoryPlayerView: View {
                     // the clip alongside the progress bar.
                     VideoLoopView(url: url, gravity: .resizeAspect, isPaused: isPaused)
                         .id(url)
-                } else if let media = currentMedia,
-                          let url = media.resolvedLocalURL,
-                          let img = loadImage(at: url) {
-                    shapeAwareImage(img)
+                } else if let media = currentMedia, media.resolvedLocalURL != nil {
+                    // Photos render from the pre-decoded cache — never a
+                    // main-thread decode between segments. The black
+                    // frame only shows for the first-ever segment while
+                    // its decode races the presentation.
+                    if let img = decodedImages[post.id] {
+                        shapeAwareImage(img)
+                    } else {
+                        Color.black
+                    }
                 } else {
                     captionOnlyBackground(for: post)
                 }
             }
+        }
+    }
+
+    // MARK: - Decode window
+
+    /// Decode the current segment's photo and pre-warm the next segment
+    /// (photo decode, or a video asset touch so its first frame streams
+    /// without a stall). Cache is trimmed so long tapes stay light.
+    private func ensureDecodedWindow() async {
+        await decodePhotoIfNeeded(at: currentIndex)
+        await prefetchSegment(at: currentIndex + 1)
+        // Keep the cache to a small window around the playhead.
+        if decodedImages.count > 8 {
+            let keep = Set(posts.indices
+                .filter { abs($0 - currentIndex) <= 2 }
+                .map { posts[$0].id })
+            decodedImages = decodedImages.filter { keep.contains($0.key) }
+        }
+    }
+
+    private func decodePhotoIfNeeded(at index: Int) async {
+        guard index >= 0, index < posts.count else { return }
+        let post = posts[index]
+        guard decodedImages[post.id] == nil, !decodingIds.contains(post.id),
+              let mediaId = post.mediaId,
+              let media = store.mediaAssets.first(where: { $0.id == mediaId }),
+              media.type == .photo,
+              let url = media.resolvedLocalURL else { return }
+        decodingIds.insert(post.id)
+        let img = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            guard let data = try? Data(contentsOf: url),
+                  let raw = UIImage(data: data) else { return nil }
+            return await raw.byPreparingForDisplay() ?? raw
+        }.value
+        decodingIds.remove(post.id)
+        if let img { decodedImages[post.id] = img }
+    }
+
+    /// Pre-warm one segment ahead: decode a photo, or touch a video
+    /// asset so AVFoundation has its header parsed before it plays.
+    private func prefetchSegment(at index: Int) async {
+        guard index >= 0, index < posts.count else { return }
+        let post = posts[index]
+        guard let mediaId = post.mediaId,
+              let media = store.mediaAssets.first(where: { $0.id == mediaId }),
+              let url = media.resolvedLocalURL else { return }
+        if media.type == .photo {
+            await decodePhotoIfNeeded(at: index)
+        } else {
+            _ = try? await AVURLAsset(url: url).load(.isPlayable)
         }
     }
 
@@ -881,10 +982,6 @@ struct StoryPlayerView: View {
         }
     }
 
-    private func loadImage(at url: URL) -> UIImage? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return UIImage(data: data)
-    }
 
     // MARK: - Caption + reactions overlay
 
@@ -1175,9 +1272,34 @@ struct StoryPlayerView: View {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        store.addComment(postId: post.id, text: trimmed)
+        // The Snapchat loop: a reply to a friend's own tape is a private
+        // message — it lands in your 1:1 thread carrying the story it
+        // answered, not on a comment rail. Circle and event tapes keep
+        // comments (the room is the context there), as does your own
+        // tape (notes to self).
+        if case .friend = mode,
+           post.authorId != store.currentUserId,
+           let remote = socialSync.remoteId(forLocal: post.authorId),
+           let myId = auth.user?.id {
+            let name = store.friend(by: post.authorId)?.displayName ?? "them"
+            Task {
+                await messageGraph.sendNote(to: remote, text: trimmed, myUserId: myId, storyPostId: post.id)
+            }
+            showReplyToast("Sent to \(name)")
+        } else {
+            store.addComment(postId: post.id, text: trimmed)
+        }
         draft = ""
         replyFocused = false
+    }
+
+    /// Flash the reply confirmation, then let playback continue.
+    private func showReplyToast(_ text: String) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { replyToast = text }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1600))
+            withAnimation(.easeOut(duration: 0.25)) { replyToast = nil }
+        }
     }
 
     // MARK: - Playback

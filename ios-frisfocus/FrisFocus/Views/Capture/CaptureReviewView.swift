@@ -422,6 +422,12 @@ struct CaptureReviewView: View {
     /// dragged. The "drop to delete" zone keys off this so it appears on
     /// drag — not when an item is merely tapped to select.
     @State private var isDraggingBlock: Bool = false
+    /// Centerline guide — appears while a dragged block is magnetically
+    /// snapped to the canvas' vertical center.
+    @State private var showCenterGuide: Bool = false
+    /// The task sticker dropped on the trash, awaiting confirmation.
+    /// Task cards are deliberate objects — they never vanish by accident.
+    @State private var pendingStickerTrash: TaskStickerBlock?
 
     @State private var isPosting: Bool = false
     @State private var selectedFilter: CaptureFilter = .original
@@ -543,6 +549,25 @@ struct CaptureReviewView: View {
             Button("Keep editing", role: .cancel) {}
         } message: {
             Text("Save a draft to pick this up later, or discard your edits.")
+        }
+        .confirmationDialog(
+            "Remove this task card?",
+            isPresented: Binding(
+                get: { pendingStickerTrash != nil },
+                set: { if !$0 { pendingStickerTrash = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove from this shot", role: .destructive) {
+                if let sticker = pendingStickerTrash {
+                    taskStickers.removeAll { $0.id == sticker.id }
+                    activeBlockId = nil
+                }
+                pendingStickerTrash = nil
+            }
+            Button("Keep it", role: .cancel) { pendingStickerTrash = nil }
+        } message: {
+            Text("The task itself isn't touched — this only takes the card off the shot.")
         }
         .alert("Photos access needed", isPresented: $showSaveDenied) {
             Button("Open Settings") {
@@ -722,6 +747,17 @@ struct CaptureReviewView: View {
                 ForEach(taskStickers) { block in
                     stickerView(block, in: geo.size)
                 }
+
+                // Snap guide — a hairline down the canvas center while a
+                // dragged block rides the magnetic band.
+                if showCenterGuide {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.75))
+                        .frame(width: 1, height: geo.size.height)
+                        .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
             }
             .contentShape(Rectangle())
             .gesture(
@@ -817,6 +853,9 @@ struct CaptureReviewView: View {
             },
             onDragStateChanged: { dragging in
                 if isDraggingBlock != dragging { isDraggingBlock = dragging }
+            },
+            onCenterSnapChanged: { snapped in
+                withAnimation(.easeInOut(duration: 0.12)) { showCenterGuide = snapped }
             }
         )
     }
@@ -855,13 +894,18 @@ struct CaptureReviewView: View {
                 if draggingOverTrash != over { draggingOverTrash = over }
             },
             onDropDelete: {
+                // Task cards guard against accidental removal — confirm
+                // before the drop actually deletes. The card snaps back
+                // to its pre-drag spot while the dialog is up.
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
-                taskStickers.removeAll { $0.id == block.id }
-                activeBlockId = nil
                 draggingOverTrash = false
+                pendingStickerTrash = block
             },
             onDragStateChanged: { dragging in
                 if isDraggingBlock != dragging { isDraggingBlock = dragging }
+            },
+            onCenterSnapChanged: { snapped in
+                withAnimation(.easeInOut(duration: 0.12)) { showCenterGuide = snapped }
             }
         )
     }

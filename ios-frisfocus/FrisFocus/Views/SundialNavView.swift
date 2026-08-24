@@ -162,7 +162,7 @@ struct SundialNavView: View {
                 )
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
         .accessibilityLabel(
             badge > 0 ? "\(label), \(badge) unread" : label
         )

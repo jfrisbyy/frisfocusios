@@ -213,6 +213,9 @@ struct DraggableStickerView: View {
     /// the parent reveals the "drop to delete" zone only while an item is
     /// actually being dragged (not on a tap-to-select).
     let onDragStateChanged: (Bool) -> Void
+    /// Fires when the dragged sticker crosses into (or out of) the canvas'
+    /// vertical centerline — the parent draws the snap guide.
+    var onCenterSnapChanged: ((Bool) -> Void)? = nil
 
     @GestureState private var dragTranslation: CGSize = .zero
     @GestureState private var gestureScale: CGFloat = 1.0
@@ -220,6 +223,9 @@ struct DraggableStickerView: View {
 
     @State private var isDragging: Bool = false
     @State private var wasOverTrash: Bool = false
+    @State private var isCenterSnapped: Bool = false
+
+    private let snapThreshold: CGFloat = 9
 
     private var pixelPos: CGPoint {
         CGPoint(
@@ -273,23 +279,54 @@ struct DraggableStickerView: View {
                     wasOverTrash = over
                     onTrashHoverChanged(over)
                 }
+                let liveX = pixelPos.x + value.translation.width
+                let snapped = !over && abs(liveX - canvasSize.width / 2) < snapThreshold
+                if snapped != isCenterSnapped {
+                    isCenterSnapped = snapped
+                    onCenterSnapChanged?(snapped)
+                    if snapped { UISelectionFeedbackGenerator().selectionChanged() }
+                }
             }
             .onEnded { value in
                 isDragging = false
-                if wasOverTrash {
-                    onDropDelete()
-                } else {
-                    let dx = value.translation.width / max(canvasSize.width, 1)
-                    let dy = value.translation.height / max(canvasSize.height, 1)
-                    let newPos = CGPoint(
-                        x: min(1, max(0, block.position.x + dx)),
-                        y: min(1, max(0, block.position.y + dy))
-                    )
-                    onCommitPosition(newPos)
+                let snapped = isCenterSnapped
+                if isCenterSnapped {
+                    isCenterSnapped = false
+                    onCenterSnapChanged?(false)
                 }
                 if wasOverTrash {
+                    onDropDelete()
                     wasOverTrash = false
                     onTrashHoverChanged(false)
+                    onDragStateChanged(false)
+                    return
+                }
+                let dx = value.translation.width / max(canvasSize.width, 1)
+                let dy = value.translation.height / max(canvasSize.height, 1)
+                let exact = CGPoint(
+                    x: min(1, max(0, block.position.x + dx)),
+                    y: min(1, max(0, block.position.y + dy))
+                )
+                onCommitPosition(exact)
+                var settle = exact
+                if snapped {
+                    settle.x = 0.5
+                } else {
+                    let extraW = (value.predictedEndTranslation.width - value.translation.width) * 0.18
+                    let extraH = (value.predictedEndTranslation.height - value.translation.height) * 0.18
+                    let glideX = max(-48, min(48, extraW)) / max(canvasSize.width, 1)
+                    let glideY = max(-48, min(48, extraH)) / max(canvasSize.height, 1)
+                    settle = CGPoint(
+                        x: min(0.96, max(0.04, exact.x + glideX)),
+                        y: min(0.94, max(0.06, exact.y + glideY))
+                    )
+                }
+                if settle != exact {
+                    Task { @MainActor in
+                        withAnimation(.spring(response: 0.36, dampingFraction: 0.76)) {
+                            onCommitPosition(settle)
+                        }
+                    }
                 }
                 onDragStateChanged(false)
             }
@@ -314,7 +351,7 @@ struct DraggableStickerView: View {
             }
             .onChanged { _ in onActivate() }
             .onEnded { value in
-                onCommitRotation(block.rotation + value.rotation)
+                onCommitRotation(DraggableCaptionView.snappedRotation(block.rotation + value.rotation))
             }
     }
 }

@@ -86,11 +86,13 @@ final class WalkthroughManager {
     // MARK: - Layer A · Mechanics tour
 
     /// The ordered gesture lessons. `quantity` is included only when the
-    /// board actually has a tiered/increment task.
+    /// board actually has a tiered/increment task. `sunset` is the final
+    /// beat — tomorrow's promise and the quiet widget suggestion.
     enum MechanicsStep: Int, Equatable {
         case checkOff
         case swipeCapture
         case quantity
+        case sunset
     }
 
     /// True while the interactive mechanics tour is running.
@@ -136,18 +138,25 @@ final class WalkthroughManager {
         case .checkOff:
             tourStep = .swipeCapture
         case .swipeCapture:
-            if tourIncludesQuantity {
-                tourStep = .quantity
-            } else {
-                finishTour()
-            }
-        case .quantity, .none:
+            tourStep = tourIncludesQuantity ? .quantity : .sunset
+        case .quantity:
+            tourStep = .sunset
+        case .sunset, .none:
             finishTour()
         }
     }
 
     /// Skip the rest of the tour and jump straight to the live app.
     func skipTour() { finishTour() }
+
+    /// Re-run the gesture tour on demand (from the "How FrisFocus
+    /// moves" sheet) — works even after the first run completed.
+    func replayMechanicsTour(includesQuantity: Bool) {
+        guard !tourActive else { return }
+        tourIncludesQuantity = includesQuantity
+        tourActive = true
+        tourStep = .checkOff
+    }
 
     private func finishTour() {
         tourActive = false

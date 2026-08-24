@@ -134,9 +134,14 @@ private struct EdgeSwipeCameraModifier: ViewModifier {
             .onChanged { value in
                 guard !firedThisDrag, !showCamera,
                       value.startLocation.x <= edgeWidth,
-                      value.translation.width > triggerDistance,
+                      value.translation.width > 0,
                       value.translation.width > abs(value.translation.height)
                 else { return }
+                // Pre-warm the shared camera the instant the swipe
+                // begins — by the time the cover presents, the session
+                // is already delivering frames (no warming beat).
+                CameraService.shared.prewarm()
+                guard value.translation.width > triggerDistance else { return }
                 firedThisDrag = true
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 showCamera = true

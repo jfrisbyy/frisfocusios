@@ -287,6 +287,7 @@ struct ProofThreadView: View {
                             uploadProgress: (message.isPending(item.id) && item.isProof) ? message.uploadProgress : nil,
                             receipt: item.isMine(myUserId) ? receipt(for: item) : nil,
                             zoomNamespace: proofZoom,
+                            storyReply: storyReplyContext(for: item),
                             onOpenProof: { openProof(item) },
                             onReplyWithProof: { replyWithProof() },
                             onRetry: { retrySend(item) },
@@ -513,6 +514,29 @@ struct ProofThreadView: View {
         guard let local = localFriend else { return }
         profileFriend = local
     }
+
+    /// Context for a note that replied to a story: the quiet line above
+    /// the bubble, plus a local thumbnail while the story is still live.
+    /// An expired story keeps the line but loses the thumb — the memory
+    /// of the reply outlives the tape, like Snapchat.
+    private func storyReplyContext(for item: DirectMessage) -> StoryReplyContext? {
+        guard let storyId = item.storyPostId else { return nil }
+        let line = item.isMine(myUserId) ? "You replied to their story" : "Replied to your story"
+        guard let post = store.storyPosts.first(where: { $0.id == storyId }),
+              let mediaId = post.mediaId,
+              let media = store.mediaAssets.first(where: { $0.id == mediaId }),
+              let url = media.resolvedLocalURL,
+              media.type == .photo else {
+            return StoryReplyContext(line: line, thumbURL: nil)
+        }
+        return StoryReplyContext(line: line, thumbURL: url)
+    }
+}
+
+/// The story a note replied to, resolved for rendering.
+struct StoryReplyContext: Equatable {
+    let line: String
+    let thumbURL: URL?
 }
 
 // MARK: - Bubble
@@ -531,6 +555,9 @@ private struct ProofThreadBubble: View {
     /// message, updating live as the friend reads or watches.
     var receipt: String? = nil
     var zoomNamespace: Namespace.ID? = nil
+    /// Set when this note replied to a story — renders the quiet
+    /// context line (+ thumbnail while the story lives) above the bubble.
+    var storyReply: StoryReplyContext? = nil
     let onOpenProof: () -> Void
     let onReplyWithProof: () -> Void
     var onRetry: () -> Void = {}
@@ -543,6 +570,9 @@ private struct ProofThreadBubble: View {
             if isMine { Spacer(minLength: 48) }
 
             VStack(alignment: isMine ? .trailing : .leading, spacing: 5) {
+                if let storyReply {
+                    storyReplyLine(storyReply)
+                }
                 if message.isProof {
                     proofPill
                         .zoomSource(id: "proof-\(message.id.uuidString)", in: zoomNamespace)
@@ -621,11 +651,38 @@ private struct ProofThreadBubble: View {
         }
     }
 
+    /// "↩ Replied to your story" with a small thumbnail while the story
+    /// is still live — the Snapchat-style reply anchor.
+    private func storyReplyLine(_ context: StoryReplyContext) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrowshape.turn.up.left")
+                .font(.sans(9, weight: .semibold))
+            Text(context.line)
+                .font(.sans(10.5, weight: .medium))
+            if let url = context.thumbURL {
+                StoryReplyThumb(url: url)
+            }
+        }
+        .foregroundStyle(Theme.textPrimary.opacity(0.45))
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(context.line)
+    }
+
     @ViewBuilder
     private var messageBubble: some View {
         let body = message.body ?? ""
-        if body.isEmojiOnlyMessage {
-            // A bare emoji reaction renders big and bubble-less — the
+        if let reaction = ProofReaction.match(body) {
+            // A landed one-tap reaction — the glyph, big and bubble-less,
+            // in the app's one icon language.
+            Image(systemName: reaction.symbol)
+                .font(.system(size: 38, weight: .semibold))
+                .foregroundStyle(reaction.tint)
+                .padding(.horizontal, 2)
+                .padding(.vertical, 2)
+                .accessibilityLabel(reaction.label)
+        } else if body.isEmojiOnlyMessage {
+            // A bare emoji message renders big and bubble-less — the
             // burst that landed in the thread.
             Text(body)
                 .font(.system(size: 44))
@@ -745,6 +802,39 @@ private struct ProofThreadBubble: View {
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Story reply thumb
+
+/// A tiny 9:16 thumbnail of the story a note replied to, decoded
+/// off-main at thumbnail size so thread rows stay light.
+private struct StoryReplyThumb: View {
+    let url: URL
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(Theme.textPrimary.opacity(0.08))
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+        }
+        .frame(width: 18, height: 28)
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .task(id: url) {
+            let target = url
+            image = await Task.detached(priority: .utility) { () -> UIImage? in
+                guard let data = try? Data(contentsOf: target),
+                      let full = UIImage(data: data) else { return nil }
+                return await full.byPreparingThumbnail(ofSize: CGSize(width: 54, height: 84))
+            }.value
+        }
+        .accessibilityHidden(true)
     }
 }
 

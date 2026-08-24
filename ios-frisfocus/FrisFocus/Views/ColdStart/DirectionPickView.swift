@@ -18,6 +18,7 @@ struct DirectionPickView: View {
     /// conversation instead of building the board by hand.
     let onTalkItThrough: () -> Void
 
+    @Environment(AuthManager.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown: Bool = false
     @State private var showFreeText: Bool = false
@@ -152,9 +153,12 @@ struct DirectionPickView: View {
             .disabled(!viewModel.canContinue)
             .animation(.easeInOut(duration: 0.25), value: viewModel.canContinue)
 
-            // The fork — quieter, secondary, only once something's chosen.
-            // The board path above stays visually primary.
-            if viewModel.canContinue {
+            // The fork — quieter, secondary, only once something's chosen
+            // AND a session already exists. During the cold start there is
+            // no account yet, and the conversation needs one — hiding it
+            // here keeps the first run wall-free (the deeper season
+            // conversation stays reachable from home once signed in).
+            if viewModel.canContinue, auth.user != nil {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     onTalkItThrough()

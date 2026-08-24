@@ -33,6 +33,12 @@ struct TaskCardView: View {
     /// history never changes by accident.
     @State private var showPastEditConfirm: Bool = false
 
+    // Check-off weight: the checkbox compresses, overshoots, and
+    // settles; one warm glint blooms out of the completed check.
+    @State private var checkScale: CGFloat = 1.0
+    @State private var glintScale: CGFloat = 0.4
+    @State private var glintOpacity: Double = 0
+
     /// Today's completed entry for this task, if any. Carries the actual
     /// points earned (which, for tiered / quantity tasks, depends on the
     /// logged amount).
@@ -87,6 +93,7 @@ struct TaskCardView: View {
     }
 
     var body: some View {
+        Button(action: toggle) {
         HStack(alignment: .top, spacing: 14) {
             // Circle checkbox (entire row is tappable below)
             checkbox
@@ -187,13 +194,14 @@ struct TaskCardView: View {
                 )
         )
         .opacity(isOffToday ? 0.62 : 1.0)
-        .animation(.easeInOut(duration: 0.25), value: isCompleted)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isCompleted)
         .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.pressableCard)
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(isCompleted ? "Mark \(task.title) incomplete" : "Complete \(task.title)")
-        .onTapGesture {
-            toggle()
+        .onChange(of: isCompleted) { _, done in
+            if done { runCheckSettle() }
         }
         .contextMenu {
             Button {
@@ -357,8 +365,42 @@ struct TaskCardView: View {
             }
         }
         .frame(width: 22, height: 22)
+        .scaleEffect(checkScale)
+        .background {
+            // The warm glint — blooms out of the check once, then fades.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Theme.sunWarm.opacity(0.65), Theme.sunWarm.opacity(0)],
+                        center: .center,
+                        startRadius: 1,
+                        endRadius: 24
+                    )
+                )
+                .frame(width: 48, height: 48)
+                .scaleEffect(glintScale)
+                .opacity(glintOpacity)
+                .allowsHitTesting(false)
+        }
         .padding(.top, 1)
         .contentShape(Rectangle())
+    }
+
+    /// The landing: compress → overshoot → rest, plus one warm glint.
+    /// Runs on every completion — tap, swipe, or context menu alike.
+    private func runCheckSettle() {
+        checkScale = 0.72
+        glintScale = 0.4
+        glintOpacity = 0.85
+        Task { @MainActor in
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.52)) {
+                checkScale = 1.0
+            }
+            withAnimation(.easeOut(duration: 0.55)) {
+                glintOpacity = 0
+                glintScale = 1.6
+            }
+        }
     }
 
     // MARK: - Metadata

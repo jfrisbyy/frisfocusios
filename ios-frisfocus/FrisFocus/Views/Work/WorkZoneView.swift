@@ -583,7 +583,7 @@ struct WorkZoneView: View {
                     .strokeBorder(Theme.textPrimary.opacity(0.10), lineWidth: 0.8)
             )
         }
-        .buttonStyle(QuickAddPressStyle())
+        .buttonStyle(.pressableCard)
         .accessibilityLabel("Add a task or to-do to today")
     }
 
@@ -598,17 +598,6 @@ struct WorkZoneView: View {
             EyebrowText(text: eyebrow, opacity: 0.6)
             content()
         }
-    }
-}
-
-/// Gentle press-scale for the quick-add pill — a quiet shrink-and-dim
-/// on touch so the tap feels responsive without pulling focus.
-private struct QuickAddPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .opacity(configuration.isPressed ? 0.85 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 

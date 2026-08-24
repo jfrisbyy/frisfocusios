@@ -21,6 +21,7 @@ import UIKit
 
 struct SharingSettingsView: View {
     @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
 
     let friendId: UUID
@@ -116,6 +117,12 @@ struct SharingSettingsView: View {
                 clearance = SharingSettings.from(tier: tier, showOpenItemsAtFull: clearance.showOpenItemsAtFull)
             }
             store.updateFriendClearance(friendId: friendId, clearance: clearance)
+            // Server-side too: quiet trims the season card THEY receive
+            // at the data layer, not just in rendering.
+            if let remote = socialSync.remoteId(forLocal: friendId) {
+                let quiet = tier == .quiet
+                Task { await socialSync.setShareTier(forRemote: remote, quiet: quiet) }
+            }
         } label: {
             HStack(alignment: .top, spacing: 14) {
                 ZStack {

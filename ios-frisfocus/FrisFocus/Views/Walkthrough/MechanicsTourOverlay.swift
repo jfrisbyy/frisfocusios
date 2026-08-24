@@ -88,6 +88,17 @@ struct MechanicsTourOverlay: View {
                 continueTitle: showFallback ? "Got it" : nil,
                 onContinue: showFallback ? { walkthrough.advanceTour() } : nil
             ) { TapPulseHint() }
+
+        case .sunset:
+            // The closing beat — tomorrow's promise, plus the one quiet,
+            // pull-only suggestion (no permission ask, no notification).
+            CoachmarkCard(
+                title: "Tomorrow the sun starts new.",
+                message: "Tonight this card closes, and a fresh sun waits at the horizon. If you'd like it nearby, the FrisFocus widget keeps your sun on your home screen — add it any time from your home screen's edit mode.",
+                onSkip: nil,
+                continueTitle: "Done",
+                onContinue: { walkthrough.advanceTour() }
+            ) { SunsetHint() }
         }
     }
 

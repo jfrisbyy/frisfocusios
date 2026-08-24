@@ -95,6 +95,9 @@ struct SharePreviewView: View {
     @State private var activeBlockId: UUID? = nil
     @State private var isDraggingBlock: Bool = false
     @State private var draggingOverTrash: Bool = false
+    /// Centerline guide — appears while a dragged block is magnetically
+    /// snapped to the card's vertical center.
+    @State private var showCenterGuide: Bool = false
     /// The story card's on-screen size — the canvas space block
     /// positions are normalized against.
     @State private var cardSize: CGSize = .zero
@@ -247,6 +250,17 @@ struct SharePreviewView: View {
                 ForEach(taskStickers) { block in
                     stickerBlockView(block, in: geo.size)
                 }
+
+                // Snap guide — hairline down the card center while a
+                // dragged block rides the magnetic band.
+                if showCenterGuide {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.75))
+                        .frame(width: 1, height: geo.size.height)
+                        .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .contentShape(Rectangle())
@@ -311,6 +325,9 @@ struct SharePreviewView: View {
             },
             onDragStateChanged: { dragging in
                 if isDraggingBlock != dragging { isDraggingBlock = dragging }
+            },
+            onCenterSnapChanged: { snapped in
+                withAnimation(.easeInOut(duration: 0.12)) { showCenterGuide = snapped }
             }
         )
     }
@@ -350,6 +367,9 @@ struct SharePreviewView: View {
             },
             onDragStateChanged: { dragging in
                 if isDraggingBlock != dragging { isDraggingBlock = dragging }
+            },
+            onCenterSnapChanged: { snapped in
+                withAnimation(.easeInOut(duration: 0.12)) { showCenterGuide = snapped }
             }
         )
     }

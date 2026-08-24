@@ -42,7 +42,9 @@ struct ShareCameraView: View {
     /// mutating the Store (the note doesn't exist yet).
     let onSavedToNoteComposer: ((NotePhoto) -> Void)?
 
-    @State private var camera = CameraService()
+    /// The shared, pre-warmable app camera — same instance the proof
+    /// camera uses, so both surfaces get the same gestures and warm-up.
+    private var camera: CameraService { .shared }
     @State private var options = ShareOverlayOptions()
     /// Milestone disclosure choices — loaded from (and saved back to)
     /// the user's last share so curation sticks.
@@ -84,6 +86,12 @@ struct ShareCameraView: View {
 
     // Visual effects
     @State private var flashOpacity: Double = 0
+    /// Tap-to-focus reticle state — parity with the proof camera.
+    @State private var focusPoint: CGPoint?
+    @State private var focusVisible: Bool = false
+    /// Pinch-zoom anchor; recording slide-zoom ramps from `recordZoomBase`.
+    @State private var pinchBase: CGFloat = 1.0
+    @State private var recordZoomBase: CGFloat = 1.0
     /// The share-attribution concept lesson, fired once on first reach.
     @State private var attributionLesson: WalkthroughLesson?
 
@@ -143,39 +151,50 @@ struct ShareCameraView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        GeometryReader { geo in
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-            CameraProxyView(camera: camera)
-                .ignoresSafeArea()
-                .simultaneousGesture(doubleTapFlipGesture)
+                CameraProxyView(camera: camera)
+                    .ignoresSafeArea()
+                    .gesture(pinchGesture)
+                    .simultaneousGesture(tapToFocusGesture(in: geo.size))
+                    .simultaneousGesture(doubleTapFlipGesture)
 
-            // The live overlay — WYSIWYG with the export. Day-card
-            // chips are the only interactive part; everything else
-            // passes touches to the camera layer.
-            ShareCompositionOverlayView(
-                composition: composition,
-                mode: .composing,
-                username: username,
-                showChipHint: isDaySubject && !chipHintSeen,
-                onToggleChip: { chipId in
-                    toggleChip(chipId)
-                },
-                bottomPadding: 168
-            )
-            .id(pageIndex)
-            .transition(.opacity)
-            .ignoresSafeArea(edges: .bottom)
+                // Yellow focus reticle — parity with the proof camera.
+                if let pt = focusPoint, focusVisible {
+                    focusReticle
+                        .position(pt)
+                        .allowsHitTesting(false)
+                }
 
-            // Photo flash.
-            Color.white.opacity(flashOpacity)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
+                // The live overlay — WYSIWYG with the export. Day-card
+                // chips are the only interactive part; everything else
+                // passes touches to the camera layer.
+                ShareCompositionOverlayView(
+                    composition: composition,
+                    mode: .composing,
+                    username: username,
+                    showChipHint: isDaySubject && !chipHintSeen,
+                    onToggleChip: { chipId in
+                        toggleChip(chipId)
+                    },
+                    bottomPadding: 168
+                )
+                .id(pageIndex)
+                .transition(.opacity)
+                .ignoresSafeArea(edges: .bottom)
 
-            VStack(spacing: 0) {
-                topBar
-                Spacer()
-                bottomControls
+                // Photo flash.
+                Color.white.opacity(flashOpacity)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+
+                VStack(spacing: 0) {
+                    topBar
+                    Spacer()
+                    bottomControls
+                }
             }
         }
         .statusBarHidden()
@@ -358,6 +377,19 @@ struct ShareCameraView: View {
 
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                camera.toggleFlash()
+            } label: {
+                Image(systemName: camera.isFlashOn ? "bolt.fill" : "bolt.slash")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Color.black.opacity(0.35)))
+            }
+            .accessibilityLabel(camera.isFlashOn ? "Flash on" : "Flash off")
+            .disabled(!camera.hasCamera)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 camera.flipCamera()
             } label: {
                 Image(systemName: "arrow.triangle.2.circlepath")
@@ -457,11 +489,17 @@ struct ShareCameraView: View {
     // MARK: - Capture gestures
 
     /// Camera ergonomics on one shutter: a quick tap fires a photo; a
-    /// press held past 220 ms arms a recording that stops on release.
+    /// press held past 220 ms arms a recording that stops on release —
+    /// and once recording, the held finger slides up to zoom.
     private var shutterGesture: some Gesture {
         DragGesture(minimumDistance: 0)
-            .onChanged { _ in
-                guard pressTimerTask == nil, !isRecording, camera.hasCamera else { return }
+            .onChanged { value in
+                if isRecording {
+                    let rise = -value.translation.height
+                    camera.setZoom(recordZoomBase + rise / 110)
+                    return
+                }
+                guard pressTimerTask == nil, camera.hasCamera else { return }
                 pressTimerTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(220))
                     if !Task.isCancelled {
@@ -479,6 +517,52 @@ struct ShareCameraView: View {
                 }
                 pressTimerTask = nil
             }
+    }
+
+    /// Pinch anywhere on the viewfinder to zoom — parity with the proof
+    /// camera. Caption pinches don't exist here, so the whole canvas is
+    /// fair game.
+    private var pinchGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                camera.setZoom(pinchBase * value.magnification)
+            }
+            .onEnded { _ in
+                pinchBase = camera.currentZoom
+            }
+    }
+
+    /// Tap the viewfinder to focus + meter there, with the yellow
+    /// reticle pulse. Chip taps live on the overlay above and never
+    /// reach this gesture.
+    private func tapToFocusGesture(in size: CGSize) -> some Gesture {
+        SpatialTapGesture(count: 1)
+            .onEnded { value in
+                guard camera.hasCamera else { return }
+                let pt = value.location
+                focusPoint = pt
+                focusVisible = true
+                let normalized = CGPoint(
+                    x: max(0, min(1, pt.x / size.width)),
+                    y: max(0, min(1, pt.y / size.height))
+                )
+                camera.focus(at: normalized)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(700))
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        focusVisible = false
+                    }
+                }
+            }
+    }
+
+    private var focusReticle: some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .stroke(Color.yellow.opacity(0.9), lineWidth: 1.2)
+            .frame(width: 64, height: 64)
+            .scaleEffect(focusVisible ? 1.0 : 1.4)
+            .opacity(focusVisible ? 1.0 : 0.0)
+            .animation(.easeOut(duration: 0.22), value: focusVisible)
     }
 
     /// Double-tap anywhere on the viewfinder flips the camera — the
@@ -509,6 +593,7 @@ struct ShareCameraView: View {
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
         recordStart = Date()
         recordElapsed = 0
+        recordZoomBase = camera.currentZoom
         withAnimation(.easeOut(duration: 0.2)) { isRecording = true }
         camera.startRecording()
         if !shutterHintSeen { shutterHintSeen = true }
@@ -520,6 +605,7 @@ struct ShareCameraView: View {
         let duration = recordElapsed
         withAnimation(.easeOut(duration: 0.2)) { isRecording = false }
         recordStart = nil
+        pinchBase = camera.currentZoom
         camera.stopRecording { url in
             if let url {
                 result = .video(url: url, thumbnail: nil, duration: duration)

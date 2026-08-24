@@ -33,6 +33,11 @@ struct TodoCardView: View {
     /// Confirmation gate while the home is travelled to a past day.
     @State private var showPastEditConfirm: Bool = false
 
+    // Check-off weight — mirrors TaskCardView exactly.
+    @State private var checkScale: CGFloat = 1.0
+    @State private var glintScale: CGFloat = 0.4
+    @State private var glintOpacity: Double = 0
+
     private var isOverdue: Bool {
         guard !todo.isCompleted, let due = todo.dueDate else { return false }
         let cal = Calendar.current
@@ -48,6 +53,7 @@ struct TodoCardView: View {
     }
 
     var body: some View {
+        Button(action: toggle) {
         HStack(alignment: .top, spacing: 14) {
             checkbox
 
@@ -90,13 +96,14 @@ struct TodoCardView: View {
                     lineWidth: 0.5
                 )
         )
-        .animation(.easeInOut(duration: 0.25), value: todo.isCompleted)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: todo.isCompleted)
         .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+        }
+        .buttonStyle(.pressableCard)
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(todo.isCompleted ? "Mark \(todo.title) incomplete" : "Complete \(todo.title)")
-        .onTapGesture {
-            toggle()
+        .onChange(of: todo.isCompleted) { _, done in
+            if done { runCheckSettle() }
         }
         .contextMenu {
             Button {
@@ -187,8 +194,40 @@ struct TodoCardView: View {
             }
         }
         .frame(width: 22, height: 22)
+        .scaleEffect(checkScale)
+        .background {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Theme.sunWarm.opacity(0.65), Theme.sunWarm.opacity(0)],
+                        center: .center,
+                        startRadius: 1,
+                        endRadius: 24
+                    )
+                )
+                .frame(width: 48, height: 48)
+                .scaleEffect(glintScale)
+                .opacity(glintOpacity)
+                .allowsHitTesting(false)
+        }
         .padding(.top, 1)
         .contentShape(Rectangle())
+    }
+
+    /// Compress → overshoot → rest, plus one warm glint on completion.
+    private func runCheckSettle() {
+        checkScale = 0.72
+        glintScale = 0.4
+        glintOpacity = 0.85
+        Task { @MainActor in
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.52)) {
+                checkScale = 1.0
+            }
+            withAnimation(.easeOut(duration: 0.55)) {
+                glintOpacity = 0
+                glintScale = 1.6
+            }
+        }
     }
 
     private var checkboxStroke: Color {

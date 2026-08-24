@@ -94,7 +94,10 @@ struct CaptureView: View {
     var liveProofRecipientName: String? = nil
     var onSendLiveProof: ((_ data: Data, _ isVideo: Bool, _ duration: Double?, _ caption: String?) async -> Void)? = nil
 
-    @State private var camera = CameraService()
+    /// The app-wide shared camera — pre-warmed by hosts the moment the
+    /// open-camera gesture begins, so the viewfinder is live (not
+    /// warming) by the time this view lands on screen.
+    private var camera: CameraService { .shared }
     @State private var captureResult: CaptureResult?
     @State private var showPermissionDenied: Bool = false
 
@@ -116,6 +119,9 @@ struct CaptureView: View {
     @State private var focusPoint: CGPoint?
     @State private var focusVisible: Bool = false
     @State private var pinchBase: CGFloat = 1.0
+    /// Zoom at the moment recording began — the anchor the hold-and-slide
+    /// zoom ramps from, Snapchat-style.
+    @State private var recordZoomBase: CGFloat = 1.0
 
     private let maxRecordSeconds: Double = 30
     private let recordTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
@@ -459,8 +465,15 @@ struct CaptureView: View {
         // long-press timing quirks. We arm the recording start after a
         // 220 ms hold so a quick tap fires a photo instead.
         DragGesture(minimumDistance: 0)
-            .onChanged { _ in
-                guard pressTimerTask == nil, !isRecording, camera.isReady else { return }
+            .onChanged { value in
+                if isRecording {
+                    // Slide-to-zoom: the finger already holding the
+                    // shutter rides up to zoom in, back down to return.
+                    let rise = -value.translation.height
+                    camera.setZoom(recordZoomBase + rise / 110)
+                    return
+                }
+                guard pressTimerTask == nil, camera.isReady else { return }
                 pressTimerTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(220))
                     if !Task.isCancelled {
@@ -553,6 +566,7 @@ struct CaptureView: View {
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
         recordElapsed = 0
         recordStart = Date()
+        recordZoomBase = camera.currentZoom
         isRecording = true
         camera.startRecording()
     }
@@ -561,6 +575,8 @@ struct CaptureView: View {
         guard isRecording else { return }
         isRecording = false
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        // The slide-zoom sticks: future pinches continue from here.
+        pinchBase = camera.currentZoom
         let duration = recordElapsed
         camera.stopRecording { url in
             guard let url else { return }
@@ -764,6 +780,20 @@ struct ActualCameraView: UIViewRepresentable {
 @MainActor
 @Observable
 final class CameraService: NSObject {
+    /// One camera for the whole app. Hosts call `prewarm()` the moment
+    /// an open-camera gesture begins, so by the time the capture UI is
+    /// on screen the session is already delivering frames — no warming
+    /// beat between the swipe and a live viewfinder.
+    static let shared = CameraService()
+
+    /// Kick the session into life ahead of presentation. Only runs when
+    /// camera permission is already granted — a half-finished swipe must
+    /// never summon the system permission dialog.
+    func prewarm() {
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { return }
+        Task { await requestAccessAndStart() }
+    }
+
     enum AuthState: Equatable {
         case unknown, granted, denied, restricted
     }

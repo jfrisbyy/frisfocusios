@@ -56,6 +56,7 @@ private nonisolated struct DirectMessageRow: Codable, Sendable {
     let createdAt: String
     let readAt: String?
     let watchedAt: String?
+    let storyPostId: UUID?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, body
@@ -67,6 +68,7 @@ private nonisolated struct DirectMessageRow: Codable, Sendable {
         case createdAt = "created_at"
         case readAt = "read_at"
         case watchedAt = "watched_at"
+        case storyPostId = "story_post_id"
     }
 }
 
@@ -80,6 +82,7 @@ private nonisolated struct DirectMessageInsert: Encodable, Sendable {
     let mediaPath: String?
     let mediaKind: String?
     let mediaDuration: Double?
+    var storyPostId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case kind, body
@@ -88,6 +91,7 @@ private nonisolated struct DirectMessageInsert: Encodable, Sendable {
         case mediaPath = "media_path"
         case mediaKind = "media_kind"
         case mediaDuration = "media_duration"
+        case storyPostId = "story_post_id"
     }
 }
 
@@ -118,6 +122,9 @@ struct DirectMessage: Identifiable, Hashable {
     let createdAt: Date
     var readAt: Date?
     var watchedAt: Date?
+    /// When this note replied to a story, the story post it answered —
+    /// threads render a quiet context line above the bubble.
+    var storyPostId: UUID? = nil
 
     /// A proof carries media; a note is text-only — same row, different
     /// presentation.
@@ -215,7 +222,7 @@ final class MessageGraphService {
     @ObservationIgnored private var hiddenIds: Set<UUID> = []
 
     /// The column list every row fetch shares.
-    private static let rowColumns = "id, sender_id, recipient_id, kind, body, media_path, media_kind, media_duration, created_at, read_at, watched_at"
+    private static let rowColumns = "id, sender_id, recipient_id, kind, body, media_path, media_kind, media_duration, created_at, read_at, watched_at, story_post_id"
 
     // MARK: Date helpers
 
@@ -255,7 +262,8 @@ final class MessageGraphService {
             mediaDuration: r.mediaDuration,
             createdAt: created,
             readAt: Self.parseDate(r.readAt),
-            watchedAt: Self.parseDate(r.watchedAt)
+            watchedAt: Self.parseDate(r.watchedAt),
+            storyPostId: r.storyPostId
         )
     }
 
@@ -393,7 +401,9 @@ final class MessageGraphService {
     /// Send a quiet text note to a friend. Optimistic: the note appears
     /// in the thread instantly and is swapped for the server row once
     /// the insert confirms (or removed with an error if it fails).
-    func sendNote(to recipientId: String, text: String, myUserId: String) async {
+    /// `storyPostId` marks the note as a reply to that story — the
+    /// thread renders a small context line above it.
+    func sendNote(to recipientId: String, text: String, myUserId: String, storyPostId: UUID? = nil) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -408,7 +418,8 @@ final class MessageGraphService {
             mediaDuration: nil,
             createdAt: Date(),
             readAt: nil,
-            watchedAt: nil
+            watchedAt: nil,
+            storyPostId: storyPostId
         )
         appendOptimistic(temp)
 
@@ -422,9 +433,10 @@ final class MessageGraphService {
                     body: trimmed,
                     mediaPath: nil,
                     mediaKind: nil,
-                    mediaDuration: nil
+                    mediaDuration: nil,
+                    storyPostId: storyPostId
                 ))
-                .select("id, sender_id, recipient_id, kind, body, media_path, media_kind, media_duration, created_at, read_at, watched_at")
+                .select(Self.rowColumns)
                 .single()
                 .execute()
                 .value
@@ -476,7 +488,8 @@ final class MessageGraphService {
             mediaDuration: durationSeconds,
             createdAt: Date(),
             readAt: nil,
-            watchedAt: nil
+            watchedAt: nil,
+            storyPostId: nil
         )
         appendOptimistic(temp)
 
@@ -508,7 +521,7 @@ final class MessageGraphService {
                     mediaKind: mediaKind.rawValue,
                     mediaDuration: durationSeconds
                 ))
-                .select("id, sender_id, recipient_id, kind, body, media_path, media_kind, media_duration, created_at, read_at, watched_at")
+                .select(Self.rowColumns)
                 .single()
                 .execute()
                 .value

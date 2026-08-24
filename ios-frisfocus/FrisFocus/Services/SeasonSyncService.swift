@@ -53,9 +53,8 @@ private nonisolated struct SnapshotEntry: Codable, Sendable {
 
 /// Minimal read shape for verifying the friend-visible season card
 /// before we would overwrite it with an empty one.
-private nonisolated struct ProfileCardRow: Decodable, Sendable {
-    let seasonCard: String?
-    enum CodingKeys: String, CodingKey { case seasonCard = "season_card" }
+private nonisolated struct SeasonCardsRow: Decodable, Sendable {
+    let card: String?
 }
 
 // MARK: - Service
@@ -538,28 +537,33 @@ final class SeasonSyncService {
         }
     }
 
-    // MARK: Season card (public, friend-readable)
+    // MARK: Season card (friend-gated)
 
-    private nonisolated struct SeasonCardUpdate: Encodable, Sendable {
-        let seasonCard: String?
+    private nonisolated struct SeasonCardUpsert: Encodable, Sendable {
+        let userId: String
+        let card: String?
         let updatedAt: String
 
         enum CodingKeys: String, CodingKey {
-            case seasonCard = "season_card"
+            case userId = "user_id"
+            case card
             case updatedAt = "updated_at"
         }
 
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
-            if let seasonCard { try c.encode(seasonCard, forKey: .seasonCard) } else { try c.encodeNil(forKey: .seasonCard) }
+            try c.encode(userId, forKey: .userId)
+            if let card { try c.encode(card, forKey: .card) } else { try c.encodeNil(forKey: .card) }
             try c.encode(updatedAt, forKey: .updatedAt)
         }
     }
 
-    /// Publish the friend-readable season card (cover, accent,
-    /// intention, season info, past chapters) onto the user's own
-    /// profile row, where every profile surface reads it. Best-effort
-    /// — the next flush retries naturally.
+    /// Publish the season card (cover, accent, intention, season info,
+    /// past chapters) into the friend-gated `season_cards` table — the
+    /// row is owner-writable and readable only by accepted, unblocked
+    /// friends through the `get_season_cards` RPC. Never on the
+    /// anyone-readable profile row. Best-effort — the next flush
+    /// retries naturally.
     func pushSeasonCard() async {
         guard let myUserId, let store else { return }
         // Content-aware guard: never publish an empty card over a
@@ -574,32 +578,32 @@ final class SeasonSyncService {
         }
         do {
             try await supabase
-                .from("profiles")
-                .update(SeasonCardUpdate(
-                    seasonCard: store.mySeasonCard.encodedJSON(),
+                .from("season_cards")
+                .upsert(SeasonCardUpsert(
+                    userId: myUserId,
+                    card: store.mySeasonCard.encodedJSON(),
                     updatedAt: SyncDates.iso(Date())
-                ))
-                .eq("id", value: myUserId)
+                ), onConflict: "user_id")
                 .execute()
         } catch {
             print("[SeasonSync] season card push failed: \(error)")
         }
     }
 
-    /// Read the friend-visible season card currently stored on the
-    /// profile row. `reached` is false when the read failed, so callers
-    /// can stay conservative and refuse to overwrite with an empty card.
+    /// Read my own currently-stored season card. `reached` is false when
+    /// the read failed, so callers can stay conservative and refuse to
+    /// overwrite with an empty card.
     private func fetchRemoteSeasonCard() async -> (reached: Bool, card: SeasonCard?) {
         guard let myUserId else { return (false, nil) }
         do {
-            let rows: [ProfileCardRow] = try await supabase
-                .from("profiles")
-                .select("season_card")
-                .eq("id", value: myUserId)
+            let rows: [SeasonCardsRow] = try await supabase
+                .from("season_cards")
+                .select("card")
+                .eq("user_id", value: myUserId)
                 .limit(1)
                 .execute()
                 .value
-            return (true, SeasonCard.decode(fromJSON: rows.first?.seasonCard))
+            return (true, SeasonCard.decode(fromJSON: rows.first?.card))
         } catch {
             print("[SeasonSync] could not verify remote season card: \(error)")
             return (false, nil)

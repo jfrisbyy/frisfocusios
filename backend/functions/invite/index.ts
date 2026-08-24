@@ -7,32 +7,111 @@
 // that hops into the app via the custom scheme (landing on the inviter's
 // Add-friend screen), plus install guidance when the app isn't there yet.
 //
+// The page carries real Open Graph metadata — the inviter's name and
+// avatar — so an invite dropped into iMessage / WhatsApp unfurls as a
+// designed card ("Jordan is walking a season — walk with them"), not a
+// bare link. Profile lookup is service-role and read-only.
+//
 // GET /functions/v1/invite?u=<accountId>
 // Deployed public (no JWT) — it serves plain HTML to logged-out browsers.
 
 const SCHEME = "frisfocus";
 const HOST = "add-friend";
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
 /** Account ids come from Rork Auth — constrain hard before embedding. */
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
-function page(userId: string | null): string {
+/** Escape text for safe embedding in HTML/attributes. */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+interface Inviter {
+  name: string | null;
+  avatar: string | null;
+}
+
+/** Read the inviter's display name + avatar. Best-effort — a miss just
+ *  renders the generic card. */
+async function fetchInviter(userId: string): Promise<Inviter> {
+  if (!SUPABASE_URL || !SERVICE_KEY) return { name: null, avatar: null };
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=name,username,avatar_url&limit=1`,
+      {
+        headers: {
+          apikey: SERVICE_KEY,
+          Authorization: `Bearer ${SERVICE_KEY}`,
+        },
+      },
+    );
+    if (!res.ok) return { name: null, avatar: null };
+    const rows = (await res.json()) as Array<{
+      name?: string | null;
+      username?: string | null;
+      avatar_url?: string | null;
+    }>;
+    const row = rows?.[0];
+    if (!row) return { name: null, avatar: null };
+    const rawName = (row.name ?? row.username ?? "").toString().trim();
+    const name = rawName.length > 0 ? rawName.slice(0, 60) : null;
+    const avatar =
+      typeof row.avatar_url === "string" && /^https:\/\//.test(row.avatar_url)
+        ? row.avatar_url
+        : null;
+    return { name, avatar };
+  } catch {
+    return { name: null, avatar: null };
+  }
+}
+
+function page(userId: string | null, inviter: Inviter, pageURL: string): string {
   const valid = userId !== null && ID_PATTERN.test(userId);
   const appLink = valid ? `${SCHEME}://${HOST}?u=${userId}` : `${SCHEME}://`;
-  const title = "Add me on FrisFocus";
+  const name = valid ? inviter.name : null;
+  const avatar = valid ? inviter.avatar : null;
+
+  const title = name
+    ? `${name} is walking a season — walk with them`
+    : "Add me on FrisFocus";
   const description = valid
-    ? "Tap to open FrisFocus and add your friend — keep each other going."
+    ? name
+      ? `${name} keeps an honest record of their days on FrisFocus. Open the invite to walk alongside them.`
+      : "Tap to open FrisFocus and add your friend — keep each other going."
     : "FrisFocus — an honest record of your days.";
+
+  const ogImage = avatar
+    ? `<meta property="og:image" content="${esc(avatar)}" />
+<meta property="og:image:width" content="400" />
+<meta property="og:image:height" content="400" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:image" content="${esc(avatar)}" />`
+    : `<meta name="twitter:card" content="summary" />`;
+
+  const heroDisc = avatar
+    ? `<img class="avatar" src="${esc(avatar)}" alt="" />`
+    : `<div class="sun" aria-hidden="true"></div>`;
 
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>${title}</title>
-<meta property="og:title" content="${title}" />
-<meta property="og:description" content="${description}" />
+<title>${esc(title)}</title>
+<meta property="og:title" content="${esc(title)}" />
+<meta property="og:description" content="${esc(description)}" />
 <meta property="og:type" content="website" />
+<meta property="og:site_name" content="FrisFocus" />
+<meta property="og:url" content="${esc(pageURL)}" />
+${ogImage}
 <meta name="theme-color" content="#FAF2E0" />
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -51,6 +130,13 @@ function page(userId: string | null): string {
     margin: 0 auto 22px;
     background: radial-gradient(circle at 38% 34%, #E8B84B, #D08627);
     box-shadow: 0 0 44px rgba(224, 163, 52, 0.45);
+  }
+  .avatar {
+    width: 76px; height: 76px; border-radius: 50%;
+    margin: 0 auto 22px; display: block;
+    object-fit: cover;
+    border: 3px solid rgba(224, 163, 52, 0.75);
+    box-shadow: 0 0 44px rgba(224, 163, 52, 0.35);
   }
   .eyebrow {
     font-size: 11px; font-weight: 600; letter-spacing: 2.4px;
@@ -83,12 +169,18 @@ function page(userId: string | null): string {
 </head>
 <body>
   <main class="card">
-    <div class="sun" aria-hidden="true"></div>
+    ${heroDisc}
     <div class="eyebrow">FrisFocus invite</div>
-    <h1>${valid ? "A friend wants you in their corner" : "FrisFocus"}</h1>
+    <h1>${
+      valid
+        ? name
+          ? `${esc(name)} wants you in their corner`
+          : "A friend wants you in their corner"
+        : "FrisFocus"
+    }</h1>
     <p class="sub">${
       valid
-        ? "Open FrisFocus to land on their profile with an Add control — and keep each other going, day by day."
+        ? `Open FrisFocus to land on ${name ? esc(name) + "'s" : "their"} profile with an Add control — and keep each other going, day by day.`
         : "This invite link is missing its code. Ask your friend to share it again from inside FrisFocus."
     }</p>
     ${valid ? `<a class="open" href="${appLink}">Open FrisFocus</a>` : ""}
@@ -102,7 +194,7 @@ function page(userId: string | null): string {
 </html>`;
 }
 
-Deno.serve((req) => {
+Deno.serve(async (req) => {
   const method = req.method.toUpperCase();
   if (method === "HEAD") {
     return new Response(null, {
@@ -117,8 +209,9 @@ Deno.serve((req) => {
   const url = new URL(req.url);
   const raw = url.searchParams.get("u");
   const userId = raw !== null && ID_PATTERN.test(raw) ? raw : null;
+  const inviter = userId ? await fetchInviter(userId) : { name: null, avatar: null };
 
-  return new Response(page(userId), {
+  return new Response(page(userId, inviter, url.toString()), {
     status: 200,
     headers: {
       "Content-Type": "text/html; charset=utf-8",

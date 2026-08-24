@@ -267,12 +267,19 @@ struct ClaimNameStep: View {
     // MARK: Logic
 
     /// Pre-fill the handle with an open suggestion drawn from the name.
+    /// The local seed lands INSTANTLY (no empty field on a slow network);
+    /// the availability-refined suggestion swaps in only if the user
+    /// hasn't started typing.
     private func seedSuggestionIfNeeded() async {
         guard !didSeed, let myId else { return }
         didSeed = true
         let base = baseHandle(from: auth.user?.name ?? auth.user?.email)
-        let suggestion = await firstAvailable(base: base, myUserId: myId)
-        handle = suggestion
+        let root = base.isEmpty ? "friend" : base
+        handle = root
+        let suggestion = await firstAvailable(base: root, myUserId: myId)
+        if handle == root, suggestion != root {
+            handle = suggestion
+        }
     }
 
     /// Walk base, base1, base2… until one is free (caps at a few tries).
@@ -295,7 +302,10 @@ struct ClaimNameStep: View {
         return ProfileStore.sanitizeUsername(firstWord)
     }
 
-    /// Debounced availability check for the current handle.
+    /// Debounced availability check for the current handle. A slow
+    /// network never walls the step: after 2.5 s of "Checking…" the
+    /// handle resolves optimistically so Continue enables — the save
+    /// still enforces uniqueness server-side (and re-checks on a clash).
     private func checkAvailability() async {
         let candidate = handle
         guard let myId else { return }
@@ -306,6 +316,12 @@ struct ClaimNameStep: View {
         availability = .checking
         try? await Task.sleep(for: .milliseconds(400))
         if Task.isCancelled { return }
+        let watchdog = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled, handle == candidate, availability == .checking else { return }
+            availability = .available
+        }
+        defer { watchdog.cancel() }
         let free = await profileStore.isUsernameAvailable(candidate, myUserId: myId)
         if Task.isCancelled || handle != candidate { return }
         availability = free ? .available : .taken

@@ -94,6 +94,20 @@ nonisolated enum SyncDates {
     }
 }
 
+/// Upsert row for my per-friend share tier.
+private nonisolated struct ShareTierUpsert: Encodable, Sendable {
+    let ownerId: String
+    let friendId: String
+    let tier: String
+    let updatedAt: String
+    enum CodingKeys: String, CodingKey {
+        case ownerId = "owner_id"
+        case friendId = "friend_id"
+        case tier
+        case updatedAt = "updated_at"
+    }
+}
+
 // MARK: - Service
 
 @Observable
@@ -105,6 +119,9 @@ final class SocialSyncService {
     @ObservationIgnored weak var store: Store?
     @ObservationIgnored private(set) var remoteByLocal: [UUID: String] = [:]
     @ObservationIgnored private(set) var profilesByRemote: [String: RemoteProfile] = [:]
+    /// What each friend shares with me ("full" / "quiet"), by remote id
+    /// — resolved server-side by the season-card RPC, never assumed.
+    @ObservationIgnored private(set) var tiersByRemote: [String: String] = [:]
     @ObservationIgnored private var channel: RealtimeChannelV2?
     @ObservationIgnored private var realtimeTask: Task<Void, Never>?
     @ObservationIgnored private var refreshDebounces: [String: Task<Void, Never>] = [:]
@@ -207,12 +224,16 @@ final class SocialSyncService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url, season_card")
+                .select("id, email, name, username, avatar_url, header_url")
                 .in("id", values: Array(missing))
                 .execute()
                 .value
             for row in rows {
-                profilesByRemote[row.id] = row
+                // Keep any RPC-delivered season card already cached — the
+                // profiles table no longer carries cards.
+                var merged = row
+                merged.seasonCard = profilesByRemote[row.id]?.seasonCard
+                profilesByRemote[row.id] = merged
                 _ = localId(forRemote: row.id)
             }
         } catch {
@@ -230,18 +251,76 @@ final class SocialSyncService {
         do {
             let rows: [RemoteProfile] = try await supabase
                 .from("profiles")
-                .select("id, email, name, username, avatar_url, header_url, season_card")
+                .select("id, email, name, username, avatar_url, header_url")
                 .in("id", values: ids)
                 .execute()
                 .value
             for row in rows {
-                profilesByRemote[row.id] = row
+                var merged = row
+                merged.seasonCard = profilesByRemote[row.id]?.seasonCard
+                profilesByRemote[row.id] = merged
                 _ = localId(forRemote: row.id)
             }
         } catch {
             print("[SocialSync] profile refresh failed: \(error)")
         }
         for id in remoteIds { _ = localId(forRemote: id) }
+    }
+
+    // MARK: Season cards (friend-gated via RPC)
+
+    private nonisolated struct SeasonCardRPCRow: Codable, Sendable {
+        let userId: String
+        let card: String?
+        let tier: String?
+        enum CodingKeys: String, CodingKey {
+            case userId = "user_id"
+            case card, tier
+        }
+    }
+
+    /// Fetch friend-gated season cards + share tiers through the
+    /// `get_season_cards` RPC — the server enforces friendship, blocks,
+    /// and quiet-tier trimming, so a non-friend can never read a card
+    /// no matter what the client asks for.
+    func refreshSeasonCards(remoteIds: [String]) async {
+        let ids = Array(Set(remoteIds))
+        guard !ids.isEmpty else { return }
+        do {
+            let rows: [SeasonCardRPCRow] = try await supabase
+                .rpc("get_season_cards", params: ["target_ids": ids])
+                .execute()
+                .value
+            for row in rows {
+                tiersByRemote[row.userId] = row.tier ?? "full"
+                if var profile = profilesByRemote[row.userId] {
+                    profile.seasonCard = row.card
+                    profilesByRemote[row.userId] = profile
+                }
+            }
+        } catch {
+            print("[SocialSync] season card fetch failed: \(error)")
+        }
+    }
+
+    /// Push my per-friend tier server-side, so THEIR device receives the
+    /// correspondingly trimmed season card — the quiet tier becomes a
+    /// data promise, not just a rendering choice.
+    func setShareTier(forRemote remoteId: String, quiet: Bool) async {
+        guard let myUserId else { return }
+        do {
+            try await supabase
+                .from("share_tiers")
+                .upsert(ShareTierUpsert(
+                    ownerId: myUserId,
+                    friendId: remoteId,
+                    tier: quiet ? "quiet" : "full",
+                    updatedAt: SyncDates.iso(Date())
+                ), onConflict: "owner_id,friend_id")
+                .execute()
+        } catch {
+            print("[SocialSync] share tier push failed: \(error)")
+        }
     }
 
     /// Display name for a remote id ("You" for the signed-in user).
@@ -283,18 +362,20 @@ final class SocialSyncService {
                 return (other, SyncDates.parse(row.createdAt))
             }
             await refreshProfiles(remoteIds: counterparts.map { $0.id })
+            await refreshSeasonCards(remoteIds: counterparts.map { $0.id })
 
             let existingById = Dictionary(store.friends.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             var mapped: [Friend] = []
             for (remote, since) in counterparts {
                 guard let profile = profilesByRemote[remote] else { continue }
                 let lid = localId(forRemote: remote)
+                let tier = tiersByRemote[remote]
                 var friend = existingById[lid] ?? Friend(
                     id: lid,
                     displayName: profile.displayName,
                     initials: profile.initials,
                     accentColorHex: RemoteIDMapper.accentHex(forRemoteId: remote),
-                    sharesWithMe: .full
+                    sharesWithMe: tier == "quiet" ? .quiet : .full
                 )
                 friend.displayName = profile.displayName
                 friend.initials = profile.initials
@@ -308,7 +389,9 @@ final class SocialSyncService {
                 friend.currentSeasonDay = card?.currentDay ?? friend.currentSeasonDay
                 friend.accentColorHex = card?.accentHex ?? RemoteIDMapper.accentHex(forRemoteId: remote)
                 if friend.connectedAt == nil { friend.connectedAt = since }
-                friend.sharesWithMe = .full
+                // The server-resolved tier — what THEY chose to share
+                // with me. Quiet friends arrive with a trimmed card too.
+                friend.sharesWithMe = tier == "quiet" ? .quiet : .full
                 mapped.append(friend)
             }
             mapped.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }

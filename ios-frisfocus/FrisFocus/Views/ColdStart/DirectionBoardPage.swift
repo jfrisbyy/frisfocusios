@@ -157,7 +157,7 @@ struct DirectionBoardContainer: View {
 
     private var hintLine: String {
         viewModel.placedCountCurrent == 0
-            ? "Drag what fits your life into a band"
+            ? "Tap a card to add it — drag to choose its band"
             : "Add more, or continue when it feels right"
     }
 
@@ -338,7 +338,16 @@ struct DirectionBoardPage: View {
                             .draggable(item.id) {
                                 TrayCard(item: item).opacity(0.9)
                             }
-                            .onTapGesture { editingItem = item }
+                            // Tap-to-place: the fast path. One tap lands
+                            // the card in the middle band; dragging stays
+                            // for choosing the exact cost. Tap it again
+                            // in the band to fine-tune or edit.
+                            .onTapGesture {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                    viewModel.place(item.id, into: Self.tapPlacementBand)
+                                }
+                            }
                     }
                 }
             }
@@ -365,12 +374,19 @@ struct DirectionBoardPage: View {
 
     // MARK: Prompt
 
+    /// Where a plain tap lands a tray card — the middle band, the
+    /// most common answer. Drag remains the deliberate placement.
+    static var tapPlacementBand: ColdStartBand {
+        let all = ColdStartBand.allCases
+        return all[all.count / 2]
+    }
+
     private var prompt: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("When do you actually do these?")
                 .font(.serif(22, weight: .semibold))
                 .foregroundStyle(Theme.textCream)
-            Text("Drag what fits your life into a band. What's left behind stays off your board.")
+            Text("Tap a card to add it — or drag it into the band that fits. What's left behind stays off your board.")
                 .font(.serifItalic(14, weight: .regular))
                 .foregroundStyle(Theme.textCream.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)

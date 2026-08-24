@@ -67,6 +67,8 @@ struct HomeView: View {
     @State private var undoMessage: String?
     /// The Recent Activity sheet (likes, comments, cheers on me).
     @State private var showActivity: Bool = false
+    /// The "How FrisFocus moves" gesture-rediscovery sheet.
+    @State private var showHowItMoves: Bool = false
     /// Story tap captured inside the Activity sheet — held while the
     /// sheet dismisses, then presented, so the player never stacks on
     /// top of the sheet.
@@ -154,6 +156,11 @@ struct HomeView: View {
         .fullScreenCover(isPresented: $showSeasonConversation) {
             SeasonSetupFlowView(coldStartContext: store.makeSeasonSetupContext())
                 .environment(store)
+        }
+        .sheet(isPresented: $showHowItMoves) {
+            HowItMovesSheet()
+                .environment(store)
+                .environment(walkthrough)
         }
         .onAppear {
             store.refreshRecurringEvents()
@@ -365,6 +372,12 @@ struct HomeView: View {
                     // a quiet bell otherwise. Tap opens Recent Activity.
                     if store.viewingDay == nil {
                         HStack {
+                            // "?" — every taught-once gesture, findable
+                            // forever. Quiet chrome, matching the bell.
+                            HelpGlanceChip {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                showHowItMoves = true
+                            }
                             Spacer()
                             ActivityGlanceChip(count: store.unseenActivityCount) {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -644,7 +657,7 @@ private struct ActivityGlanceChip: View {
             .shadow(color: .black.opacity(hasNew ? 0.12 : 0.06), radius: 8, y: 3)
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: hasNew)
         .accessibilityLabel(
             hasNew
@@ -655,6 +668,34 @@ private struct ActivityGlanceChip: View {
 
     private var label: String {
         count == 1 ? "1 new for you" : "\(count) new for you"
+    }
+}
+
+// MARK: - Help glance chip
+
+/// The quiet "?" on the home header — opens "How FrisFocus moves".
+/// Mirrors the activity bell's resting chrome so the pair reads as one
+/// family.
+private struct HelpGlanceChip: View {
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: "questionmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                .frame(width: 34, height: 34)
+                .background(
+                    Circle().fill(.ultraThinMaterial)
+                )
+                .overlay(
+                    Circle().strokeBorder(Theme.textPrimary.opacity(0.14), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityLabel("How FrisFocus moves — gestures and the guided tour")
     }
 }
 

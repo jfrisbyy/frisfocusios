@@ -80,6 +80,36 @@ struct SwipeArrowHint: View {
     }
 }
 
+/// A small sun easing down to (and below) a horizon line — the hint
+/// for the tour's closing "tomorrow" beat. Reduced motion holds the
+/// sun resting on the line.
+struct SunsetHint: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var dipped = false
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Circle()
+                .fill(Theme.sunWarm)
+                .frame(width: 22, height: 22)
+                .offset(y: reduceMotion ? 8 : (dipped ? 16 : 2))
+                .animation(
+                    reduceMotion ? nil : .easeInOut(duration: 2.4).repeatForever(autoreverses: true),
+                    value: dipped
+                )
+        }
+        .frame(width: 54, height: 42, alignment: .bottom)
+        .clipped()
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Theme.textCream.opacity(0.55))
+                .frame(height: 1.5)
+        }
+        .onAppear { dipped = true }
+        .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Coachmark card (mechanics tour)
 
 /// The dark coachmark card used by the interactive tour. Sits above a
