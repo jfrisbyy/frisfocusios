@@ -165,7 +165,7 @@ private struct TwoSunsBackdrop: View {
                         startRadius: 4,
                         endRadius: 200
                     )
-                    .frame(width: 380, height: 380)
+                    .frame(width: min(380, width), height: min(380, width))
                     .position(
                         x: width * (0.5 + dx),
                         y: height * (0.9 - 0.12 * p)

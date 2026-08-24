@@ -2,11 +2,15 @@
 //  SeasonCardModels.swift
 //  FrisFocus
 //
-//  The public "season card" — the small, friend-readable summary of a
+//  The "season card" — the small, friend-readable summary of a
 //  person's season life that powers the poster profile pages. The
 //  owner's device builds it from the live Season (+ archived past
-//  seasons) and publishes it to `profiles.season_card` as JSON;
-//  friends decode it straight off the profile row.
+//  seasons) and publishes it to the owner-only `season_cards` table;
+//  friends read it exclusively through the `get_season_cards` definer
+//  RPC, which enforces friendship + blocks and strips the quiet-tier
+//  keys (milestones, intention, pastSeasons, milestonesDone,
+//  milestonesTotal) server-side — those names must stay in sync with
+//  this model's CodingKeys.
 //
 //  Pure data, Codable, no UI dependencies. Everything is optional and
 //  decoded tolerantly so cards written by newer builds still parse.

@@ -149,11 +149,19 @@ struct ProofThreadView: View {
             .environment(moderation)
         }
         .onAppear {
+            // While this thread is on screen, realtime arrivals from this
+            // friend are stamped read the moment they land.
+            message.activeThreadFriendId = friend.id
             Task { await message.markThreadRead(withFriendId: friend.id, myUserId: myUserId) }
             openInitialProofIfNeeded()
         }
         .task { await presence.start(myUserId: myUserId, friendId: friend.id) }
-        .onDisappear { presence.stop() }
+        .onDisappear {
+            if message.activeThreadFriendId == friend.id {
+                message.activeThreadFriendId = nil
+            }
+            presence.stop()
+        }
     }
 
     /// If a tapped push pointed at a specific incoming proof, open it in
@@ -291,7 +299,14 @@ struct ProofThreadView: View {
                             onOpenProof: { openProof(item) },
                             onReplyWithProof: { replyWithProof() },
                             onRetry: { retrySend(item) },
-                            onDiscardFailed: { discardFailed(item) }
+                            onDiscardFailed: { discardFailed(item) },
+                            onUnsend: (item.isMine(myUserId) && !message.isPending(item.id) && !message.isFailed(item.id)) ? {
+                                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                                Task { await message.unsend(item, myUserId: myUserId) }
+                            } : nil,
+                            onReport: item.isMine(myUserId) ? nil : {
+                                reportTarget = ReportTarget(reportedUserId: friend.id, messageId: item.id, subjectName: friend.displayName)
+                            }
                         )
                         .id(item.id)
                         .transition(.asymmetric(
@@ -562,6 +577,11 @@ private struct ProofThreadBubble: View {
     let onReplyWithProof: () -> Void
     var onRetry: () -> Void = {}
     var onDiscardFailed: () -> Void = {}
+    /// Long-press → Unsend, on my own delivered messages only.
+    var onUnsend: (() -> Void)? = nil
+    /// Long-press → Report, on the friend's messages — files against
+    /// this exact message, not just the person.
+    var onReport: (() -> Void)? = nil
 
     private var accent: Color { friend.signatureColor }
 
@@ -646,6 +666,18 @@ private struct ProofThreadBubble: View {
             .opacity(isPending ? 0.7 : 1)
             .animation(.easeOut(duration: 0.2), value: isPending)
             .animation(.easeOut(duration: 0.2), value: isFailed)
+            .contextMenu {
+                if let onUnsend {
+                    Button(role: .destructive, action: onUnsend) {
+                        Label("Unsend", systemImage: "arrow.uturn.backward")
+                    }
+                }
+                if let onReport {
+                    Button(action: onReport) {
+                        Label("Report", systemImage: "flag")
+                    }
+                }
+            }
 
             if !isMine { Spacer(minLength: 48) }
         }

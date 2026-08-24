@@ -883,7 +883,7 @@ struct FriendDetailView: View {
         let themId = pact.proposerId == store.currentUserId ? pact.partnerId : pact.proposerId
         let youToday = store.pactCompletions.contains { $0.pactId == pact.id && $0.userId == store.currentUserId && cal.isDate($0.date, inSameDayAs: today) }
         let themToday = store.pactCompletions.contains { $0.pactId == pact.id && $0.userId == themId && cal.isDate($0.date, inSameDayAs: today) }
-        if youToday && themToday { return "You both showed up today ✓" }
+        if youToday && themToday { return "You both showed up today" }
         let kept = max(store.pactDaysKept(pact: pact, userId: store.currentUserId),
                        store.pactDaysKept(pact: pact, userId: themId))
         return "\(kept) days kept so far"

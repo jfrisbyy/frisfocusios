@@ -116,6 +116,21 @@ struct GoldenHourWallView: View {
             .padding(.top, 14)
 
             ScrollView(.vertical, showsIndicators: false) {
+                if posts.isEmpty {
+                    // The wall before first light — name the moment so an
+                    // empty grid never reads as something broken.
+                    VStack(spacing: 5) {
+                        Text("No light on the wall yet")
+                            .font(.serif(17, weight: .medium))
+                            .foregroundStyle(GoldenTheme.cream)
+                        Text("The first capture opens it.")
+                            .font(.sans(12.5, weight: .regular))
+                            .foregroundStyle(GoldenTheme.cream.opacity(0.65))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 46)
+                    .padding(.bottom, 8)
+                }
                 LazyVGrid(
                     columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                     spacing: 12

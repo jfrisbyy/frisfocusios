@@ -152,10 +152,34 @@ final class DiscoverService {
                 .filter { !hidden.contains($0.id) && mutualCounts[$0.id] == nil }
                 .map { DiscoverSuggestion(profile: $0, mutualCount: 0) }
 
-            suggestions = mutualTier + newestTier
+            var assembled = mutualTier + newestTier
+            // Blocks are asymmetric client-side (a "they blocked me" edge
+            // is invisible by design) — the definer RPC strips those
+            // candidates server-side so neither side ever surfaces.
+            if let visible = await visibleAfterBlocks(assembled.map(\.id)) {
+                assembled = assembled.filter { visible.contains($0.id) }
+            }
+            suggestions = assembled
         } catch {
             // Quiet failure — discovery is an enhancement, never a blocker.
             print("[Discover] load failed: \(error)")
+        }
+    }
+
+    /// The subset of `ids` with no block in either direction, resolved
+    /// server-side. Returns nil on failure (callers fail open — the
+    /// block still holds everywhere it's enforced by RLS).
+    private func visibleAfterBlocks(_ ids: [String]) async -> Set<String>? {
+        guard !ids.isEmpty else { return [] }
+        do {
+            let visible: [String] = try await supabase
+                .rpc("filter_not_blocked", params: ["candidate_ids": ids])
+                .execute()
+                .value
+            return Set(visible)
+        } catch {
+            print("[Discover] block filter failed: \(error)")
+            return nil
         }
     }
 
@@ -218,8 +242,11 @@ final class DiscoverService {
                 .limit(40)
                 .execute()
                 .value
-            nearby = rows
-                .filter { !hidden.contains($0.id) }
+            var visibleRows = rows.filter { !hidden.contains($0.id) }
+            if let visible = await visibleAfterBlocks(visibleRows.map(\.id)) {
+                visibleRows = visibleRows.filter { visible.contains($0.id) }
+            }
+            nearby = visibleRows
                 .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
                 .map { DiscoverSuggestion(profile: $0, mutualCount: 0) }
         } catch {

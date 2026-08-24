@@ -89,7 +89,7 @@ struct SunRingAvatar: View {
         .overlay(alignment: .bottom) {
             if hasStory { baseGlyph }
         }
-        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: clamped)
+        .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.85), value: clamped)
     }
 
     /// The soft warm halo — a radial glow held inside the 114pt

@@ -886,7 +886,7 @@ private struct PactCircleCard: View {
         let today = Date()
         let youToday = store.pactCompletions.contains { $0.pactId == pact.id && $0.userId == store.currentUserId && cal.isDate($0.date, inSameDayAs: today) }
         let themToday = store.pactCompletions.contains { $0.pactId == pact.id && $0.userId == partnerId && cal.isDate($0.date, inSameDayAs: today) }
-        if youToday && themToday { return "You both showed up today ✓" }
+        if youToday && themToday { return "You both showed up today" }
         let kept = max(store.pactDaysKept(pact: pact, userId: store.currentUserId),
                        store.pactDaysKept(pact: pact, userId: partnerId))
         return "\(kept) days kept so far"

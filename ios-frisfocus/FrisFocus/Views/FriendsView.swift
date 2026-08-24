@@ -22,6 +22,7 @@ struct FriendsView: View {
     /// dot, so accepting here clears the alerts everywhere instantly.
     @Environment(FriendGraphService.self) private var service
     @Environment(WalkthroughManager.self) private var walkthrough
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var discover = DiscoverService()
     /// The People-privacy concept lesson, fired once on first visit.
     @State private var lesson: WalkthroughLesson?
@@ -39,9 +40,11 @@ struct FriendsView: View {
 
     /// True once the graph has answered with zero friends — Discover
     /// jumps to the top so the first thing a new user sees is people to
-    /// add, not an empty "Your friends" box.
+    /// add, not an empty "Your friends" box. Keyed to the first settled
+    /// load (not the in-flight flag) so the section order changes at
+    /// most once instead of jumping while the graph resolves.
     private var hasNoFriends: Bool {
-        !service.isLoading && service.friends.isEmpty
+        discoverLoaded && service.friends.isEmpty
     }
 
     var body: some View {
@@ -384,9 +387,11 @@ struct FriendsView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader("YOUR FRIENDS", subtitle: nil)
 
-            if service.isLoading && service.friends.isEmpty {
+            if (service.isLoading || !discoverLoaded) && service.friends.isEmpty {
                 // Shimmer placeholders in the exact shape of the real
-                // rows — the list feels one beat away, never empty.
+                // rows — the list feels one beat away, never empty. Held
+                // until the first load answers so the empty state never
+                // flashes before the graph has actually spoken.
                 VStack(spacing: 10) {
                     ForEach(0..<3, id: \.self) { index in
                         SkeletonPersonRow()
@@ -541,7 +546,7 @@ struct FriendsView: View {
         // unseen dot on the home avatar and quick-card tile.
         service.markRequestsSeen()
         await discover.refresh(myUserId: myId, graph: service)
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
             discoverLoaded = true
         }
     }

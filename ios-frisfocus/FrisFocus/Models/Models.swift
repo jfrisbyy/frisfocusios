@@ -143,10 +143,14 @@ struct ScoringConfig: Codable, Equatable {
         case .flat:
             return flatValue
         case .tiered:
-            guard let q = quantity else { return 0 }
+            // Logging zero of anything earns nothing — even when a tier
+            // sits at threshold 0.
+            guard let q = quantity, q > 0 else { return 0 }
             return tiers.filter { q >= $0.threshold }.map(\.points).max() ?? 0
         case .quantity:
-            guard let q = quantity, q >= baseThreshold else { return 0 }
+            // Same rule: a 0-amount log never pays out, including when
+            // `baseThreshold` is 0 ("any amount counts" tasks).
+            guard let q = quantity, q > 0, q >= baseThreshold else { return 0 }
             let size = unitSize <= 0 ? 1 : unitSize
             let extra = Int(((q - baseThreshold) / size).rounded(.down))
             return basePoints + extra * pointsPerUnit

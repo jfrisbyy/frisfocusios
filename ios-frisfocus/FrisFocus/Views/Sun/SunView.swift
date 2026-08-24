@@ -66,6 +66,15 @@ struct SunView: View {
     @State private var isBreathing = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// VoiceOver readout — the sun IS the score made visible, so say
+    /// the score plainly. Private to the owner; never a friend surface.
+    private var sunAccessibilityValue: String {
+        guard goal > 0 else { return "\(score) points" }
+        return score >= goal
+            ? "Risen. \(score) points — today's goal of \(goal) reached"
+            : "\(score) of \(goal) points toward today's goal"
+    }
+
     var body: some View {
         let haloBreath: CGFloat = isBreathing ? 1.035 : 1.0
         let coreColor = Color.lerpHSL(palette.sunCore, .white, t: whiteMix)
@@ -167,6 +176,9 @@ struct SunView: View {
         .frame(width: frameSize, height: frameSize)
         .animation(.easeOut(duration: 0.6), value: progress)
         .animation(.easeOut(duration: 0.6), value: scale)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Today's sun")
+        .accessibilityValue(sunAccessibilityValue)
         .onAppear {
             guard !reduceMotion else { return }
             // ~6 s full breath cycle for the halo.

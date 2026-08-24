@@ -314,7 +314,7 @@ private struct PersonTodayRow: View {
             return "In their season, quietly"
         }
         if goalReached {
-            return "Reached their goal ✓"
+            return "Reached their goal"
         }
         switch tier {
         case .full:

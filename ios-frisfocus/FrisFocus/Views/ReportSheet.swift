@@ -21,6 +21,9 @@ struct ReportTarget: Identifiable {
     let subjectName: String
     var storyPostId: UUID? = nil
     var storyCommentId: UUID? = nil
+    /// Optional content snapshot (e.g. the exact cheer text) carried
+    /// into the report so review has the content in hand.
+    var contextDetails: String? = nil
 }
 
 struct ReportSheet: View {
@@ -33,6 +36,10 @@ struct ReportSheet: View {
     let subjectName: String
     var storyPostId: UUID? = nil
     var storyCommentId: UUID? = nil
+    /// Optional content snapshot appended to whatever the reporter
+    /// writes — used by surfaces (like cheers) whose content has no
+    /// dedicated column on the reports table.
+    var contextDetails: String? = nil
 
     @State private var reason: String?
     @State private var details: String = ""
@@ -196,13 +203,17 @@ struct ReportSheet: View {
         guard let reason, let myId = auth.user?.id else { return }
         isSubmitting = true
         defer { isSubmitting = false }
+        let note = details.trimmingCharacters(in: .whitespacesAndNewlines)
+        let merged = [contextDetails, note.isEmpty ? nil : note]
+            .compactMap { $0 }
+            .joined(separator: "\n\n")
         let ok = await moderation.report(
             reportedUserId: reportedUserId,
             messageId: messageId,
             storyPostId: storyPostId,
             storyCommentId: storyCommentId,
             reason: reason,
-            details: details,
+            details: merged,
             myUserId: myId
         )
         if ok {

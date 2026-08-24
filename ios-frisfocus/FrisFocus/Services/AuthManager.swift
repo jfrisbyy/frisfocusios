@@ -99,9 +99,17 @@ class AuthManager {
         #endif
     }
 
-    /// Decode the JWT payload to extract user info and check expiration.
-    /// We trust the token we stored locally — signature was verified by Rork when issued.
-    private func userFromToken(_ token: String) -> User? {
+    private struct JWTPayload: Codable {
+        let sub: String
+        let email: String?
+        let name: String?
+        let picture: String?
+        let exp: TimeInterval?
+    }
+
+    /// Decode a JWT's payload segment. We trust the token we stored
+    /// locally — signature was verified by Rork when issued.
+    private func decodePayload(_ token: String) -> JWTPayload? {
         let parts = token.split(separator: ".")
         guard parts.count == 3 else { return nil }
 
@@ -111,16 +119,12 @@ class AuthManager {
         while base64.count % 4 != 0 { base64.append("=") }
 
         guard let data = Data(base64Encoded: base64) else { return nil }
+        return try? JSONDecoder().decode(JWTPayload.self, from: data)
+    }
 
-        struct JWTPayload: Codable {
-            let sub: String
-            let email: String?
-            let name: String?
-            let picture: String?
-            let exp: TimeInterval?
-        }
-
-        guard let payload = try? JSONDecoder().decode(JWTPayload.self, from: data) else { return nil }
+    /// Decode the JWT payload to extract user info and check expiration.
+    private func userFromToken(_ token: String) -> User? {
+        guard let payload = decodePayload(token) else { return nil }
 
         if let exp = payload.exp, Date(timeIntervalSince1970: exp) < Date() {
             return nil
@@ -419,6 +423,25 @@ class AuthManager {
         guard user == nil, !isLoading, !isSigningIn, hasRestorableSession else { return }
         print("[AuthManager] retryRestoreIfNeeded: tokens present, retrying silent restore")
         await checkAuth()
+    }
+
+    /// Proactively refresh the access token when it's inside the expiry
+    /// window — called on every foreground so a session that stays open
+    /// for hours never starts silently 401ing mid-use. Cheap no-op when
+    /// the token is still comfortably fresh.
+    @MainActor
+    func refreshSessionIfExpiringSoon() async {
+        guard user != nil, !isSigningIn else { return }
+        guard let token = KeychainHelper.get("access_token") else {
+            // Signed in but the access token vanished — restore it now.
+            await refreshToken()
+            return
+        }
+        guard let exp = decodePayload(token)?.exp else { return }
+        let remaining = Date(timeIntervalSince1970: exp).timeIntervalSinceNow
+        guard remaining < 15 * 60 else { return }
+        print("[AuthManager] access token expires in \(Int(remaining))s — proactive refresh")
+        await refreshToken()
     }
 
     @MainActor

@@ -85,7 +85,7 @@ struct SetupNameView: View {
                             .padding(.top, 10)
 
                         if viewModel.suggestedName != nil {
-                            Text("✦ suggested · tap to make it yours")
+                            Text("\(Image(systemName: "sparkle")) suggested · tap to make it yours")
                                 .font(.sans(11, weight: .regular))
                                 .tracking(0.6)
                                 .foregroundStyle(Theme.textCream.opacity(0.55))

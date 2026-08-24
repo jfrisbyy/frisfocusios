@@ -348,6 +348,9 @@ struct DirectionBoardPage: View {
                                     viewModel.place(item.id, into: Self.tapPlacementBand)
                                 }
                             }
+                            .accessibilityLabel(item.label)
+                            .accessibilityHint("Adds it to \(Self.tapPlacementBand.title)")
+                            .accessibilityAddTraits(.isButton)
                     }
                 }
             }
@@ -500,6 +503,9 @@ private struct BandView: View {
                                     onDropOnCard(id, item.id)
                                     return true
                                 }
+                                .accessibilityLabel(item.label)
+                                .accessibilityHint("In \(band.title). Double tap to edit")
+                                .accessibilityAddTraits(.isButton)
                         }
                     }
                 }
@@ -524,6 +530,8 @@ private struct BandView: View {
             onDropOnBand(id)
             return true
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(band.title). \(items.isEmpty ? "Empty" : "\(items.count) placed")")
     }
 }
 

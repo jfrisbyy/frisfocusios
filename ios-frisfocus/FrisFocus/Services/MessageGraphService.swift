@@ -156,10 +156,88 @@ struct DirectConversationSummary: Identifiable {
 
 /// Everything needed to retry a send that failed. Kept in memory keyed
 /// by the failed message's local id so the thread can offer an inline
-/// "Tap to retry" instead of silently dropping the message.
+/// "Tap to retry" instead of silently dropping the message. `uploadedPath`
+/// on a proof records that the media bytes already landed in storage —
+/// a retry reuses that object instead of re-uploading to a fresh path
+/// (which would orphan the first one).
 enum FailedSendPayload {
-    case note(recipientId: String, text: String)
-    case proof(recipientId: String, data: Data, mediaKind: ProofMediaKind, duration: Double?, caption: String?)
+    case note(recipientId: String, text: String, storyPostId: UUID?)
+    case proof(recipientId: String, data: Data, mediaKind: ProofMediaKind, duration: Double?, caption: String?, uploadedPath: String?)
+}
+
+/// Disk mirror of a failed send so it survives an app kill — restored
+/// into the thread ("Not sent · Tap to retry") on the next launch
+/// instead of silently evaporating. Media bytes live in a sibling file.
+nonisolated struct PersistedFailedSend: Codable {
+    let id: UUID
+    let userId: String
+    let recipientId: String
+    let kind: String              // "note" | "proof"
+    let text: String?             // note body or proof caption
+    let mediaKind: String?
+    let duration: Double?
+    let uploadedPath: String?
+    let createdAt: Date
+    let storyPostId: UUID?
+}
+
+/// Tiny file store for failed sends: `<id>.json` describes the send,
+/// `<id>.media` holds proof bytes. Pruned to the newest few and to a
+/// one-week window so it can never grow unbounded.
+nonisolated enum FailedSendStore {
+    private static let maxKept = 10
+    private static let maxAge: TimeInterval = 7 * 24 * 3600
+
+    private static var directory: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let dir = base.appendingPathComponent("FailedSends", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func persist(_ record: PersistedFailedSend, mediaData: Data?) {
+        guard let dir = directory else { return }
+        if let data = try? JSONEncoder().encode(record) {
+            try? data.write(to: dir.appendingPathComponent("\(record.id.uuidString).json"), options: .atomic)
+        }
+        if let mediaData {
+            try? mediaData.write(to: dir.appendingPathComponent("\(record.id.uuidString).media"), options: .atomic)
+        }
+    }
+
+    static func remove(_ id: UUID) {
+        guard let dir = directory else { return }
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(id.uuidString).json"))
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(id.uuidString).media"))
+    }
+
+    /// Every persisted failed send for this account, newest first,
+    /// pruning anything expired or beyond the cap as a side effect.
+    static func loadAll(userId: String) -> [(record: PersistedFailedSend, media: Data?)] {
+        guard let dir = directory,
+              let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
+        var records: [PersistedFailedSend] = []
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file),
+                  let record = try? JSONDecoder().decode(PersistedFailedSend.self, from: data) else { continue }
+            if record.createdAt < Date().addingTimeInterval(-maxAge) {
+                remove(record.id)
+                continue
+            }
+            records.append(record)
+        }
+        records.sort { $0.createdAt > $1.createdAt }
+        if records.count > maxKept {
+            for stale in records[maxKept...] { remove(stale.id) }
+            records = Array(records.prefix(maxKept))
+        }
+        return records
+            .filter { $0.userId == userId }
+            .map { record in
+                let mediaURL = dir.appendingPathComponent("\(record.id.uuidString).media")
+                return (record, try? Data(contentsOf: mediaURL))
+            }
+    }
 }
 
 // MARK: - Service
@@ -220,6 +298,16 @@ final class MessageGraphService {
     /// realtime) so a hidden proof can never resurface in a thread.
     /// Persistence lives with `ModerationService`.
     @ObservationIgnored private var hiddenIds: Set<UUID> = []
+
+    /// The friend whose 1:1 thread is on screen right now. Incoming
+    /// realtime messages from them are stamped read immediately, so an
+    /// open conversation never accrues phantom unread state that only
+    /// clears on reopen.
+    @ObservationIgnored var activeThreadFriendId: String?
+
+    /// True once persisted failed sends have been restored this session
+    /// — restoration runs once, on the first `load`.
+    @ObservationIgnored private var restoredFailedSends = false
 
     /// The column list every row fetch shares.
     private static let rowColumns = "id, sender_id, recipient_id, kind, body, media_path, media_kind, media_duration, created_at, read_at, watched_at, story_post_id"
@@ -302,6 +390,64 @@ final class MessageGraphService {
         } catch {
             fail("Couldn't load your messages.", error)
         }
+        await restoreFailedSendsIfNeeded(myUserId: myUserId)
+    }
+
+    /// Bring failed sends persisted by a previous session back into the
+    /// thread — an app kill must never silently drop a message the
+    /// person believes went out.
+    private func restoreFailedSendsIfNeeded(myUserId: String) async {
+        guard !restoredFailedSends else { return }
+        restoredFailedSends = true
+        let persisted = await Task.detached(priority: .utility) {
+            FailedSendStore.loadAll(userId: myUserId)
+        }.value
+        guard !persisted.isEmpty else { return }
+
+        for (record, media) in persisted where !messages.contains(where: { $0.id == record.id }) {
+            let isProof = record.kind == "proof"
+            if isProof {
+                guard let media, let kind = record.mediaKind.flatMap({ ProofMediaKind(rawValue: $0) }) else {
+                    FailedSendStore.remove(record.id)
+                    continue
+                }
+                failedPayloads[record.id] = .proof(
+                    recipientId: record.recipientId,
+                    data: media,
+                    mediaKind: kind,
+                    duration: record.duration,
+                    caption: record.text,
+                    uploadedPath: record.uploadedPath
+                )
+            } else {
+                guard let text = record.text else {
+                    FailedSendStore.remove(record.id)
+                    continue
+                }
+                failedPayloads[record.id] = .note(recipientId: record.recipientId, text: text, storyPostId: record.storyPostId)
+            }
+            failedMessageIds.insert(record.id)
+            messages.append(DirectMessage(
+                id: record.id,
+                senderId: myUserId,
+                recipientId: record.recipientId,
+                kind: isProof ? .proof : .note,
+                body: record.text,
+                mediaPath: nil,
+                mediaKind: record.mediaKind.flatMap { ProofMediaKind(rawValue: $0) },
+                mediaDuration: record.duration,
+                createdAt: record.createdAt,
+                readAt: nil,
+                watchedAt: nil,
+                storyPostId: record.storyPostId
+            ))
+            // Resolve the counterpart if this thread wasn't in the window.
+            if profilesById[record.recipientId] == nil,
+               let fetched = try? await fetchProfiles(ids: [record.recipientId]) {
+                profilesById.merge(fetched) { current, _ in current }
+            }
+        }
+        messages.sort { $0.createdAt < $1.createdAt }
     }
 
     // MARK: Older history (per-thread pages)
@@ -444,7 +590,7 @@ final class MessageGraphService {
             PushService.send(to: recipientId, kind: .note, preview: trimmed, messageId: created.id.uuidString)
         } catch {
             print("[MessageGraph] Note send failed: \(error)")
-            markFailed(tempId: temp.id, payload: .note(recipientId: recipientId, text: trimmed))
+            markFailed(temp, payload: .note(recipientId: recipientId, text: trimmed, storyPostId: storyPostId), myUserId: myUserId)
         }
     }
 
@@ -457,7 +603,8 @@ final class MessageGraphService {
         mediaKind: ProofMediaKind,
         durationSeconds: Double?,
         caption: String?,
-        myUserId: String
+        myUserId: String,
+        preUploadedPath: String? = nil
     ) async {
         isWorking = true
         defer { isWorking = false }
@@ -471,7 +618,10 @@ final class MessageGraphService {
             return
         }
 
-        let path = Self.mediaPath(myUserId: myUserId, recipientId: recipientId, kind: mediaKind)
+        // A retry whose first attempt already landed the bytes reuses
+        // that storage object — no re-upload, no orphaned first copy.
+        let path = preUploadedPath ?? Self.mediaPath(myUserId: myUserId, recipientId: recipientId, kind: mediaKind)
+        var uploadCompleted = preUploadedPath != nil
         let contentType = mediaKind == .video ? "video/mp4" : "image/jpeg"
         let trimmedCaption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -494,21 +644,24 @@ final class MessageGraphService {
         appendOptimistic(temp)
 
         do {
-            // Direct upload with real byte-level progress for the pill.
-            uploadProgress = 0
-            try await StorageUploadClient.upload(
-                data: data,
-                bucket: "proofs",
-                path: path,
-                contentType: contentType
-            ) { [weak self] progress in
-                Task { @MainActor in self?.uploadProgress = progress }
-            }
-            uploadProgress = nil
+            if !uploadCompleted {
+                // Direct upload with real byte-level progress for the pill.
+                uploadProgress = 0
+                try await StorageUploadClient.upload(
+                    data: data,
+                    bucket: "proofs",
+                    path: path,
+                    contentType: contentType
+                ) { [weak self] progress in
+                    Task { @MainActor in self?.uploadProgress = progress }
+                }
+                uploadProgress = nil
+                uploadCompleted = true
 
-            // Seed the local media cache with the bytes we just sent so
-            // "watch again" replays instantly and for free.
-            ProofMediaCache.store(data, forMediaPath: path, kind: mediaKind)
+                // Seed the local media cache with the bytes we just sent so
+                // "watch again" replays instantly and for free.
+                ProofMediaCache.store(data, forMediaPath: path, kind: mediaKind)
+            }
 
             let created: DirectMessageRow = try await supabase
                 .from("direct_messages")
@@ -530,13 +683,14 @@ final class MessageGraphService {
         } catch {
             print("[MessageGraph] Proof send failed: \(error)")
             uploadProgress = nil
-            markFailed(tempId: temp.id, payload: .proof(
+            markFailed(temp, payload: .proof(
                 recipientId: recipientId,
                 data: data,
                 mediaKind: mediaKind,
                 duration: durationSeconds,
-                caption: trimmedCaption
-            ))
+                caption: trimmedCaption,
+                uploadedPath: uploadCompleted ? path : nil
+            ), myUserId: myUserId)
         }
     }
 
@@ -580,6 +734,8 @@ final class MessageGraphService {
         pendingMessageIds.remove(tempId)
         messages.removeAll { $0.id == tempId }
         appendIfNew(row)
+        // Safety: a confirmed send can never linger on disk as failed.
+        Task.detached(priority: .utility) { FailedSendStore.remove(tempId) }
     }
 
     private func removeOptimistic(tempId: UUID) {
@@ -588,11 +744,34 @@ final class MessageGraphService {
     }
 
     /// Flip an optimistic message into the failed state — it stays in
-    /// the thread, rendered with an inline "Tap to retry".
-    private func markFailed(tempId: UUID, payload: FailedSendPayload) {
-        pendingMessageIds.remove(tempId)
-        failedMessageIds.insert(tempId)
-        failedPayloads[tempId] = payload
+    /// the thread, rendered with an inline "Tap to retry" — and mirror
+    /// it to disk so an app kill can't silently drop it.
+    private func markFailed(_ temp: DirectMessage, payload: FailedSendPayload, myUserId: String) {
+        pendingMessageIds.remove(temp.id)
+        failedMessageIds.insert(temp.id)
+        failedPayloads[temp.id] = payload
+
+        let record: PersistedFailedSend
+        let mediaData: Data?
+        switch payload {
+        case .note(let recipientId, let text, let storyPostId):
+            record = PersistedFailedSend(
+                id: temp.id, userId: myUserId, recipientId: recipientId,
+                kind: "note", text: text, mediaKind: nil, duration: nil,
+                uploadedPath: nil, createdAt: temp.createdAt, storyPostId: storyPostId
+            )
+            mediaData = nil
+        case .proof(let recipientId, let data, let mediaKind, let duration, let caption, let uploadedPath):
+            record = PersistedFailedSend(
+                id: temp.id, userId: myUserId, recipientId: recipientId,
+                kind: "proof", text: caption, mediaKind: mediaKind.rawValue, duration: duration,
+                uploadedPath: uploadedPath, createdAt: temp.createdAt, storyPostId: nil
+            )
+            mediaData = data
+        }
+        Task.detached(priority: .utility) {
+            FailedSendStore.persist(record, mediaData: mediaData)
+        }
     }
 
     /// Re-attempt a failed send. The failed placeholder is removed and a
@@ -602,17 +781,19 @@ final class MessageGraphService {
         failedPayloads[id] = nil
         failedMessageIds.remove(id)
         messages.removeAll { $0.id == id }
+        Task.detached(priority: .utility) { FailedSendStore.remove(id) }
         switch payload {
-        case .note(let recipientId, let text):
-            await sendNote(to: recipientId, text: text, myUserId: myUserId)
-        case .proof(let recipientId, let data, let mediaKind, let duration, let caption):
+        case .note(let recipientId, let text, let storyPostId):
+            await sendNote(to: recipientId, text: text, myUserId: myUserId, storyPostId: storyPostId)
+        case .proof(let recipientId, let data, let mediaKind, let duration, let caption, let uploadedPath):
             await sendProof(
                 to: recipientId,
                 data: data,
                 mediaKind: mediaKind,
                 durationSeconds: duration,
                 caption: caption,
-                myUserId: myUserId
+                myUserId: myUserId,
+                preUploadedPath: uploadedPath
             )
         }
     }
@@ -622,6 +803,34 @@ final class MessageGraphService {
         failedPayloads[id] = nil
         failedMessageIds.remove(id)
         messages.removeAll { $0.id == id }
+        Task.detached(priority: .utility) { FailedSendStore.remove(id) }
+    }
+
+    /// Sender-side unsend: removes my message for both of us (RLS lets
+    /// a sender delete their own rows) and best-effort clears the media
+    /// object so nothing orphans in storage. Optimistic, restored on
+    /// failure.
+    func unsend(_ item: DirectMessage, myUserId: String) async {
+        guard item.senderId == myUserId,
+              !pendingMessageIds.contains(item.id),
+              !failedMessageIds.contains(item.id) else { return }
+        messages.removeAll { $0.id == item.id }
+        do {
+            try await supabase
+                .from("direct_messages")
+                .delete()
+                .eq("id", value: item.id.uuidString)
+                .eq("sender_id", value: myUserId)
+                .execute()
+            if let path = item.mediaPath {
+                _ = try? await supabase.storage.from("proofs").remove(paths: [path])
+            }
+        } catch {
+            // The delete didn't land — put the message back.
+            messages.append(item)
+            messages.sort { $0.createdAt < $1.createdAt }
+            fail("Couldn't unsend that.", error)
+        }
     }
 
     // MARK: Read / watched
@@ -772,6 +981,12 @@ final class MessageGraphService {
             }
             appendIfNew(row)
             syncBadge(myUserId: myUserId)
+            // The thread with this sender is open on screen — stamp the
+            // arrival read right now so the badge never lags an open
+            // conversation until reopen.
+            if row.recipientId == myUserId, row.senderId == activeThreadFriendId {
+                await markThreadRead(withFriendId: row.senderId, myUserId: myUserId)
+            }
             // Warm the cache for an incoming proof so the tap that
             // follows the banner opens instantly.
             if row.senderId != myUserId,

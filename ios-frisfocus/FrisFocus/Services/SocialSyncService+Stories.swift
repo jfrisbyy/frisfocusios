@@ -259,6 +259,18 @@ extension SocialSyncService {
             }
             store.storyViewerIds = viewers
 
+            // Rehydrate my own viewed-state from the server — a reinstall
+            // must not reset every story ring to unseen. Merge, never
+            // replace, so a locally-marked view that hasn't written
+            // through yet survives the refresh.
+            if let uid = myUserId {
+                let seenByMe = Set(viewRows.filter { $0.viewerId == uid }.map(\.postId))
+                let missing = seenByMe.subtracting(store.viewedStoryPostIds)
+                if !missing.isEmpty {
+                    store.viewedStoryPostIds.formUnion(missing)
+                }
+            }
+
             ensureMediaAssets(for: rows)
             store.persistAll()
         } catch {

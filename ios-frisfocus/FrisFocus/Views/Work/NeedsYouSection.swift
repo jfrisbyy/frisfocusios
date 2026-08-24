@@ -15,6 +15,7 @@ struct NeedsYouSection: View {
     @Environment(Store.self) private var store
     @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The "ask for a read" concept lesson, fired once when a read first
     /// becomes available.
     @State private var lesson: WalkthroughLesson?
@@ -39,7 +40,7 @@ struct NeedsYouSection: View {
                 Spacer().frame(height: 28)
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.rankedNeedsYou)
+        .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.85), value: store.rankedNeedsYou)
         .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0) }
         .onChange(of: store.canShowReadPrompt) { _, can in
             fireReadLessonIfReady(available: can)

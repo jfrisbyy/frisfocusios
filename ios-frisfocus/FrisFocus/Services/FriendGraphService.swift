@@ -342,6 +342,15 @@ final class FriendGraphService {
     }
 
     func sendRequest(to profile: RemoteProfile, myUserId: String) async {
+        // If they already asked *me*, two people are reaching for each
+        // other — that's just a friendship. Accept their request instead
+        // of creating a mirrored pending row that would ghost in both
+        // inboxes.
+        if let inverse = incoming.first(where: { $0.profile.id == profile.id }) {
+            await accept(inverse, myUserId: myUserId)
+            searchResults.removeAll { $0.id == profile.id }
+            return
+        }
         do {
             // Upsert so re-adding someone who previously declined simply
             // resets the request to pending instead of erroring on the
@@ -357,8 +366,24 @@ final class FriendGraphService {
             searchResults.removeAll { $0.id == profile.id }
             await load(myUserId: myUserId)
         } catch {
-            fail("Couldn't send the request.", error)
+            if isPermissionDenied(error) {
+                // Almost always: they've blocked this account. Say it
+                // neutrally — never confirm a block to the requester.
+                fail("They aren't taking requests right now.", error)
+            } else {
+                fail("Couldn't send the request.", error)
+            }
         }
+    }
+
+    /// True when the server refused the write for permission reasons
+    /// (RLS) rather than a transport failure.
+    private func isPermissionDenied(_ error: Error) -> Bool {
+        if let pg = error as? PostgrestError {
+            if pg.code == "42501" { return true }
+            return pg.message.localizedCaseInsensitiveContains("row-level security")
+        }
+        return false
     }
 
     func accept(_ request: PendingFriendRequest, myUserId: String) async {

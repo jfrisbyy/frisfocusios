@@ -103,6 +103,10 @@ struct CachedImage<Content: View, Placeholder: View>: View {
     @ViewBuilder let placeholder: () -> Placeholder
 
     @State private var loaded: UIImage?
+    /// True when the last fetch came back empty — the placeholder gains
+    /// a quiet retry glyph so "failed" never masquerades as "loading".
+    @State private var failed = false
+    @State private var attempt = 0
 
     private var resolved: UIImage? {
         if let loaded { return loaded }
@@ -116,11 +120,32 @@ struct CachedImage<Content: View, Placeholder: View>: View {
                 content(Image(uiImage: image))
             } else {
                 placeholder()
+                    .overlay {
+                        if failed {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .shadow(color: .black.opacity(0.35), radius: 2)
+                                .allowsHitTesting(false)
+                        }
+                    }
             }
         }
-        .task(id: url) {
+        .task(id: "\(url?.absoluteString ?? "")#\(attempt)") {
             guard let url, resolved == nil else { return }
-            loaded = await ImageCache.image(for: url)
+            let image = await ImageCache.image(for: url)
+            loaded = image
+            failed = (image == nil)
         }
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                // A tap on a failed image re-attempts — simultaneous, so
+                // the row's own tap still fires; a no-op unless failed.
+                if failed {
+                    failed = false
+                    attempt += 1
+                }
+            }
+        )
     }
 }

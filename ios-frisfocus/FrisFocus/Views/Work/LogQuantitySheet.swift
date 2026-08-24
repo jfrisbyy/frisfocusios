@@ -33,8 +33,18 @@ struct LogQuantitySheet: View {
         _amount = State(initialValue: initial)
     }
 
+    /// Hard ceiling on the dial — keeps a held-down plus button (or a
+    /// wild unit size) from walking the amount into absurd territory.
+    private let maxAmount: Double = 100_000
+
     private var earned: Int {
         task.scoring.points(forQuantity: amount, flatValue: task.pointValue)
+    }
+
+    /// True when the dialed amount is real effort that lands below the
+    /// first paying tier — the log is honest but earns 0.
+    private var isSubTier: Bool {
+        amount > 0 && earned == 0
     }
 
     private var step: Double {
@@ -121,7 +131,7 @@ struct LogQuantitySheet: View {
             .frame(minWidth: 120)
 
             roundButton(systemName: "plus") {
-                amount += step
+                amount = min(maxAmount, amount + step)
             }
         }
     }
@@ -153,11 +163,21 @@ struct LogQuantitySheet: View {
                 .font(.sans(12, weight: .medium))
                 .tracking(1)
                 .foregroundStyle(Theme.textPrimary.opacity(0.5))
+            if isSubTier {
+                // Say it before they commit — the log still counts as
+                // showing up, it just sits below the first paying level.
+                Text("Below your first level — this logs 0 points")
+                    .font(.sans(11.5, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                    .padding(.top, 4)
+                    .transition(.opacity)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
         .background(Theme.paperCream)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .animation(.easeInOut(duration: 0.2), value: isSubTier)
     }
 
     private var tierLadder: some View {
@@ -206,10 +226,12 @@ struct LogQuantitySheet: View {
                 .foregroundStyle(Theme.warmWheat)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
-                .background(Theme.alertGreen)
+                .background(Theme.alertGreen.opacity(amount > 0 ? 1 : 0.45))
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
+        // Zero of anything isn't a log — dial in an amount first.
+        .disabled(amount <= 0)
         .padding(.horizontal, 24)
         .padding(.bottom, 8)
     }

@@ -19,6 +19,7 @@ import UIKit
 
 struct CheerHistoryView: View {
     @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
 
     private enum Filter: String, CaseIterable {
@@ -33,6 +34,7 @@ struct CheerHistoryView: View {
     @State private var reachedEnd: Bool = false
     @State private var expandedCheerId: UUID?
     @State private var replyTarget: Friend?
+    @State private var reportTarget: ReportTarget?
 
     private static let pageSize = 60
 
@@ -121,6 +123,14 @@ struct CheerHistoryView: View {
         .sheet(item: $replyTarget) { friend in
             CheerComposerView(friend: friend)
                 .environment(store)
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportSheet(
+                reportedUserId: target.reportedUserId,
+                messageId: nil,
+                subjectName: target.subjectName,
+                contextDetails: target.contextDetails
+            )
         }
         .task { await loadOlder() }
         .animation(.spring(response: 0.35, dampingFraction: 0.82), value: expandedCheerId)
@@ -279,6 +289,25 @@ struct CheerHistoryView: View {
         )
         .accessibilityLabel("Cheer from \(cheer.fromName): \(cheer.message)")
         .accessibilityHint("Tap to react or cheer back")
+        .contextMenu {
+            Button {
+                reportCheer(cheer)
+            } label: {
+                Label("Report", systemImage: "flag")
+            }
+        }
+    }
+
+    /// File a report against a cheer's sender, carrying the exact
+    /// message text so review has the content in hand.
+    private func reportCheer(_ cheer: Cheer) {
+        guard let remote = socialSync.remoteId(forLocal: cheer.fromFriendId) else { return }
+        reportTarget = ReportTarget(
+            reportedUserId: remote,
+            messageId: nil,
+            subjectName: cheer.fromName,
+            contextDetails: "Reported cheer: “\(cheer.message)”"
+        )
     }
 
     private func sentRow(_ cheer: Cheer) -> some View {

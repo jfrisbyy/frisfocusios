@@ -411,6 +411,13 @@ struct MyProfileView: View {
 
                 if !categorySections.isEmpty {
                     MirrorTodayBoard(sections: categorySections, showsRows: previewTier == .full)
+                } else {
+                    // Day-1 teaching instead of a silent gap — say what
+                    // will live here once the plan has shape.
+                    Text("As tasks land on your plan, friends see its areas here — never the details.")
+                        .font(.serifItalic(13))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
                 quietNote
@@ -489,6 +496,14 @@ struct MyProfileView: View {
                         accent: accent,
                         seasonStart: store.currentSeason.startDate
                     )
+                }
+            } else if previewTier != .quiet {
+                // Teach the empty section rather than hiding it.
+                MirrorSectionCard(label: "THE SEASON’S DESTINATIONS") {
+                    Text("Milestones you set chart here as destinations.")
+                        .font(.serifItalic(13))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 

@@ -159,25 +159,23 @@ struct ContentView: View {
                             pendingInvite = InviteTarget(id: storedInvite)
                         }
                     }
-                    // Messaging is app-wide: load the recent window and
-                    // subscribe to realtime once, so unread badges stay
-                    // live on every screen — not just inside Circles.
-                    await messageGraph.load(myUserId: myId)
+                    // Independent service loads run concurrently — the
+                    // app reaches first interactivity in one round-trip
+                    // instead of six stacked ones. Realtime subscriptions
+                    // attach right after each load lands.
+                    async let messagesLoad: Void = messageGraph.load(myUserId: myId)
+                    async let friendsLoad: Void = friendGraph.load(myUserId: myId)
+                    async let goldenLoad: Void = goldenHour.load(myUserId: myId)
+                    async let profileLoad: Void = profileStore.load(myUserId: myId)
+                    async let blocksLoad: Void = moderation.loadBlocks(myUserId: myId)
+                    _ = await (messagesLoad, friendsLoad, goldenLoad, profileLoad, blocksLoad)
                     messageGraph.startRealtime(myUserId: myId)
-                    // The friend graph is app-wide too: live requests and
-                    // accepts raise in-app banners and the avatar dot from
-                    // anywhere in the app.
-                    await friendGraph.load(myUserId: myId)
                     friendGraph.startRealtime(myUserId: myId)
-                    // Golden Hour: settings + today's moment + synchronized
-                    // local notifications, live across the whole app.
-                    await goldenHour.load(myUserId: myId)
                     goldenHour.startRealtime(myUserId: myId)
-                    await profileStore.load(myUserId: myId)
-                    await moderation.loadBlocks(myUserId: myId)
                     // The full social mirror: friends, stories, cheers,
                     // pacts, circles, and grove presence — synced into
-                    // the Store and kept live over realtime.
+                    // the Store and kept live over realtime. Runs after
+                    // blocks so hidden/blocked content filters on ingest.
                     await socialSync.start(myUserId: myId, store: store)
                     // Private journal sync: notes, folders, tags, and
                     // their media follow the account — offline-first.
@@ -185,7 +183,10 @@ struct ContentView: View {
                     // Private season sync: season, tasks, score history,
                     // and milestones follow the account too.
                     await seasonSync.start(myUserId: myId, store: store)
-                    await notifications.requestAuthorizationIfNeeded()
+                    // The OS notification prompt waits until the person
+                    // has actually landed on their home — never over the
+                    // claim-your-name screen mid-seam.
+                    await requestNotificationPermissionWhenSettled()
                     // Esengo link: refresh entitlements + silently credit
                     // any outcomes Cadence recorded while we were away.
                     await cadence.refresh(myUserId: myId)
@@ -232,6 +233,27 @@ struct ContentView: View {
             ) { _ in
                 store.performDayRolloverIfNeeded()
             }
+            .onChange(of: store.accountSeamActive) { _, seamActive in
+                // The seam just finished — the person is landing on their
+                // live home. Now is the honest moment for the one OS
+                // prompt we can never re-ask.
+                if !seamActive, auth.user != nil {
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        await requestNotificationPermissionWhenSettled()
+                    }
+                }
+            }
+            .onChange(of: store.needsFirstRunIntro) { _, needsIntro in
+                // The welcome-screen sign-in path drops the intro without
+                // ever raising the seam — catch that landing too.
+                if !needsIntro, auth.user != nil {
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        await requestNotificationPermissionWhenSettled()
+                    }
+                }
+            }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     store.performDayRolloverIfNeeded()
@@ -241,6 +263,9 @@ struct ContentView: View {
                     // signed out with valid tokens still stored — retry
                     // the silent restore now that we're back.
                     Task { await auth.retryRestoreIfNeeded() }
+                    // Keep a long-lived session fresh: refresh the access
+                    // token before it expires mid-use.
+                    Task { await auth.refreshSessionIfExpiringSoon() }
                     // Re-check Screen Time approval on every return — the
                     // user may have granted access in Settings or signed
                     // into iCloud while away; the UI updates immediately.
@@ -286,6 +311,20 @@ struct ContentView: View {
                     }
                 }
             }
+    }
+}
+
+// MARK: - Notification permission timing
+
+extension ContentView {
+    /// Ask for notification permission only once the person is actually
+    /// on their home — never while the first-run cover or the account
+    /// seam is still up (the OS dialog would land on top of the claim-
+    /// your-name screen at the worst possible moment).
+    fileprivate func requestNotificationPermissionWhenSettled() async {
+        guard auth.user != nil else { return }
+        guard !store.needsFirstRunIntro, !store.accountSeamActive else { return }
+        await notifications.requestAuthorizationIfNeeded()
     }
 }
 

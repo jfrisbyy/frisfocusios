@@ -1664,6 +1664,10 @@ export type Database = {
         }[]
       }
       esengo_has_product: { Args: { p_product: string }; Returns: boolean }
+      filter_not_blocked: {
+        Args: { candidate_ids: string[] }
+        Returns: string[]
+      }
       get_season_cards: {
         Args: { target_ids: string[] }
         Returns: {
@@ -1690,6 +1694,16 @@ export type Database = {
       }
       my_circle_role: { Args: { p_circle_id: string }; Returns: string }
       owns_circle: { Args: { p_circle_id: string }; Returns: boolean }
+      search_people: {
+        Args: { q: string }
+        Returns: {
+          avatar_url: string
+          header_url: string
+          id: string
+          name: string
+          username: string
+        }[]
+      }
       shares_circle_with: { Args: { other_id: string }; Returns: boolean }
       try_jsonb: { Args: { t: string }; Returns: Json }
       user_id: { Args: never; Returns: string }

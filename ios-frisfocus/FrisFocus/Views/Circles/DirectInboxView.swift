@@ -522,7 +522,17 @@ struct DirectShareViewerView: View {
             loadedImage = nil
             return
         }
-        loadedImage = DirectShareFormat.image(at: url)
+        // Decode off-main — a full-size photo read + decode on the main
+        // thread would hitch the segment transition.
+        let target = url
+        Task {
+            let image = await Task.detached(priority: .userInitiated) {
+                DirectShareFormat.image(at: target)
+            }.value
+            if currentMedia?.resolvedLocalURL == target {
+                loadedImage = image
+            }
+        }
     }
 
     private var currentDuration: TimeInterval {
@@ -802,7 +812,7 @@ struct DirectShareViewerView: View {
 
 // MARK: - Shared formatting helpers
 
-enum DirectShareFormat {
+nonisolated enum DirectShareFormat {
     static func image(at url: URL) -> UIImage? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return UIImage(data: data)
