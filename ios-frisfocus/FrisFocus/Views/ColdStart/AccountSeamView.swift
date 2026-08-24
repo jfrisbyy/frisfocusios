@@ -2,133 +2,29 @@
 //  AccountSeamView.swift
 //  FrisFocus
 //
-//  The get-started seam, shown after the cold-start season is saved and
-//  before the person starts tracking. Four warm steps:
+//  The account beats of the onboarding flow, in master order: sign-in
+//  comes right after the manifesto and BEFORE any season exists. This
+//  file holds the shared two-suns dawn backdrop and the one-tap
+//  Apple / Google sign-in step; the flow itself lives in
+//  FirstRunIntroView, which sequences:
 //
-//    1. People card    — the invitation (choose your people, private by
-//                        default, nothing public); leads the seam.
-//    2. Save your start — one-tap Apple / Google sign-in that attaches the
-//                        season they just built (required).
-//    3. Claim your name — a friendly, can't-fail @handle (+ optional photo)
-//    4. Bring your people — three optional invite routes (share link,
-//                        username search, opt-in contacts).
+//    manifesto → AccountSignInStep → ClaimNameStep → the fork →
+//    [quick or deep path] → PeopleCardStep → BringPeopleStep → home.
 //
-//  The dawn sky carries through from the cold start: pre-dawn violet on
-//  the people card + sign-in warming to bright cream on the name and
-//  invite steps, with two suns rising together (friends' seasons side by
-//  side) as a quiet progress cue. On finish the parent drops the
-//  first-run cover and the person lands on their live home.
-//
-//  "Not now" on the people card sets `skippedPeople`, so the seam hops
-//  straight from name-claim to home — invites stay reachable later from
-//  the People page. Bail-safety is preserved throughout: the season is
-//  already frozen locally before this seam appears.
+//  No OS permission dialogs anywhere in this flow — notifications are
+//  offered later, on the first deliverable social event, behind a soft
+//  prime card on the home.
 //
 
 import SwiftUI
 import AuthenticationServices
-
-struct AccountSeamView: View {
-    /// Land on the live home with the saved board.
-    let onFinish: () -> Void
-
-    @Environment(AuthManager.self) private var auth
-    @Environment(ProfileStore.self) private var profileStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    @State private var step: Step = .peopleCard
-    /// True while we resolve whether a freshly signed-in person is a
-    /// returning user (skip straight home) or new (walk the seam).
-    @State private var resolving: Bool = false
-    /// Set when the person taps "Not now" on the people card — the seam
-    /// then skips the invite step and lands on home after name-claim.
-    @State private var skippedPeople: Bool = false
-
-    enum Step: Int { case peopleCard, save, name, invite }
-
-    var body: some View {
-        ZStack {
-            TwoSunsBackdrop(progress: sunProgress, warmth: warmth)
-                .ignoresSafeArea()
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.6), value: warmth)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.6), value: sunProgress)
-
-            switch step {
-            case .peopleCard:
-                PeopleCardStep(
-                    onContinue: { advance(to: .save) },
-                    onSkip: {
-                        skippedPeople = true
-                        advance(to: .save)
-                    }
-                )
-                .transition(stageTransition)
-            case .save:
-                SaveYourStartStep(resolving: resolving)
-                    .transition(stageTransition)
-            case .name:
-                ClaimNameStep(onContinue: {
-                    // Honor an earlier "Not now" — skip invites entirely.
-                    if skippedPeople { onFinish() } else { advance(to: .invite) }
-                })
-                    .transition(stageTransition)
-            case .invite:
-                BringPeopleStep(onFinish: onFinish)
-                    .transition(stageTransition)
-            }
-        }
-        // Sign-in success on the save step: decide where to go.
-        .onChange(of: auth.user?.id) { _, newId in
-            guard step == .save, let newId else { return }
-            resolveAfterSignIn(userId: newId)
-        }
-    }
-
-    // MARK: Routing
-
-    /// A returning user (already has a claimed @handle) skips straight to
-    /// their restored home; a new account walks the name + invite steps.
-    private func resolveAfterSignIn(userId: String) {
-        resolving = true
-        Task {
-            await profileStore.load(myUserId: userId)
-            let hasHandle = (profileStore.myProfile?.username?.isEmpty == false)
-            resolving = false
-            if hasHandle {
-                onFinish()
-            } else {
-                advance(to: .name)
-            }
-        }
-    }
-
-    private func advance(to next: Step) {
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.5)) {
-            step = next
-        }
-    }
-
-    private var sunProgress: Double {
-        Double(step.rawValue) / 3.0
-    }
-
-    /// 0 = dark pre-dawn (people card / sign-in), 1 = bright cream
-    /// (name / invite).
-    private var warmth: Double {
-        (step == .peopleCard || step == .save) ? 0 : 1
-    }
-
-    private var stageTransition: AnyTransition {
-        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.99))
-    }
-}
 
 // MARK: - Two-suns backdrop
 
 /// A dawn sky with two suns rising side by side over a shared horizon.
 /// `warmth` crossfades from pre-dawn violet to the app's warm cream;
 /// `progress` (0…1) lifts and brightens both suns across the seam.
-private struct TwoSunsBackdrop: View {
+struct TwoSunsBackdrop: View {
     var progress: Double
     var warmth: Double
 
@@ -177,12 +73,13 @@ private struct TwoSunsBackdrop: View {
     }
 }
 
-// MARK: - Step 1: Save your start
+// MARK: - Account sign-in step
 
-/// One-tap Apple / Google sign-in over the dark pre-dawn sky. Required —
-/// there's no skip here. Frames the why through both the social value and
-/// the privacy promise in one breath.
-private struct SaveYourStartStep: View {
+/// One-tap Apple / Google sign-in over the dark pre-dawn sky, shown
+/// BEFORE any season exists. Required — there's no skip here. Frames
+/// the why through the social value and the privacy promise in one
+/// breath. Terms / Privacy open in-app.
+struct AccountSignInStep: View {
     /// True while we check whether the just-signed-in person is returning.
     let resolving: Bool
 
@@ -210,9 +107,9 @@ private struct SaveYourStartStep: View {
             .padding(.bottom, 28)
 
             VStack(spacing: 16) {
-                EyebrowText(text: "SAVE YOUR START", opacity: 0.8, color: Theme.textCream)
+                EyebrowText(text: "MAKE IT YOURS", opacity: 0.8, color: Theme.textCream)
 
-                Text("Keep what\nyou just built.")
+                Text("One account,\nevery season kept.")
                     .font(.serif(33, weight: .semibold))
                     .foregroundStyle(Theme.textCream)
                     .multilineTextAlignment(.center)
@@ -270,11 +167,6 @@ private struct SaveYourStartStep: View {
                 shown = true
             }
         }
-        .alert("Sign in failed", isPresented: $auth.showError) {
-            Button("OK") {}
-        } message: {
-            Text(auth.errorMessage)
-        }
         .sheet(item: $legalDoc) { doc in
             NavigationStack {
                 LegalView(document: doc)
@@ -290,15 +182,15 @@ private struct SaveYourStartStep: View {
 
     private var privacyCopy: some View {
         VStack(spacing: 10) {
-            Text("FrisFocus lets friends keep up with each other's seasons — ")
+            Text("Your seasons live on your account — ")
                 .foregroundStyle(Theme.textCream.opacity(0.85))
-            + Text("as much or as little as you choose to share.")
+            + Text("this phone today, any phone tomorrow.")
                 .foregroundStyle(Theme.textCream)
                 .fontWeight(.semibold)
 
-            Text("Your day's shape is all anyone sees ")
+            Text("Nothing you build here is public, ")
                 .foregroundStyle(Theme.textCream.opacity(0.85))
-            + Text("unless you say otherwise.")
+            + Text("and nothing is shared until you choose.")
                 .foregroundStyle(Theme.textCream)
                 .fontWeight(.semibold)
         }

@@ -350,6 +350,19 @@ struct ProfileSheetView: View {
             hubDivider
 
             NavigationLink {
+                ManifestoReplayView()
+            } label: {
+                hubRow(
+                    icon: "sun.horizon.fill",
+                    title: "Why FrisFocus",
+                    subtitle: "The beliefs behind your sun"
+                )
+            }
+            .buttonStyle(.plain)
+
+            hubDivider
+
+            NavigationLink {
                 BlockedAccountsView()
             } label: {
                 hubRow(

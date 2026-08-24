@@ -2,12 +2,13 @@
 //  ColdStartFlowView.swift
 //  FrisFocus
 //
-//  The 60-second cold start: pick a direction (Screen 1), then walk one
-//  rich board page per chosen direction (Screen 2). On finish it hands
-//  the de-duplicated board to the Store, which lands the person on their
-//  real home with the sun low — ready for the first check (Screen 3).
+//  The quick path ("Build it in about a minute"): pick a direction
+//  (Screen 1), then walk one rich board page per chosen direction
+//  (Screen 2). On finish it hands the de-duplicated board to the Store,
+//  which lands the person on their real home with the sun low — ready
+//  for the first check. Entered from THE FORK, after the account beats.
 //
-//  No account wall, no network on the tile path, no loading spinners.
+//  No network on the tile path, no loading spinners.
 //
 
 import SwiftUI
@@ -16,11 +17,8 @@ struct ColdStartFlowView: View {
     /// Commit the final board + capstone + season frame → the parent
     /// lands on the live home with a complete, named season.
     let onComplete: (_ result: ColdStartResult) -> Void
-    /// Back out to the welcome panel.
+    /// Back out to the fork.
     let onBack: () -> Void
-    /// The day-1 fork: hand the chosen directions to the season
-    /// conversation instead of building the board by hand.
-    let onTalkItThrough: (_ context: ColdStartContext) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel = ColdStartViewModel()
@@ -44,14 +42,6 @@ struct ColdStartFlowView: View {
                     onContinue: {
                         viewModel.build()
                         advance(to: .board)
-                    },
-                    onTalkItThrough: {
-                        onTalkItThrough(
-                            .directionsOnly(
-                                directions: viewModel.selectedDirectionTitles,
-                                subDirections: []
-                            )
-                        )
                     }
                 )
                 .transition(stageTransition)
@@ -196,5 +186,5 @@ struct ColdStartResult {
 }
 
 #Preview {
-    ColdStartFlowView(onComplete: { _ in }, onBack: {}, onTalkItThrough: { _ in })
+    ColdStartFlowView(onComplete: { _ in }, onBack: {})
 }

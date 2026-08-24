@@ -18,8 +18,12 @@ struct SeasonSetupFlowView: View {
     /// context (directions, board, north stars, logs) instead of cold.
     var coldStartContext: ColdStartContext? = nil
     /// Called instead of `dismiss()` when the flow is hosted inline (the
-    /// day-1 fork), so the parent can advance its own sequence.
+    /// fork's deep path), so the parent can advance its own sequence.
     var onFinished: (() -> Void)? = nil
+    /// Called when the person leaves the flow while hosted inline —
+    /// returns to the fork instead of dismissing a sheet that isn't there.
+    /// The conversation saves itself, so leaving is always safe.
+    var onExit: (() -> Void)? = nil
 
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -36,14 +40,14 @@ struct SeasonSetupFlowView: View {
                 SetupBeginView(
                     onBegin: { viewModel.begin() },
                     onResume: { viewModel.resume() },
-                    onClose: { dismiss() }
+                    onClose: { if let onExit { onExit() } else { dismiss() } }
                 )
                 .transition(stageTransition)
 
             case .conversation:
                 SetupConversationView(
                     viewModel: viewModel,
-                    onClose: { dismiss() }
+                    onClose: { if let onExit { onExit() } else { dismiss() } }
                 )
                 .transition(stageTransition)
 

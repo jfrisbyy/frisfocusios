@@ -14,11 +14,7 @@ struct DirectionPickView: View {
     @Bindable var viewModel: ColdStartViewModel
     let onBack: () -> Void
     let onContinue: () -> Void
-    /// Secondary, quieter route: hand the chosen directions to the season
-    /// conversation instead of building the board by hand.
-    let onTalkItThrough: () -> Void
 
-    @Environment(AuthManager.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown: Bool = false
     @State private var showFreeText: Bool = false
@@ -152,29 +148,6 @@ struct DirectionPickView: View {
             .buttonStyle(.plain)
             .disabled(!viewModel.canContinue)
             .animation(.easeInOut(duration: 0.25), value: viewModel.canContinue)
-
-            // The fork — quieter, secondary, only once something's chosen
-            // AND a session already exists. During the cold start there is
-            // no account yet, and the conversation needs one — hiding it
-            // here keeps the first run wall-free (the deeper season
-            // conversation stays reachable from home once signed in).
-            if viewModel.canContinue, auth.user != nil {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    onTalkItThrough()
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: "bubble.left.and.text.bubble.right")
-                            .font(.system(size: 13, weight: .medium))
-                        Text("Rather talk it through?")
-                            .font(.sans(14, weight: .medium))
-                    }
-                    .foregroundStyle(Theme.textCream.opacity(0.72))
-                    .padding(.vertical, 6)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
-            }
         }
         .padding(.bottom, 8)
     }

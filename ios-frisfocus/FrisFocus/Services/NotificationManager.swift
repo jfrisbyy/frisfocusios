@@ -140,6 +140,39 @@ final class NotificationManager {
         }
     }
 
+    // MARK: Soft prime card (PULL, not push)
+
+    /// True when the one OS permission dialog has never been shown AND
+    /// the person hasn't declined the in-app offer — the soft prime
+    /// card on the home may show. Onboarding never asks; this only
+    /// becomes relevant once something deliverable has actually arrived.
+    var primeEligible: Bool = false
+
+    @ObservationIgnored private let primeDeclinedKey = "notifications.primeDeclined"
+
+    /// Re-evaluate whether the soft prime card may be offered.
+    func refreshPrimeEligibility() async {
+        if UserDefaults.standard.bool(forKey: primeDeclinedKey) {
+            primeEligible = false
+            return
+        }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        primeEligible = settings.authorizationStatus == .notDetermined
+    }
+
+    /// The person said yes on the prime card — NOW show the one OS dialog.
+    func acceptPrime() async {
+        await requestAuthorizationIfNeeded()
+        await refreshPrimeEligibility()
+    }
+
+    /// "No thanks" — respected for good. The settings toggle remains the
+    /// only other door; the card never returns.
+    func declinePrime() {
+        UserDefaults.standard.set(true, forKey: primeDeclinedKey)
+        primeEligible = false
+    }
+
     // MARK: Identity
 
     /// Remember who is signed in, and flush any token that arrived before

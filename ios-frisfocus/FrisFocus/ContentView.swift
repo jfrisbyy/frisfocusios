@@ -7,6 +7,14 @@
 //  to `.active` (so a user who left the app open overnight rolls over
 //  cleanly when they tap back in).
 //
+//  Presents the ONE onboarding cover (FirstRunIntroView) whenever the
+//  flow needs to run: a brand-new install, resumed post-commit beats,
+//  or the forever fork-landing for any authenticated person with no
+//  season. The real home is unreachable without a session + a season.
+//
+//  No OS permission dialogs at startup — notifications are offered via
+//  a soft prime card only after something deliverable actually arrives.
+//
 
 import Combine
 import SwiftUI
@@ -34,28 +42,48 @@ struct ContentView: View {
 
     @State private var pendingInvite: InviteTarget?
     @State private var showSeasonSetupFromComplete: Bool = false
-    /// Drives guided season setup after a clean start.
-    @State private var showCleanSeasonSetup: Bool = false
-    /// True once a returning user signed in from the welcome intro, so
-    /// dismissing the cover never bounces them into guided season setup
-    /// while their real season is still restoring from the cloud.
-    @State private var didSignInFromIntro: Bool = false
+    @State private var showExitDemoDialog: Bool = false
 
-    /// True while the first-run welcome should cover the home. The
-    /// setter is a no-op — the cover only dismisses once the user's
-    /// choice flips `appMode` out of `.uninitialized`.
+    /// True when a signed-in account has finished (or exhausted) its
+    /// cloud restore and still has no season — the fork is the landing,
+    /// forever, for this state.
+    private var forkLandingActive: Bool {
+        auth.user != nil
+            && store.appMode == .clean
+            && store.needsSeasonSetup
+            && seasonSync.hasAttemptedRestore
+            && !seasonSync.isRestoring
+    }
+
+    /// True while the onboarding flow should cover the home. The setter
+    /// is a no-op — the cover only dismisses when the underlying state
+    /// resolves (a season exists, or the seam beats complete).
     private var introBinding: Binding<Bool> {
         Binding(
-            get: { store.needsFirstRunIntro || store.accountSeamActive },
+            get: { store.needsFirstRunIntro || store.accountSeamActive || forkLandingActive },
             set: { _ in }
         )
+    }
+
+    /// The honest moment for the notification offer: signed in, on the
+    /// live home, OS dialog never shown, offer never declined, and
+    /// something push-worthy has actually arrived.
+    private var shouldOfferNotificationPrime: Bool {
+        auth.user != nil
+            && store.appMode == .clean
+            && !store.needsFirstRunIntro
+            && !store.accountSeamActive
+            && !forkLandingActive
+            && !store.needsSeasonSetup
+            && notifications.primeEligible
+            && (store.hasDeliverableSocialEvent || !friendGraph.incoming.isEmpty)
     }
 
     var body: some View {
         @Bindable var store = store
         return HomeView()
-            // A returning sign-in whose season is still coming down
-            // from the cloud — say so instead of looking empty.
+            // Quiet top-of-home layers: cloud-restore state, the demo
+            // marker, and the soft notification prime card.
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
                     if auth.user != nil,
@@ -65,20 +93,42 @@ struct ContentView: View {
                         CloudRestoreBanner()
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
+                    if store.appMode == .demo {
+                        DemoModePill { showExitDemoDialog = true }
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    if shouldOfferNotificationPrime {
+                        NotificationPrimeCard(
+                            onAccept: { Task { await notifications.acceptPrime() } },
+                            onDecline: { notifications.declinePrime() }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
                 .padding(.top, 4)
+                .animation(.easeInOut(duration: 0.3), value: shouldOfferNotificationPrime)
             }
             .animation(.easeInOut(duration: 0.3), value: store.appMode)
             .animation(.easeInOut(duration: 0.3), value: seasonSync.isRestoring)
-            // First-launch welcome — covers the home until the user picks
-            // a path. Non-dismissible: a choice must be made.
+            .confirmationDialog(
+                "Leave the demo?",
+                isPresented: $showExitDemoDialog,
+                titleVisibility: .visible
+            ) {
+                Button("Exit demo and start for real") {
+                    store.exitDemoToFlow()
+                }
+                Button("Keep exploring", role: .cancel) {}
+            } message: {
+                Text("Every sample row is wiped. You'll pick your own path next — nothing here follows you.")
+            }
+            // The one onboarding cover — non-dismissible; it resolves
+            // itself when a season exists and the seam beats finish.
             .fullScreenCover(isPresented: introBinding, onDismiss: {
-                if store.needsSeasonSetup && !didSignInFromIntro {
-                    showCleanSeasonSetup = true
-                } else if !didSignInFromIntro && store.appMode == .clean {
-                    // A fresh cold-start user has just saved their board and
-                    // account — teach the core gestures interactively before
-                    // they start tracking. (Returning sign-ins skip this.)
+                // A fresh season was just built — teach the core gestures
+                // interactively before the person starts tracking.
+                // (Returning sign-ins restoring a season skip this.)
+                if store.coldStartCoaching {
                     startMechanicsTourIfFresh()
                 }
             }) {
@@ -93,10 +143,6 @@ struct ContentView: View {
                     }
                 }
                 .interactiveDismissDisabled(true)
-            }
-            // Guided season setup for a clean start.
-            .fullScreenCover(isPresented: $showCleanSeasonSetup) {
-                SeasonSetupFlowView()
             }
             .sheet(isPresented: $store.showCarryForwardPrompt) {
                 CarryForwardPromptView(candidates: store.carryForwardCandidates)
@@ -116,16 +162,6 @@ struct ContentView: View {
                 SeasonSetupFlowView()
             }
             .environment(store)
-            // A returning user signing in from the welcome intro: move the
-            // Store out of `.uninitialized` so the cover dismisses straight
-            // onto home. Their real data restores via the sync `.task`
-            // below; we flag the sign-in so setup never auto-launches.
-            .onChange(of: auth.user?.id) { _, newId in
-                if newId != nil && store.appMode == .uninitialized {
-                    didSignInFromIntro = true
-                    store.restoreFromSignIn()
-                }
-            }
             .onOpenURL { url in
                 // A shared invite link (or scanned QR) opens us straight
                 // to the inviter's profile with an Add control. Arriving
@@ -183,10 +219,10 @@ struct ContentView: View {
                     // Private season sync: season, tasks, score history,
                     // and milestones follow the account too.
                     await seasonSync.start(myUserId: myId, store: store)
-                    // The OS notification prompt waits until the person
-                    // has actually landed on their home — never over the
-                    // claim-your-name screen mid-seam.
-                    await requestNotificationPermissionWhenSettled()
+                    // NO permission prompt here — the soft prime card on
+                    // the home owns that moment, and only after something
+                    // deliverable has actually arrived.
+                    await notifications.refreshPrimeEligibility()
                     // Esengo link: refresh entitlements + silently credit
                     // any outcomes Cadence recorded while we were away.
                     await cadence.refresh(myUserId: myId)
@@ -233,27 +269,6 @@ struct ContentView: View {
             ) { _ in
                 store.performDayRolloverIfNeeded()
             }
-            .onChange(of: store.accountSeamActive) { _, seamActive in
-                // The seam just finished — the person is landing on their
-                // live home. Now is the honest moment for the one OS
-                // prompt we can never re-ask.
-                if !seamActive, auth.user != nil {
-                    Task {
-                        try? await Task.sleep(for: .seconds(1.5))
-                        await requestNotificationPermissionWhenSettled()
-                    }
-                }
-            }
-            .onChange(of: store.needsFirstRunIntro) { _, needsIntro in
-                // The welcome-screen sign-in path drops the intro without
-                // ever raising the seam — catch that landing too.
-                if !needsIntro, auth.user != nil {
-                    Task {
-                        try? await Task.sleep(for: .seconds(1.5))
-                        await requestNotificationPermissionWhenSettled()
-                    }
-                }
-            }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     store.performDayRolloverIfNeeded()
@@ -273,6 +288,9 @@ struct ContentView: View {
                     // The user is looking at the app — the icon badge
                     // shouldn't keep nagging about things they can now see.
                     NotificationManager.clearBadge()
+                    // The prime card's eligibility may have changed in
+                    // Settings while away.
+                    Task { await notifications.refreshPrimeEligibility() }
                     if let myId = auth.user?.id {
                         Task { await cadence.sync(into: store, myUserId: myId) }
                         // Catch up on anything that arrived while the
@@ -314,26 +332,12 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Notification permission timing
-
-extension ContentView {
-    /// Ask for notification permission only once the person is actually
-    /// on their home — never while the first-run cover or the account
-    /// seam is still up (the OS dialog would land on top of the claim-
-    /// your-name screen at the worst possible moment).
-    fileprivate func requestNotificationPermissionWhenSettled() async {
-        guard auth.user != nil else { return }
-        guard !store.needsFirstRunIntro, !store.accountSeamActive else { return }
-        await notifications.requestAuthorizationIfNeeded()
-    }
-}
-
 // MARK: - Mechanics tour kickoff
 
 extension ContentView {
-    /// Launch the Layer-A mechanics tour for a brand-new cold-start user,
-    /// flagging the quantity lesson only when their board actually has a
-    /// tiered/increment task to log.
+    /// Launch the Layer-A mechanics tour for a brand-new user who just
+    /// built a season (either path), flagging the quantity lesson only
+    /// when their board actually has a tiered/increment task to log.
     fileprivate func startMechanicsTourIfFresh() {
         // An empty board (every setup page skipped) has nothing to
         // practice on — the gesture tour would point at a task that
@@ -345,6 +349,110 @@ extension ContentView {
             return false
         }
         walkthrough.startMechanicsTour(includesQuantity: hasQuantity)
+    }
+}
+
+// MARK: - Demo marker
+
+/// The always-visible sandbox marker: this is a sample life, and the
+/// door out is one tap away. Tapping it confirms, wipes every sample
+/// row, and routes back into the real flow at the fork.
+private struct DemoModePill: View {
+    let onExit: () -> Void
+
+    var body: some View {
+        Button(action: onExit) {
+            HStack(spacing: 9) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Demo — a sample life")
+                    .font(.sans(12.5, weight: .semibold))
+                Text("Exit")
+                    .font(.sans(12.5, weight: .bold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.textPrimary.opacity(0.1)))
+            }
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Theme.sunWarm.opacity(0.55), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("This is a demo with sample data. Tap to exit and start for real.")
+    }
+}
+
+// MARK: - Notification prime card
+
+/// The soft pre-permission offer — shown only once something
+/// deliverable has actually arrived, and only while the OS dialog has
+/// never been shown. An explicit yes is required before the one system
+/// dialog; "No thanks" is respected for good (settings keeps a toggle).
+private struct NotificationPrimeCard: View {
+    let onAccept: () -> Void
+    let onDecline: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.sunWarm.opacity(0.22))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: "sun.max.fill")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.sunWarm)
+                }
+                Text("Want a quiet note when your people cheer you? No nags, ever — that's a promise.")
+                    .font(.sans(13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: onAccept) {
+                    Text("Yes, quietly")
+                        .font(.sans(13.5, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(Capsule().fill(Theme.textPrimary))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onDecline) {
+                    Text("No thanks")
+                        .font(.sans(13.5, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Theme.paperCream)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Theme.sunWarm.opacity(0.4), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.14), radius: 12, y: 5)
+        .padding(.horizontal, 16)
+        .accessibilityElement(children: .combine)
     }
 }
 

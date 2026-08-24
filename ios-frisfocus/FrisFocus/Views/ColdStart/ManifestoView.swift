@@ -12,10 +12,13 @@
 import SwiftUI
 
 struct ManifestoView: View {
-    /// Into the direction pick.
+    /// Into the next flow beat (the account step on a first run).
     let onContinue: () -> Void
-    /// Skip straight to the pick from any card.
+    /// Skip ahead from any card.
     let onSkip: () -> Void
+    /// The last card's call to action. "Make it yours" in the flow;
+    /// the settings replay passes "Close".
+    var finalCTA: String = "Make it yours"
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page: Int = 0
@@ -103,7 +106,7 @@ struct ManifestoView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Text(page >= cardCount - 1 ? "Make it yours" : "Next")
+                    Text(page >= cardCount - 1 ? finalCTA : "Next")
                         .font(.sans(17, weight: .semibold))
                     Image(systemName: "arrow.right")
                         .font(.system(size: 14, weight: .semibold))
@@ -274,8 +277,7 @@ private struct NagPillsVisual: View {
 
     private let nags = [
         "You haven't logged today!",
-        "You're falling behind!",
-        "Don't lose your progress!"
+        "You're falling behind!"
     ]
 
     var body: some View {
@@ -455,6 +457,23 @@ private struct HorizonSun: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Settings replay
+
+/// "Why FrisFocus" — the same four cards, replayable anytime from
+/// settings, dismissing back instead of advancing the flow.
+struct ManifestoReplayView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ManifestoView(
+            onContinue: { dismiss() },
+            onSkip: { dismiss() },
+            finalCTA: "Close"
+        )
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 

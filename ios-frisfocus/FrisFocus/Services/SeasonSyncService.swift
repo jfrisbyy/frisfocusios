@@ -78,6 +78,10 @@ final class SeasonSyncService {
     /// shows a quiet "Restoring your account…" state instead of a
     /// flash of empty content for a returning sign-in.
     private(set) var isRestoring: Bool = false
+    /// True once at least one cloud-restore pass has completed for the
+    /// current sign-in — lets the shell distinguish "no season exists"
+    /// from "the season simply hasn't come down yet".
+    private(set) var hasAttemptedRestore: Bool = false
 
     @ObservationIgnored weak var store: Store?
     @ObservationIgnored private var flushDebounce: Task<Void, Never>?
@@ -184,6 +188,7 @@ final class SeasonSyncService {
         isRestoring = true
         await restoreFromCloud()
         isRestoring = false
+        hasAttemptedRestore = true
 
         // Last-resort local fallback: if a slice is still empty after the
         // cloud restore (e.g. the backup was blanked by an older build),
@@ -208,6 +213,7 @@ final class SeasonSyncService {
     /// Stop syncing on sign-out. The local season stays put — it
     /// existed before sign-in and remains personal to this device.
     func stop() {
+        hasAttemptedRestore = false
         flushDebounce?.cancel()
         flushDebounce = nil
         myUserId = nil

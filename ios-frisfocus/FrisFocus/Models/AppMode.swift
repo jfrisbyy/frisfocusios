@@ -4,9 +4,8 @@
 //
 //  The lifecycle state of a fresh install. On the very first launch the
 //  Store sits in `.uninitialized` until the welcome intro resolves into
-//  a clean personal start (`.clean`) backed by a real signed-in account.
-//  (The old `.demo` sample sandbox has been removed — a stored "demo"
-//  marker is treated as uninitialized and its data purged.)
+//  either the pre-auth sample sandbox (`.demo`) or a clean personal
+//  start (`.clean`) backed by a real signed-in account.
 //
 
 import Foundation
@@ -19,7 +18,13 @@ nonisolated enum AppMode: String, Codable, Equatable {
     /// data is seeded; the intro carousel is shown over the home.
     case uninitialized
 
+    /// The pre-auth sample sandbox ("Explore a demo first") — a
+    /// clearly-marked, fully local sample life the person can leave at
+    /// any time. Exiting wipes every sample row and routes back into
+    /// the real onboarding flow.
+    case demo
+
     /// The user chose to start their own season from a clean slate.
-    /// Nothing is seeded; they go straight into guided season setup.
+    /// Nothing is seeded; they walk the real onboarding flow.
     case clean
 }
