@@ -9,10 +9,14 @@
 //  a new one through `Store.addComment(postId:text:)`.
 //
 //  Intentionally minimal: no replies, no comment reactions, no
-//  edit/delete. C7a's contract is short messages within a private
+//  editing. C7a's contract is short messages within a private
 //  context — this view enforces that by simply not surfacing any
-//  other affordance. Each comment from someone else carries a quiet
-//  "…" menu to report it or block its author.
+//  other affordance. Every comment carries a quiet "…" menu: report
+//  or block on someone else's, and removal wherever the person
+//  looking is entitled to it — their own words anywhere, anyone's
+//  words on a post of their own. Reporting and blocking never take
+//  the text down, so without this an unwanted comment would sit on
+//  your own story forever.
 //
 
 import SwiftUI
@@ -36,6 +40,9 @@ struct CommentsSheetView: View {
     @State private var reportTarget: ReportTarget?
     /// The comment whose author is pending a block confirmation.
     @State private var blockCandidate: Comment?
+    /// The comment pending a delete confirmation — the user's own, or
+    /// someone else's left on the user's own post.
+    @State private var deleteCandidate: Comment?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,6 +110,43 @@ struct CommentsSheetView: View {
         } message: {
             Text("They won't be able to message you or see your days, and you won't see theirs.")
         }
+        .confirmationDialog(
+            deleteDialogTitle,
+            isPresented: Binding(
+                get: { deleteCandidate != nil },
+                set: { if !$0 { deleteCandidate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(deleteCandidateIsMine ? "Delete" : "Remove", role: .destructive) {
+                if let candidate = deleteCandidate {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    store.deleteComment(candidate.id)
+                }
+                deleteCandidate = nil
+            }
+            Button("Cancel", role: .cancel) { deleteCandidate = nil }
+        } message: {
+            Text(deleteDialogMessage)
+        }
+    }
+
+    /// The two delete cases share one dialog but not one voice: you
+    /// delete your own words, you remove someone else's from your post.
+    private var deleteCandidateIsMine: Bool {
+        deleteCandidate?.fromFriendId == store.currentUserId
+    }
+
+    private var deleteDialogTitle: String {
+        deleteCandidateIsMine ? "Delete your comment?" : "Remove this comment?"
+    }
+
+    private var deleteDialogMessage: String {
+        if deleteCandidateIsMine {
+            return "This will remove your comment from this post. Nobody will see it anymore."
+        }
+        let name = deleteCandidate?.fromName ?? "This person"
+        return "This will remove \(name)'s comment from your post. Nobody will see it anymore."
     }
 
     private var header: some View {
@@ -164,8 +208,16 @@ struct CommentsSheetView: View {
                     : (target != nil ? "\(comment.fromName), tap to open profile. \(comment.text)" : "\(comment.fromName): \(comment.text)")
             )
 
-            if !isMine {
-                Menu {
+            // One menu for every row now, rather than only on other
+            // people's comments. A swipe would be the other obvious
+            // home for "delete mine", but these rows live in a
+            // LazyVStack, not a List, so `.swipeActions` isn't
+            // available — and keeping every comment's affordance in the
+            // same place means the gesture never has to be discovered
+            // twice. The menu is never empty: it always carries either
+            // Report or a removal the viewer is entitled to.
+            Menu {
+                if !isMine {
                     Button {
                         reportTarget = ReportTarget(
                             reportedUserId: socialSync.remoteId(forLocal: comment.fromFriendId),
@@ -184,15 +236,24 @@ struct CommentsSheetView: View {
                             Label("Block \(comment.fromName)", systemImage: "hand.raised")
                         }
                     }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.sans(12, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.45))
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Options for \(comment.fromName)'s comment")
+                if store.canDeleteComment(comment) {
+                    Button(role: .destructive) {
+                        deleteCandidate = comment
+                    } label: {
+                        Label(isMine ? "Delete comment" : "Remove comment", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
+            .accessibilityLabel(
+                isMine ? "Options for your comment" : "Options for \(comment.fromName)'s comment"
+            )
         }
     }
 

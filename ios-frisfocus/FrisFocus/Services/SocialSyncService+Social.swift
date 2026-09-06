@@ -904,3 +904,30 @@ extension SocialSyncService {
         }
     }
 }
+
+// MARK: - Story comments
+
+extension SocialSyncService {
+    /// Take a comment down on the server once the Store has dropped it
+    /// locally. Only the delete lives here — the insert sits with the
+    /// rest of the story sync — because nothing about it touches the
+    /// story upload or media machinery.
+    ///
+    /// The row id is the whole request. The `story_comments` delete
+    /// policy admits the comment's author and the author of the parent
+    /// post, so an attempt on anyone else's comment matches no rows
+    /// rather than failing loudly; `Store.canDeleteComment` guards the
+    /// same rule before we ever get here.
+    nonisolated func commentDeleted(commentId: UUID) {
+        Task { @MainActor in
+            do {
+                try await supabase.from("story_comments")
+                    .delete()
+                    .eq("id", value: commentId.uuidString)
+                    .execute()
+            } catch {
+                print("[SocialSync] comment delete failed: \(error)")
+            }
+        }
+    }
+}

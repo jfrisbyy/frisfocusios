@@ -5599,14 +5599,45 @@ extension Store {
     func addComment(postId: UUID, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        comments.append(Comment(
+        let comment = Comment(
             postId: postId,
             fromFriendId: currentUserId,
             fromName: "You",
             fromInitials: "Y",
             text: trimmed
-        ))
+        )
+        comments.append(comment)
         persistAll()
+        // The row has to reach `story_comments` as well. `refreshStories`
+        // rebuilds this slice wholesale from the server, so a comment that
+        // only ever existed on this device quietly vanishes at the next
+        // pull — and can never be taken down from anywhere else.
+        social?.commentAdded(comment)
+    }
+
+    /// Whether the current user may take a comment down: their own
+    /// words, or anyone's words on a post they wrote. This mirrors the
+    /// `story_comments` delete policy exactly, so the UI never offers an
+    /// affordance the server would silently refuse.
+    func canDeleteComment(_ comment: Comment) -> Bool {
+        if comment.fromFriendId == currentUserId { return true }
+        guard let post = storyPosts.first(where: { $0.id == comment.postId }) else { return false }
+        return post.authorId == currentUserId
+    }
+
+    /// Permanently remove a comment — the author's own, or any comment
+    /// left on the current user's post. Removing it locally is only half
+    /// the job: `refreshStories` rebuilds `comments` from the server, so
+    /// without the delete below the next pull would hand the comment
+    /// straight back. Both halves live here so no caller can do one and
+    /// forget the other.
+    func deleteComment(_ commentId: UUID) {
+        guard let idx = comments.firstIndex(where: { $0.id == commentId }) else { return }
+        let comment = comments[idx]
+        guard canDeleteComment(comment) else { return }
+        comments.remove(at: idx)
+        persistAll()
+        social?.commentDeleted(commentId: comment.id)
     }
 
     /// Names-forward summary of who liked a post. Returns nil when
