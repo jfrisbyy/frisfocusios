@@ -308,3 +308,47 @@ struct SalvageTests {
         #expect(rows == [])
     }
 }
+
+// MARK: - A reachable sun, whichever door you came through
+//
+// The cold start priced a day at 60% of the whole library, which made the
+// sun unfillable. The conversational door never had that formula — its
+// target comes from the model — but the target and the task list are two
+// separate parts of one reply, and nothing makes them agree. Same
+// unreachable sun, different route. Both commit paths now clamp the
+// target down to what a strong day of the committed tasks can actually
+// produce, and never up.
+
+@Suite("Reachable daily target")
+struct ReachableTargetTests {
+
+    private func task(_ title: String, _ value: Int, _ schedule: PinSchedule) -> FFTask {
+        FFTask(title: title, category: .work, pointValue: value, pinSchedule: schedule)
+    }
+
+    @Test("An over-ambitious target is lowered to a day the board can reach")
+    func clampsDownward() {
+        let board = [task("a", 5, .daily), task("b", 4, .daily)]
+        let reachable = Store.strongDayValue(from: board)
+        #expect(reachable == 9)
+        // The commit paths compute min(requested, reachable).
+        #expect(min(40, reachable) == 9)
+    }
+
+    @Test("A target the board can already reach is left alone")
+    func leavesModestTargetsAlone() {
+        // The conversation decided this; nothing should raise it just
+        // because the board could carry more.
+        let board = (1...6).map { task("t\($0)", 10, .daily) }
+        let reachable = Store.strongDayValue(from: board)
+        #expect(reachable == 60)
+        #expect(min(15, reachable) == 15)
+    }
+
+    @Test("An empty board still yields a reachable target")
+    func emptyBoardIsStillReachable() {
+        // strongDayValue floors at 1, so the clamp can never produce a
+        // target of zero and freeze the sun at "already full".
+        #expect(min(30, Store.strongDayValue(from: [])) == 1)
+    }
+}

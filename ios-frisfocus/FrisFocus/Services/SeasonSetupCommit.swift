@@ -89,7 +89,7 @@ extension Store {
             )
         }
 
-        let season = Season(
+        var season = Season(
             id: seasonId,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Season" : name,
             lengthDays: max(1, lengthDays),
@@ -190,6 +190,16 @@ extension Store {
         // still tells the full story). The season being replaced is
         // archived as a past chapter first so profile pages can tell the
         // story season by season.
+        // Same clamp as the edit-in-place path, applied here only now
+        // that the board exists: the target and the task list are separate
+        // parts of the model's reply and nothing makes them agree, so a
+        // target the tasks cannot reach would leave the sun unfillable
+        // from day one. Only ever lowered — a reachable target is left as
+        // the conversation set it.
+        let reachable = Store.strongDayValue(from: newTasks)
+        season.dailyGoal = min(season.dailyGoal, reachable)
+        season.weeklyGoal = max(season.dailyGoal, min(season.weeklyGoal, season.dailyGoal * 7))
+
         archiveCurrentSeasonAsChapter()
         currentSeason = season
         tasks = newTasks
@@ -340,11 +350,27 @@ extension Store {
 
         // Edit in place — same season id, dates, and cover; the log history
         // and the sun's progress carry through untouched.
+        // The daily target here comes from the conversation, not from a
+        // formula, so it is deliberately NOT recalibrated the way the
+        // cold start's provisional one is — the person discussed what a
+        // day looks like and that answer should stand.
+        //
+        // But the target and the task list are two separate parts of the
+        // model's reply, and nothing guarantees they agree. If it asks
+        // for more than a whole strong day of the tasks it just wrote,
+        // the sun cannot be filled — the same unreachable-sun the cold
+        // start had, arriving by a different route. Clamp only in that
+        // direction: a target the tasks can already reach is left exactly
+        // as the conversation set it.
+        let reachable = Store.strongDayValue(from: newTasks)
+        let requested = max(1, draft.dailyTarget)
+        let dailyGoal = min(requested, reachable)
+
         var season = currentSeason
         season.name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? season.name : name
         season.lengthDays = max(1, lengthDays)
-        season.dailyGoal = max(1, draft.dailyTarget)
-        season.weeklyGoal = max(1, draft.weeklyTarget)
+        season.dailyGoal = dailyGoal
+        season.weeklyGoal = max(dailyGoal, min(max(1, draft.weeklyTarget), dailyGoal * 7))
         season.categories = seasonCategories
         season.milestones = milestones
         season.endMode = endMode
