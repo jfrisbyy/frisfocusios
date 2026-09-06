@@ -29,7 +29,7 @@ import AuthenticationServices
 /// conversation persist their own inner state separately.
 enum OnboardingProgress {
     enum Marker: String {
-        case welcome, manifesto, account, claimName, fork, quickPath, deepPath
+        case welcome, manifesto, ageCheck, account, claimName, fork, quickPath, deepPath
     }
 
     private static let key = "onboarding.phase.v1"
@@ -63,7 +63,7 @@ struct FirstRunIntroView: View {
     @State private var didResolveEntry: Bool = false
 
     private enum Phase {
-        case welcome, manifesto, account, claimName, fork, quickPath, deepPath, peopleCard, invites
+        case welcome, manifesto, ageCheck, account, claimName, fork, quickPath, deepPath, peopleCard, invites
     }
 
     var body: some View {
@@ -86,10 +86,17 @@ struct FirstRunIntroView: View {
 
             case .manifesto:
                 ManifestoView(
-                    onContinue: { advance(to: .account) },
-                    onSkip: { advance(to: .account) }
+                    onContinue: { advance(to: .ageCheck) },
+                    onSkip: { advance(to: .ageCheck) }
                 )
                 .transition(.opacity)
+
+            case .ageCheck:
+                ZStack {
+                    DawnBackdrop(progress: 0.2).ignoresSafeArea()
+                    AgeCheckView(onPass: { advance(to: .account) })
+                }
+                .transition(stageTransition)
 
             case .account:
                 ZStack {
@@ -198,6 +205,14 @@ struct FirstRunIntroView: View {
         guard !didResolveEntry else { return }
         didResolveEntry = true
 
+        // Someone who answered under the minimum stays turned away, no
+        // matter which beat they had reached or what is cached locally.
+        // Checked first so no later branch can route around it.
+        if AgeGate.isBlocked {
+            phase = .ageCheck
+            return
+        }
+
         // Post-commit beats survive force-quits.
         if store.accountSeamActive {
             phase = store.persistedSeamPhase == "invites" ? .invites : .peopleCard
@@ -230,6 +245,8 @@ struct FirstRunIntroView: View {
         switch OnboardingProgress.restore() {
         case .manifesto:
             phase = .manifesto
+        case .ageCheck:
+            phase = .ageCheck
         case .account, .claimName, .fork, .quickPath, .deepPath:
             phase = .account
         default:
@@ -293,6 +310,7 @@ struct FirstRunIntroView: View {
         switch phase {
         case .welcome: return .welcome
         case .manifesto: return .manifesto
+        case .ageCheck: return .ageCheck
         case .account: return .account
         case .claimName: return .claimName
         case .fork: return .fork
