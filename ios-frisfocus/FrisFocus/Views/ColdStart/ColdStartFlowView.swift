@@ -25,7 +25,7 @@ struct ColdStartFlowView: View {
     @State private var phase: Phase = .pick
     @State private var didRestorePhase = false
 
-    private enum Phase: String { case pick, board, capstone, season }
+    private enum Phase: String { case pick, board, capstone, calibrate, season }
 
     var body: some View {
         ZStack {
@@ -58,6 +58,14 @@ struct ColdStartFlowView: View {
                 ColdStartCapstoneView(
                     viewModel: viewModel,
                     onBack: { advance(to: .board) },
+                    onContinue: { advance(to: .calibrate) }
+                )
+                .transition(stageTransition)
+
+            case .calibrate:
+                ColdStartCalibrateView(
+                    viewModel: viewModel,
+                    onBack: { advance(to: .capstone) },
                     onContinue: { advance(to: .season) }
                 )
                 .transition(stageTransition)
@@ -65,7 +73,7 @@ struct ColdStartFlowView: View {
             case .season:
                 ColdStartSeasonCreateView(
                     viewModel: viewModel,
-                    onBack: { advance(to: .capstone) },
+                    onBack: { advance(to: .calibrate) },
                     onCreate: {
                         // Committed for real — the kill-safe draft has
                         // served its purpose.
@@ -109,7 +117,9 @@ struct ColdStartFlowView: View {
             let total = max(1, viewModel.directions.count)
             return 0.35 + 0.5 * (Double(viewModel.index) / Double(total))
         case .capstone:
-            return 0.9
+            return 0.85
+        case .calibrate:
+            return 0.93
         case .season:
             return 1
         }
