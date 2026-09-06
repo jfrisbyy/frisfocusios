@@ -187,6 +187,10 @@ struct ContentView: View {
                 if let myId = auth.user?.id {
                     print("[FrisFocus] startup: signed in as user=\(myId) — loading account data")
                     notifications.setUserId(myId)
+                    // Teaching progress belongs to the person, not the
+                    // handset: without this a new phone replays the whole
+                    // tour to someone who has used the app for months.
+                    walkthrough.setUserId(myId)
                     // Replay an invite link that arrived before sign-in —
                     // the inviter's profile reopens with a live Add control.
                     if let storedInvite = UserDefaults.standard.string(forKey: "pendingInviteUserId") {
@@ -230,6 +234,7 @@ struct ContentView: View {
                 } else {
                     print("[FrisFocus] startup: NO signed-in session (auth.user is nil) — nothing to load; app will look empty until sign-in")
                     notifications.setUserId(nil)
+                    walkthrough.setUserId(nil)
                     messageGraph.stopRealtime()
                     friendGraph.stopRealtime()
                     goldenHour.clear()

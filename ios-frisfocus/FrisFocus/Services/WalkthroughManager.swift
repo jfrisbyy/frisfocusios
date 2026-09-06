@@ -27,6 +27,7 @@
 
 import Foundation
 import Observation
+import Supabase
 
 /// One concept lesson in the contextual (Layer B) layer. Mechanics are
 /// taught by the interactive tour; these teach the non-obvious *ideas*.
@@ -85,6 +86,29 @@ nonisolated struct WalkthroughLesson: Identifiable, Equatable {
     )
 }
 
+/// What the server holds about someone's teaching progress.
+private nonisolated struct WalkthroughProgressRow: Decodable, Sendable {
+    let seenLessons: [String]?
+    let tourCompleted: Bool?
+    enum CodingKeys: String, CodingKey {
+        case seenLessons = "seen_lessons"
+        case tourCompleted = "tour_completed"
+    }
+}
+
+private nonisolated struct WalkthroughProgressUpsert: Encodable, Sendable {
+    let userId: String
+    let seenLessons: [String]
+    let tourCompleted: Bool
+    let updatedAt: String
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id"
+        case seenLessons = "seen_lessons"
+        case tourCompleted = "tour_completed"
+        case updatedAt = "updated_at"
+    }
+}
+
 @MainActor
 @Observable
 final class WalkthroughManager {
@@ -127,14 +151,61 @@ final class WalkthroughManager {
 
     // MARK: - Layer B · Contextual concept lessons
 
-    /// Lesson ids the user has already been shown (persisted locally).
+    /// Lesson ids the user has already been shown.
     private(set) var seen: Set<String>
+
+    // MARK: - One voice at a time
+
+    /// The one lesson currently on screen, app-wide.
+    ///
+    /// Surfaces used to raise lessons independently, so two could try to
+    /// rise at once and only one sheet can. The work zone had to guard
+    /// against the read lesson explicitly, by name — a rule every new
+    /// surface would have had to remember, and forget. Claiming through a
+    /// single slot makes "one voice at a time" a property of the manager
+    /// instead.
+    private(set) var presenting: String?
+
+    /// Lessons fired since the app came up.
+    ///
+    /// A person adding four friends on a Sunday should not be met with
+    /// four cards. Teaching is spent at most once per session, which over
+    /// a couple of weeks delivers the whole curriculum without a single
+    /// day of it feeling like a tutorial.
+    private var spentThisSession: Int = 0
+    private let sessionBudget = 1
+
+    /// Ask to present a lesson. `false` means someone else has the floor,
+    /// this session's teaching is already spent, or it has been seen.
+    ///
+    /// The mechanics tour is deliberately outside this: it is one
+    /// continuous experience the person opted into, not an interruption.
+    func claim(_ lesson: WalkthroughLesson) -> Bool {
+        guard !tourActive else { return false }
+        guard presenting == nil else { return false }
+        guard spentThisSession < sessionBudget else { return false }
+        guard shouldFire(lesson) else { return false }
+        presenting = lesson.id
+        spentThisSession += 1
+        return true
+    }
+
+    /// Hand the floor back. Safe to call for a lesson that never held it,
+    /// so a view's dismissal path needs no bookkeeping of its own.
+    func release(_ lesson: WalkthroughLesson) {
+        guard presenting == lesson.id else { return }
+        presenting = nil
+    }
 
     // MARK: - Storage
 
     private let defaults = UserDefaults.standard
     private let seenKey = "walkthrough.seenLessons.v1"
     private let tourDoneKey = "walkthrough.mechanicsTour.done.v1"
+
+    /// Whose progress is loaded. Nil while signed out, when the local
+    /// cache stands alone.
+    private var myUserId: String?
 
     init() {
         seen = Set(defaults.stringArray(forKey: seenKey) ?? [])
@@ -198,6 +269,7 @@ final class WalkthroughManager {
         tourActive = false
         tourStep = nil
         defaults.set(true, forKey: tourDoneKey)
+        pushProgress()
     }
 
     // MARK: - Contextual lesson control
@@ -213,5 +285,82 @@ final class WalkthroughManager {
         guard !seen.contains(lesson.id) else { return }
         seen.insert(lesson.id)
         defaults.set(Array(seen), forKey: seenKey)
+        pushProgress()
+    }
+
+    // MARK: - Account sync
+
+    /// Adopt an account's progress.
+    ///
+    /// Merged rather than replaced: the local cache may hold lessons seen
+    /// while signed out, or on this device before the account existed, and
+    /// re-teaching something is worse than skipping it. The union is also
+    /// the only merge that cannot resurrect a lesson someone has already
+    /// dismissed on another device.
+    func setUserId(_ userId: String?) {
+        guard myUserId != userId else { return }
+        myUserId = userId
+        guard userId != nil else { return }
+        Task { await loadProgress() }
+    }
+
+    private func loadProgress() async {
+        guard let myUserId else { return }
+        do {
+            let rows: [WalkthroughProgressRow] = try await supabase
+                .from("walkthrough_progress")
+                .select("seen_lessons, tour_completed")
+                .eq("user_id", value: myUserId)
+                .limit(1)
+                .execute()
+                .value
+            guard let row = rows.first else {
+                // Nothing stored yet — publish what this device knows so
+                // an existing user's progress is not lost the first time
+                // they reach a second device.
+                pushProgress()
+                return
+            }
+            let remoteSeen = Set(row.seenLessons ?? [])
+            if !remoteSeen.isSubset(of: seen) {
+                seen.formUnion(remoteSeen)
+                defaults.set(Array(seen), forKey: seenKey)
+            }
+            if row.tourCompleted == true, !mechanicsTourCompleted {
+                defaults.set(true, forKey: tourDoneKey)
+            }
+            // Anything this device knew that the server did not now goes up.
+            if !Set(row.seenLessons ?? []).isSuperset(of: seen)
+                || (mechanicsTourCompleted && row.tourCompleted != true) {
+                pushProgress()
+            }
+        } catch {
+            // Teaching is not worth an error state. A failed read simply
+            // leaves the local cache in charge, which is what shipped
+            // before this table existed.
+            print("[Walkthrough] progress load failed: \(error)")
+        }
+    }
+
+    /// Fire-and-forget: the local cache is already authoritative for this
+    /// launch, so a failed write costs a replay on another device at worst.
+    private func pushProgress() {
+        guard let myUserId else { return }
+        let payload = WalkthroughProgressUpsert(
+            userId: myUserId,
+            seenLessons: Array(seen),
+            tourCompleted: mechanicsTourCompleted,
+            updatedAt: ISO8601DateFormatter().string(from: Date())
+        )
+        Task {
+            do {
+                try await supabase
+                    .from("walkthrough_progress")
+                    .upsert(payload, onConflict: "user_id")
+                    .execute()
+            } catch {
+                print("[Walkthrough] progress push failed: \(error)")
+            }
+        }
     }
 }
