@@ -32,6 +32,12 @@ Then:
 open ios-frisfocus/FrisFocus.xcodeproj
 ```
 
+**Xcode 26 or newer is required.** The app deploys to iOS 18, but
+`SundialNavView` uses the iOS 26 `glassEffect` API behind an
+`if #available(iOS 26.0, *)` check. An availability check still needs an SDK
+that knows the symbol, so building on Xcode 16 fails with
+"value of type '_ShapeView<Capsule, Color>' has no member 'glassEffect'".
+
 Adding a new configuration key means editing **both**
 `scripts/config/Config.example.swift` and `scripts/bootstrap-config.sh`, so a
 fresh clone and CI keep building.
