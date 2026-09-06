@@ -108,6 +108,17 @@ private nonisolated struct ShareTierUpsert: Encodable, Sendable {
     }
 }
 
+/// One of MY outgoing tiers, read back so the dial shows what the server
+/// actually serves rather than a local default.
+private nonisolated struct MyShareTierRow: Decodable, Sendable {
+    let friendId: String
+    let tier: String?
+    enum CodingKeys: String, CodingKey {
+        case friendId = "friend_id"
+        case tier
+    }
+}
+
 // MARK: - Service
 
 @Observable
@@ -119,8 +130,9 @@ final class SocialSyncService {
     @ObservationIgnored weak var store: Store?
     @ObservationIgnored private(set) var remoteByLocal: [UUID: String] = [:]
     @ObservationIgnored private(set) var profilesByRemote: [String: RemoteProfile] = [:]
-    /// What each friend shares with me ("full" / "quiet"), by remote id
-    /// — resolved server-side by the season-card RPC, never assumed.
+    /// What each friend shares with me ("quiet" / "open" / "full"), by
+    /// remote id — resolved server-side by the season-card RPC, never
+    /// assumed.
     @ObservationIgnored private(set) var tiersByRemote: [String: String] = [:]
     @ObservationIgnored private var channel: RealtimeChannelV2?
     @ObservationIgnored private var realtimeTask: Task<Void, Never>?
@@ -306,7 +318,9 @@ final class SocialSyncService {
                 .execute()
                 .value
             for row in rows {
-                tiersByRemote[row.userId] = row.tier ?? "full"
+                // A row with no tier lands on Open: for a privacy dial
+                // the safe fallback is the middle rung, never the widest.
+                tiersByRemote[row.userId] = row.tier ?? VisibilityTier.open.rawValue
                 if var profile = profilesByRemote[row.userId] {
                     profile.seasonCard = row.card
                     profilesByRemote[row.userId] = profile
@@ -317,10 +331,33 @@ final class SocialSyncService {
         }
     }
 
+    /// Read back the tiers I have set for other people. `setShareTier`
+    /// pushes these but nothing used to read them, so a reinstall left the
+    /// sharing dial showing a local default while the server kept serving
+    /// the tier the person actually chose — the UI claiming "Open" while a
+    /// friend still received the full day. A miss is not an error: it just
+    /// means this person has never been dialled.
+    private func fetchMyOutgoingTiers(myUserId: String) async -> [String: String] {
+        do {
+            let rows: [MyShareTierRow] = try await supabase
+                .from("share_tiers")
+                .select("friend_id, tier")
+                .eq("owner_id", value: myUserId)
+                .execute()
+                .value
+            return rows.reduce(into: [:]) { acc, row in
+                if let tier = row.tier { acc[row.friendId] = tier }
+            }
+        } catch {
+            print("[SocialSync] outgoing tier read failed: \(error)")
+            return [:]
+        }
+    }
+
     /// Push my per-friend tier server-side, so THEIR device receives the
-    /// correspondingly trimmed season card — the quiet tier becomes a
-    /// data promise, not just a rendering choice.
-    func setShareTier(forRemote remoteId: String, quiet: Bool) async {
+    /// correspondingly trimmed season card — every rung of the dial
+    /// becomes a data promise, not just a rendering choice.
+    func setShareTier(forRemote remoteId: String, tier: VisibilityTier) async {
         guard let myUserId else { return }
         do {
             try await supabase
@@ -328,7 +365,7 @@ final class SocialSyncService {
                 .upsert(ShareTierUpsert(
                     ownerId: myUserId,
                     friendId: remoteId,
-                    tier: quiet ? "quiet" : "full",
+                    tier: tier.rawValue,
                     updatedAt: SyncDates.iso(Date())
                 ), onConflict: "owner_id,friend_id")
                 .execute()
@@ -377,19 +414,23 @@ final class SocialSyncService {
             }
             await refreshProfiles(remoteIds: counterparts.map { $0.id })
             await refreshSeasonCards(remoteIds: counterparts.map { $0.id })
+            let myOutgoingTiers = await fetchMyOutgoingTiers(myUserId: myUserId)
 
             let existingById = Dictionary(store.friends.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             var mapped: [Friend] = []
             for (remote, since) in counterparts {
                 guard let profile = profilesByRemote[remote] else { continue }
                 let lid = localId(forRemote: remote)
-                let tier = tiersByRemote[remote]
+                // Anything unrecognised (or absent) resolves to Open
+                // rather than Full — degrading a privacy control has to
+                // fall toward less exposure, never more.
+                let tier = VisibilityTier(rawValue: tiersByRemote[remote] ?? "") ?? .open
                 var friend = existingById[lid] ?? Friend(
                     id: lid,
                     displayName: profile.displayName,
                     initials: profile.initials,
                     accentColorHex: RemoteIDMapper.accentHex(forRemoteId: remote),
-                    sharesWithMe: tier == "quiet" ? .quiet : .full
+                    sharesWithMe: SharingSettings.from(tier: tier)
                 )
                 friend.displayName = profile.displayName
                 friend.initials = profile.initials
@@ -405,7 +446,19 @@ final class SocialSyncService {
                 if friend.connectedAt == nil { friend.connectedAt = since }
                 // The server-resolved tier — what THEY chose to share
                 // with me. Quiet friends arrive with a trimmed card too.
-                friend.sharesWithMe = tier == "quiet" ? .quiet : .full
+                friend.sharesWithMe = SharingSettings.from(tier: tier)
+                // And the other direction: what I share with THEM lives
+                // in share_tiers, so the dial survives a reinstall. Only
+                // a row that actually exists overwrites the local value —
+                // a friend never dialled is left at the local default
+                // rather than being silently rewritten.
+                if let raw = myOutgoingTiers[remote],
+                   let mine = VisibilityTier(rawValue: raw) {
+                    friend.theirClearanceToMyData = SharingSettings.from(
+                        tier: mine,
+                        showOpenItemsAtFull: friend.theirClearanceToMyData.showOpenItemsAtFull
+                    )
+                }
                 mapped.append(friend)
             }
             mapped.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }

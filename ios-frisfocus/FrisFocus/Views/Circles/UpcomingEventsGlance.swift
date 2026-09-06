@@ -35,7 +35,11 @@ struct UpcomingEventsGlance: View {
         if let next = nextEvent {
             card(for: next)
                 .offset(x: dragX)
-                .opacity(1 - min(0.9, abs(dragX) / 220))
+                // `dragX` is a CGFloat and `opacity` takes a Double, so the
+                // conversion is made explicit — comparing a CGFloat against
+                // a floating-point literal inside `min` is otherwise
+                // ambiguous under Xcode 16.
+                .opacity(1 - min(0.9, Double(abs(dragX)) / 220))
                 .simultaneousGesture(swipeAway(for: next))
                 .animation(.spring(response: 0.32, dampingFraction: 0.85), value: dragX)
         }

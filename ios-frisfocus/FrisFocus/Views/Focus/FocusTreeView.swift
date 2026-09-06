@@ -831,8 +831,14 @@ struct FallTransitionModifier: ViewModifier, Animatable {
         let p = max(0, min(1, progress))
         // Eased fall — quick-ish start, soft settle.
         let fall = 1 - pow(1 - p, 2.2)
-        let sway = CGFloat(sin(Double(p) * .pi * 2.6)) * 14 * (1 - p)
-        let rotation = (1 - p) * 220 + Double(sin(Double(p) * .pi * 3.2)) * 30
+        // Bind the trig to Double before it meets any CGFloat. Mixing the
+        // two in one expression leaves `*` ambiguous under Xcode 16's
+        // MemberImportVisibility, which is a hard error rather than a
+        // warning.
+        let swayPhase: Double = sin(Double(p) * .pi * 2.6)
+        let spinPhase: Double = sin(Double(p) * .pi * 3.2)
+        let sway = CGFloat(swayPhase) * 14 * (1 - p)
+        let rotation: Double = Double(1 - p) * 220 + spinPhase * 30
 
         content
             .offset(
