@@ -40,6 +40,9 @@ struct WorkZoneView: View {
     @State private var pendingGroveFriendIds: [UUID] = []
     /// Confirmation gate for the long-press "clear today's plan" action.
     @State private var showClearConfirm: Bool = false
+    /// The points-privacy concept lesson, fired once — the first time a
+    /// point value is actually on screen for the user to read.
+    @State private var pointsLesson: WalkthroughLesson?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -57,6 +60,11 @@ struct WorkZoneView: View {
                     }
                 }
                 HStack(spacing: 8) {
+                    // Once the privacy promise has been made, it stays
+                    // findable — this is the surface the numbers live on.
+                    if walkthrough.seen.contains(WalkthroughLesson.pointsPrivate.id) {
+                        WalkthroughHelpButton { pointsLesson = .pointsPrivate }
+                    }
                     weekScheduleButton
                     focusEntryButton
                     planMenuButton
@@ -105,6 +113,7 @@ struct WorkZoneView: View {
                 didAutoPresentAgenda = true
                 showAgenda = true
             }
+            maybeFirePointsLesson()
         }
         // Tour: the agenda lesson advances once the user has actually
         // been inside the agenda and come back to the plan.
@@ -113,6 +122,10 @@ struct WorkZoneView: View {
                 walkthrough.advanceTour()
             }
         }
+        // Points privacy: fires the moment a number is first legible on
+        // this page, and re-checks whenever anything it waits on moves.
+        .onChange(of: pointsLessonInputs) { _, _ in maybeFirePointsLesson() }
+        .walkthroughLessonSheet($pointsLesson) { walkthrough.markSeen($0) }
         .confirmationDialog(
             "Clear today's plan?",
             isPresented: $showClearConfirm,
@@ -425,6 +438,45 @@ struct WorkZoneView: View {
                 )
         }
         .accessibilityLabel("Plan options")
+    }
+
+    // MARK: - Points privacy lesson
+
+    /// True once the plan is showing a real point number. Every task card
+    /// carries its value on the right-hand side, so one pinned task is
+    /// enough for a score to be legible on this page.
+    private var planShowsPointValue: Bool {
+        store.todaysPlan.contains { item in
+            if case .task = item { return true }
+            return false
+        }
+    }
+
+    /// Everything the points lesson waits on, gathered into one watchable
+    /// value so a single observer covers all of it — a scored card on
+    /// screen, the mechanics tour finished, and the read lesson (the only
+    /// other sheet this page can raise, from NeedsYou below) out of the
+    /// way, since two sheets cannot rise at once.
+    private var pointsLessonInputs: [Bool] {
+        [
+            planShowsPointValue,
+            walkthrough.tourActive,
+            store.canShowReadPrompt && walkthrough.shouldFire(.theRead)
+        ]
+    }
+
+    /// Make the privacy promise at the first honest moment: a number the
+    /// user could reasonably read as a public score is now on screen, and
+    /// nothing else is speaking. Not during the tour — one voice at a
+    /// time — and never twice.
+    private func maybeFirePointsLesson() {
+        guard pointsLesson == nil,
+              planShowsPointValue,
+              !walkthrough.tourActive,
+              walkthrough.shouldFire(.pointsPrivate),
+              !(store.canShowReadPrompt && walkthrough.shouldFire(.theRead))
+        else { return }
+        pointsLesson = .pointsPrivate
     }
 
     // MARK: - One-time swipe hint

@@ -53,8 +53,9 @@ nonisolated struct WalkthroughLesson: Identifiable, Equatable {
         message: "Every sun risen. This is what a complete day looks like — quietly, all of it.",
         icon: "sun.max.fill"
     )
-    /// Points reveal — deferred until points become real (the season
-    /// conversation). Defined here, fired by that flow when it exists.
+    /// Points reveal — deferred until points become real. Fired from the
+    /// work zone the first time today's plan actually shows a score, so
+    /// the promise arrives with the number rather than ahead of it.
     static let pointsPrivate = WalkthroughLesson(
         id: "pointsPrivate",
         title: "Your points are yours.",

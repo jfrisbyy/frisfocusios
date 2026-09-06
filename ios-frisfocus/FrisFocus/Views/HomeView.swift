@@ -477,8 +477,12 @@ struct HomeView: View {
 
     /// The check-off lesson advances on the user's real first check: the
     /// page glides up to reveal the sun that just rose (the hero moment),
-    /// holds a beat, then moves on to the swipe lesson. The quantity
-    /// lesson advances on the next logged amount.
+    /// holds a beat, then moves on to the swipe lesson.
+    ///
+    /// The quantity lesson deliberately does NOT ride this signal: the
+    /// done-count rises on any completion, so a flat check-off would
+    /// satisfy the one lesson that is about entering an amount. It
+    /// watches the real logged amount instead, in MechanicsTourOverlay.
     private func handleTourCheck(old: Int, new: Int, proxy: ScrollViewProxy) {
         guard walkthrough.tourActive, new > old else { return }
         switch walkthrough.tourStep {
@@ -489,8 +493,6 @@ struct HomeView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
                 walkthrough.advanceTour()
             }
-        case .quantity:
-            walkthrough.advanceTour()
         default:
             break
         }

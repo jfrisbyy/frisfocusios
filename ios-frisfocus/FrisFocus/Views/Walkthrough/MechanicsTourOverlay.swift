@@ -12,8 +12,10 @@
 //                     starts empty on purpose; nothing is auto-assigned).
 //                     Advances when anything lands on today's plan.
 //   2. checkOff     — tap the circle; the sun rises. Advances on the check.
-//   3. swipeCapture — swipe a finished task to open the proof camera.
+//   3. swipeCapture — swipe a finished task to open the proof camera,
+//                     and the other way to take a row off today.
 //   4. quantity     — log an amount (only when the plan has one).
+//                     Advances when an amount is actually logged.
 //   5. rhythm       — give a task a recurring schedule in the REAL
 //                     editor (presented from the card's button).
 //                     Advances when a recurring schedule is saved.
@@ -97,6 +99,17 @@ struct MechanicsTourOverlay: View {
                     walkthrough.advanceTour()
                 }
             }
+            // The quantity lesson advances on the amount actually being
+            // logged — the "Log" button in the amount sheet, never a
+            // plain check-off, which would let a flat task stand in for
+            // the one lesson that is about amounts.
+            // (Reads the LIVE step, same as the watchers above.)
+            .onChange(of: quantityLogCount) { old, new in
+                if walkthrough.tourStep == .quantity, new > old {
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    walkthrough.advanceTour()
+                }
+            }
             // Keep the quantity lesson honest as the plan is built mid-tour.
             .onChange(of: planHasQuantity) { _, has in
                 walkthrough.setQuantityAvailable(has)
@@ -138,7 +151,7 @@ struct MechanicsTourOverlay: View {
         case .swipeCapture:
             CoachmarkCard(
                 title: "Swipe a finished task to capture it.",
-                message: "It opens the camera to snap proof — the lift, the meal, the moment. Then you choose who sees it; proofs go only to the friends you pick.",
+                message: "It opens the camera to snap proof — the lift, the meal, the moment. Then you choose who sees it; proofs go only to the friends you pick. Swipe left instead and the row steps off today, back to your season.",
                 onSkip: { walkthrough.skipTour() },
                 continueTitle: showFallback ? "Next" : nil,
                 onContinue: showFallback ? { walkthrough.advanceTour() } : nil
@@ -202,6 +215,14 @@ struct MechanicsTourOverlay: View {
     /// How many board tasks carry a recurring schedule right now.
     private var recurringCount: Int {
         store.tasks.filter(\.hasRecurringSchedule).count
+    }
+
+    /// How many log entries carry an amount. Only `completeTask(_:quantity:)`
+    /// writes a non-nil quantity, and the only caller that passes one is the
+    /// amount sheet's "Log" button — so a rise here means precisely "the
+    /// person just logged how much", which is the lesson being taught.
+    private var quantityLogCount: Int {
+        store.logEntries.filter { $0.quantity != nil }.count
     }
 
     // MARK: - Step actions
