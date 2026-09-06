@@ -15,6 +15,7 @@
 //  a simulator with app state.
 //
 
+import Foundation
 import Testing
 @testable import FrisFocus
 
