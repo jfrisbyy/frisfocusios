@@ -662,14 +662,30 @@ final class GoldenHourService {
     /// across every enabled circle. Deterministic times mean every
     /// member's device schedules the exact same instants.
     func rescheduleFireNotifications() {
-        let plans: [(id: String, circleName: String, fireAt: Date, circleId: UUID)] = {
-            var out: [(String, String, Date, UUID)] = []
+        struct Plan {
+            let id: String
+            let circleName: String
+            let fireAt: Date
+            let circleId: UUID
+            /// A heads-up before the window opens, where one is honest.
+            let headsUpAt: Date?
+        }
+
+        let plans: [Plan] = {
+            var out: [Plan] = []
             let now = Date()
             for circle in circles where circle.settings.enabled {
                 for dayOffset in 0..<3 {
                     let reference = now.addingTimeInterval(TimeInterval(dayOffset * 86_400))
                     guard let m = moment(for: circle.settings, onDayOf: reference), m.fireAt > now else { continue }
-                    out.append(("golden-fire-\(circle.id.uuidString)-\(m.day)", circle.name, m.fireAt, circle.id))
+                    let headsUp = m.fireAt.addingTimeInterval(-Self.headsUpLead)
+                    out.append(Plan(
+                        id: "golden-fire-\(circle.id.uuidString)-\(m.day)",
+                        circleName: circle.name,
+                        fireAt: m.fireAt,
+                        circleId: circle.id,
+                        headsUpAt: Self.deservesHeadsUp(circle.settings) && headsUp > now ? headsUp : nil
+                    ))
                 }
             }
             return out
@@ -678,7 +694,9 @@ final class GoldenHourService {
         Task {
             let center = UNUserNotificationCenter.current()
             let pending = await center.pendingNotificationRequests()
-            let stale = pending.map(\.identifier).filter { $0.hasPrefix("golden-fire-") }
+            let stale = pending.map(\.identifier).filter {
+                $0.hasPrefix("golden-fire-") || $0.hasPrefix("golden-soon-")
+            }
             center.removePendingNotificationRequests(withIdentifiers: stale)
 
             for plan in plans {
@@ -698,8 +716,50 @@ final class GoldenHourService {
                 } catch {
                     print("[GoldenHour] Failed to schedule fire alert: \(error)")
                 }
+
+                guard let headsUpAt = plan.headsUpAt else { continue }
+                let soon = UNMutableNotificationContent()
+                soon.title = "Golden Hour — \(plan.circleName)"
+                soon.body = "In 10 minutes. The window is only five, so be somewhere you can show something."
+                soon.sound = .default
+                soon.userInfo = ["route": "golden", "circleId": plan.circleId.uuidString]
+                let soonTrigger = UNCalendarNotificationTrigger(
+                    dateMatching: Calendar.current.dateComponents(
+                        [.year, .month, .day, .hour, .minute, .second],
+                        from: headsUpAt
+                    ),
+                    repeats: false
+                )
+                do {
+                    try await center.add(UNNotificationRequest(
+                        identifier: "golden-soon-\(plan.circleId.uuidString)-\(plan.fireAt.timeIntervalSince1970)",
+                        content: soon,
+                        trigger: soonTrigger
+                    ))
+                } catch {
+                    print("[GoldenHour] Failed to schedule heads-up: \(error)")
+                }
             }
         }
+    }
+
+    /// How long before the window opens the heads-up lands.
+    static let headsUpLead: TimeInterval = 10 * 60
+
+    /// Whether a circle's Golden Hour should be pre-announced.
+    ///
+    /// Only in `.fixed` mode. A five-minute window with one alert at the
+    /// instant it opens is unforgiving — a phone in a pocket costs you
+    /// the day — and where the circle has agreed on a time out loud, a
+    /// heads-up gives nothing away.
+    ///
+    /// `.surprise` and `.turns` deliberately get none. Not knowing when
+    /// it lands is the entire premise of those modes; a warning would
+    /// announce the surprise ten minutes early and quietly convert them
+    /// into `.fixed`. The fix for a missed surprise is a better alert,
+    /// not a spoiled one.
+    private static func deservesHeadsUp(_ settings: GoldenHourSettings) -> Bool {
+        settings.mode == .fixed
     }
 
     /// "Golden Hour disappears in 10 minutes" — scheduled when the user

@@ -146,6 +146,14 @@ final class SocialSyncService {
     /// launch — persisted per account so an app kill never silently
     /// drops a story.
     @ObservationIgnored var pendingStoryUploadIds: Set<UUID> = []
+    /// Circles whose full archive has been pulled this session, so
+    /// re-opening "Our story" doesn't re-fetch history that can't have
+    /// changed. Cleared on sign-out with everything else.
+    @ObservationIgnored var archivedCircleIds: Set<UUID> = []
+    /// True while an archive page is in flight — "Our story" shows a
+    /// quiet loading state rather than an honest-looking but truncated
+    /// count.
+    var isLoadingArchive = false
 
     // MARK: Lifecycle
 
@@ -184,6 +192,8 @@ final class SocialSyncService {
         myUserId = nil
         failedStoryUploadIds = []
         pendingStoryUploadIds = []
+        archivedCircleIds = []
+        isLoadingArchive = false
         if let store {
             store.friends = []
             store.storyPosts = []

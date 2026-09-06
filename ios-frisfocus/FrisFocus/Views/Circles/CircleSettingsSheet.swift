@@ -145,6 +145,7 @@ struct CircleSettingsSheet: View {
         .sheet(isPresented: $showOurStory) {
             CircleStoryView(circleId: circleId)
                 .environment(store)
+                .environment(socialSync)
         }
         .sheet(isPresented: $showGoldenSettings) {
             GoldenHourSettingsSheet(

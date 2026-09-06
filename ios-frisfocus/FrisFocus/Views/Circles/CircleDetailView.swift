@@ -27,6 +27,7 @@ import UIKit
 
 struct CircleDetailView: View {
     @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.dismiss) private var dismiss
 
@@ -122,6 +123,7 @@ struct CircleDetailView: View {
         .sheet(isPresented: $showOurStory) {
             CircleStoryView(circleId: circle.id)
                 .environment(store)
+                .environment(socialSync)
         }
         .sheet(isPresented: $showCreateEvent) {
             CreateCircleEventView(circle: circle, onCreated: { event in

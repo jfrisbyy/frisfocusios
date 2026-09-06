@@ -51,17 +51,51 @@ struct PeopleTodayList: View {
         return messageGraph.unreadCount(fromFriendId: remote, myUserId: myId)
     }
 
+    /// Below this the list is short enough to read at a glance, and a
+    /// search field would be one more thing on screen doing nothing.
+    private let searchThreshold: Int = 8
+
+    /// What the person has typed into the filter, when it is showing.
+    @State private var query: String = ""
+
+    private var showsSearch: Bool { showAll && store.friends.count >= searchThreshold }
+
     private var orderedFriends: [Friend] {
         store.friends.sorted { a, b in
             let aUnread = unreadCount(for: a) > 0
             let bUnread = unreadCount(for: b) > 0
             if aUnread != bUnread { return aUnread }
-            return false
+            // Every remaining comparison has to be decisive. Returning
+            // false for ties satisfies the ordering but leaves the rest
+            // to Swift's sort, which is not stable — so the list below
+            // the unread ones silently reshuffled between renders, under
+            // the reader's finger. Recency first, then name, so the
+            // order is the same every time it is drawn.
+            let aSignal = a.lastSignalAt ?? a.connectedAt ?? .distantPast
+            let bSignal = b.lastSignalAt ?? b.connectedAt ?? .distantPast
+            if aSignal != bSignal { return aSignal > bSignal }
+            if a.displayName != b.displayName {
+                return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
+            }
+            return a.id.uuidString < b.id.uuidString
+        }
+    }
+
+    /// The ordered list narrowed by whatever has been typed. Matching is
+    /// diacritic- and case-insensitive so searching "rene" finds "René".
+    private var matchingFriends: [Friend] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return orderedFriends }
+        return orderedFriends.filter {
+            $0.displayName.range(
+                of: trimmed,
+                options: [.caseInsensitive, .diacriticInsensitive]
+            ) != nil
         }
     }
 
     private var visibleFriends: [Friend] {
-        showAll ? orderedFriends : Array(orderedFriends.prefix(collapsedCount))
+        showAll ? matchingFriends : Array(orderedFriends.prefix(collapsedCount))
     }
 
     private var hiddenCount: Int { max(0, store.friends.count - collapsedCount) }
@@ -72,6 +106,12 @@ struct PeopleTodayList: View {
                 .padding(.horizontal, Theme.pageHorizontalPadding)
                 .padding(.top, 18)
                 .padding(.bottom, 4)
+
+            if showsSearch {
+                searchField
+                    .padding(.horizontal, Theme.pageHorizontalPadding)
+                    .padding(.bottom, 10)
+            }
 
             ForEach(Array(visibleFriends.enumerated()), id: \.element.id) { idx, friend in
                 if idx > 0 {
@@ -84,11 +124,57 @@ struct PeopleTodayList: View {
                 )
             }
 
+            if showsSearch && visibleFriends.isEmpty {
+                Text("Nobody by that name.")
+                    .font(.serifItalic(14, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 22)
+            }
+
             if hiddenCount > 0 {
                 hairline
                 showAllRow
             }
         }
+    }
+
+    /// A plain filter over the expanded list. Deliberately not
+    /// `.searchable` — that belongs to a navigation container and would
+    /// hoist a search bar over the whole People page, when what needs
+    /// narrowing is this one section.
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.sans(12, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            TextField("Search friends", text: $query)
+                .font(.sans(14, weight: .regular))
+                .foregroundStyle(Theme.textPrimary)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .submitLabel(.search)
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.35))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            Capsule(style: .continuous).fill(Color.white.opacity(0.6))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 0.5)
+        )
     }
 
     /// The quiet expand/collapse affordance closing the list.
@@ -97,6 +183,10 @@ struct PeopleTodayList: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             withAnimation(.easeInOut(duration: 0.28)) {
                 showAll.toggle()
+                // Collapsing puts the filter away; leaving a stale query
+                // behind would make the next expand open onto a list
+                // that looks like most of your friends are gone.
+                if !showAll { query = "" }
             }
         } label: {
             HStack(spacing: 6) {

@@ -16,6 +16,7 @@ import SwiftUI
 
 struct CircleStoryView: View {
     @Environment(Store.self) private var store
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
 
     let circleId: UUID
@@ -43,6 +44,10 @@ struct CircleStoryView: View {
             }
             .navigationTitle("Our story")
             .navigationBarTitleDisplayMode(.inline)
+            // The routine refresh only carries the last month of clips.
+            // A lookback that reads back years has to ask for the rest,
+            // and this is the one place that actually wants it.
+            .task { await socialSync.loadCircleArchive(circleId: circleId) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -112,7 +117,12 @@ struct CircleStoryView: View {
 
     private func chapterRow(_ chapter: CircleChapter, circleId: UUID, isFirst: Bool, isLast: Bool) -> some View {
         let tint = chapter.type.tint
-        let moments = store.storyPosts(forCircleId: circleId, in: chapter).count
+        // A count is a claim. While history is still loading it would be
+        // a confidently wrong one, so the row says nothing until it can
+        // say something true.
+        let moments: Int? = socialSync.isLoadingArchive
+            ? nil
+            : store.storyPosts(forCircleId: circleId, in: chapter).count
 
         return HStack(alignment: .top, spacing: 14) {
             // Timeline rail: connecting line + node.
@@ -144,7 +154,7 @@ struct CircleStoryView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func card(_ chapter: CircleChapter, tint: Color, moments: Int) -> some View {
+    private func card(_ chapter: CircleChapter, tint: Color, moments: Int?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(chapterEyebrow(chapter))
@@ -171,7 +181,7 @@ struct CircleStoryView: View {
                     .font(.sans(11, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(0.5))
                     .labelStyle(.titleAndIcon)
-                if moments > 0 {
+                if let moments, moments > 0 {
                     Label(moments == 1 ? "1 moment" : "\(moments) moments", systemImage: "photo.on.rectangle.angled")
                         .font(.sans(11, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.5))

@@ -114,6 +114,9 @@ final class Store {
     /// on the friends rail. Persisted under its own key so it
     /// survives relaunch; missing on first load is treated as empty.
     var viewedStoryPostIds: Set<UUID> = [] { didSet { markDirty(.viewedStoryPostIds) } }
+    /// Pacts whose closing has already been shown. A window closes once;
+    /// the ceremony that marks it should too.
+    var seenPactClosings: Set<UUID> = [] { didSet { markDirty(.seenPactClosings) } }
 
     /// Real "seen by" data mirrored from the backend: postId → the
     /// local ids of everyone who's viewed it. In-memory only — the
@@ -469,6 +472,7 @@ final class Store {
         static let habitTrains = "habitTrains"
         static let boosters = "boosters"
         static let viewedStoryPostIds = "viewedStoryPostIds"
+        static let seenPactClosings = "store.seenPactClosings.v1"
         static let pacts = "pacts"
         static let pactCompletions = "pactCompletions"
         static let circleTaskRequests = "circleTaskRequests"
@@ -545,6 +549,7 @@ final class Store {
             userDefaults.removeObject(forKey: Keys.habitTrains)
             userDefaults.removeObject(forKey: Keys.boosters)
             userDefaults.removeObject(forKey: Keys.viewedStoryPostIds)
+            userDefaults.removeObject(forKey: Keys.seenPactClosings)
             userDefaults.removeObject(forKey: Keys.pacts)
             userDefaults.removeObject(forKey: Keys.pactCompletions)
             userDefaults.removeObject(forKey: Keys.circleTaskRequests)
@@ -653,7 +658,21 @@ final class Store {
             if let ids: [UUID] = Store.loadArray(Keys.viewedStoryPostIds) {
                 self.viewedStoryPostIds = Set(ids)
             }
+            let hasClosingHistory = userDefaults.object(forKey: Keys.seenPactClosings) != nil
+            if let ids: [UUID] = Store.loadArray(Keys.seenPactClosings) {
+                self.seenPactClosings = Set(ids)
+            }
             self.pacts = Store.loadArray(Keys.pacts) ?? []
+            // First launch after closings became a thing: everything
+            // already finished has, in every sense that matters, already
+            // been closed. Without this, upgrading would stack a
+            // ceremony for every pact the person ever ran.
+            if !hasClosingHistory {
+                self.seenPactClosings = Set(
+                    self.pacts.filter { $0.status == .completed || $0.status == .declined }.map(\.id)
+                )
+                dirtyKeys.insert(.seenPactClosings)
+            }
             self.pactCompletions = Store.loadArray(Keys.pactCompletions) ?? []
             self.circleTaskRequests = Store.loadArray(Keys.circleTaskRequests) ?? []
             self.focusSessions = Store.loadArray(Keys.focusSessions) ?? []
@@ -811,6 +830,7 @@ final class Store {
         circleTaskRequests = []
         sharedFocusBlocks = []
         viewedStoryPostIds = []
+        seenPactClosings = []
         storyPosts = kept
         mediaAssets = mediaAssets.filter { keptMediaIds.contains($0.id) }
         flushPendingSaves()
@@ -834,7 +854,7 @@ final class Store {
         case circleEvents, eventRSVPs, eventCheckIns
         case signalFacts, cheers, storyPosts, directShares, likes, comments, mediaAssets
         case avoidanceItems, avoidanceOccurrences, habitTrains, boosters
-        case viewedStoryPostIds, pacts, pactCompletions, circleTaskRequests
+        case viewedStoryPostIds, seenPactClosings, pacts, pactCompletions, circleTaskRequests
         case focusSessions, sharedFocusBlocks, scheduledGroves
         case cadenceLinks, cadenceOutcomeFulfillments, consumedCadenceEventIds
         case buckets, dayTemplates, scheduleConfig
@@ -985,6 +1005,7 @@ final class Store {
         case .habitTrains: setJSON(habitTrains, forKey: Keys.habitTrains, encoder: encoder)
         case .boosters: setJSON(boosters, forKey: Keys.boosters, encoder: encoder)
         case .viewedStoryPostIds: setJSON(Array(viewedStoryPostIds), forKey: Keys.viewedStoryPostIds, encoder: encoder)
+        case .seenPactClosings: setJSON(Array(seenPactClosings), forKey: Keys.seenPactClosings, encoder: encoder)
         case .pacts: setJSON(pacts, forKey: Keys.pacts, encoder: encoder)
         case .pactCompletions: setJSON(pactCompletions, forKey: Keys.pactCompletions, encoder: encoder)
         case .circleTaskRequests: setJSON(circleTaskRequests, forKey: Keys.circleTaskRequests, encoder: encoder)
@@ -1028,7 +1049,7 @@ final class Store {
         Keys.signalFacts, Keys.cheers, Keys.storyPosts, Keys.directShares,
         Keys.likes, Keys.comments, Keys.mediaAssets, Keys.avoidanceItems,
         Keys.avoidanceOccurrences, Keys.habitTrains, Keys.boosters,
-        Keys.viewedStoryPostIds, Keys.pacts, Keys.pactCompletions,
+        Keys.viewedStoryPostIds, Keys.seenPactClosings, Keys.pacts, Keys.pactCompletions,
         Keys.circleTaskRequests, Keys.focusSessions, Keys.sharedFocusBlocks,
         Keys.scheduledGroves,
         Keys.cadenceLinks, Keys.cadenceOutcomeFulfillments,
@@ -4110,6 +4131,7 @@ extension Store {
         habitTrains = []
         boosters = []
         viewedStoryPostIds = []
+        seenPactClosings = []
         pacts = []
         pactCompletions = []
         circleTaskRequests = []
@@ -4893,10 +4915,13 @@ extension Store {
         guard !viewedStoryPostIds.contains(postId) else { return }
         viewedStoryPostIds.insert(postId)
         persistAll()
-        if let post = storyPosts.first(where: { $0.id == postId }),
-           post.authorId != currentUserId {
-            social?.storyViewed(postId: postId)
-        }
+        // Write through for every post, including my own. A circle clip
+        // I posted lights its own "new story" badge until I watch it, so
+        // skipping my own view meant a reinstall relit a badge on a clip
+        // I'd already seen, permanently. Seen-by is derived by filtering
+        // against `friends`, which never contains me, so recording this
+        // cannot put the author in their own viewer list.
+        social?.storyViewed(postId: postId)
     }
 
     /// True when the friend has at least one unexpired general story
@@ -5151,6 +5176,66 @@ extension Store {
         pacts[idx].status = .completed
         persistAll()
         social?.pactStatusChanged(pacts[idx])
+    }
+
+    // MARK: - Pact windows
+
+    /// Close every active pact whose window has run out.
+    ///
+    /// The model has always documented `.completed` as "set at window
+    /// close", but nothing ever set it: the only path to `.completed`
+    /// was the manual "End pact" button. So a finished pact stayed
+    /// `.active` forever, sitting in the live list reading "0 DAYS
+    /// LEFT" — a commitment that never resolved, which is the one thing
+    /// a commitment has to do.
+    ///
+    /// Idempotent and cheap, so it can run on every foreground rather
+    /// than hiding behind the once-a-day rollover guard.
+    @discardableResult
+    func settleExpiredPacts(now: Date = Date()) -> [Pact] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: now)
+        var settled: [Pact] = []
+        for idx in pacts.indices {
+            guard pacts[idx].status == .active,
+                  let end = pacts[idx].endDate,
+                  cal.startOfDay(for: end) <= today else { continue }
+            pacts[idx].status = .completed
+            settled.append(pacts[idx])
+        }
+        guard !settled.isEmpty else { return [] }
+        persistAll()
+        // Both devices run this independently and reach the same answer
+        // from the same dates, so the write is a convergence, not a race.
+        for pact in settled { social?.pactStatusChanged(pact) }
+        return settled
+    }
+
+    /// The next closed pact the user hasn't been shown the closing for,
+    /// oldest first — so a week away doesn't reorder the history.
+    var pactAwaitingClosing: Pact? {
+        pacts
+            .filter { $0.status == .completed && !seenPactClosings.contains($0.id) }
+            .min { ($0.endDate ?? $0.createdAt) < ($1.endDate ?? $1.createdAt) }
+    }
+
+    /// Mark a pact's closing as shown. Idempotent.
+    func acknowledgePactClosing(_ pactId: UUID) {
+        guard !seenPactClosings.contains(pactId) else { return }
+        seenPactClosings.insert(pactId)
+        persistAll()
+    }
+
+    /// Both people's days-kept for a finished pact, as one symmetric
+    /// pair. Deliberately returns the two counts and no comparison:
+    /// there is no winner field in the model and there is none here.
+    func pactClosingSummary(_ pact: Pact) -> (mine: Int, theirs: Int, window: Int) {
+        let partnerId = pact.partnerId == currentUserId ? pact.proposerId : pact.partnerId
+        return (
+            mine: pactDaysKept(pact: pact, userId: currentUserId),
+            theirs: pactDaysKept(pact: pact, userId: partnerId),
+            window: pact.durationDays
+        )
     }
 
     /// Walk away from a pact entirely. Removes the row and any

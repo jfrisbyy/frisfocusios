@@ -138,13 +138,23 @@ extension SocialSyncService {
     func refreshStories() async {
         guard let store, myUserId != nil else { return }
         do {
+            // Two windows, both bounded. General posts expire at 25
+            // hours, so they self-limit. Circle clips never expire, so
+            // without a window of their own the steady-state refresh
+            // grows with the age of every circle you're in — and the
+            // newest-first cap silently drops the oldest clips off the
+            // end, which is worse than not loading them: "Our story"
+            // would show a confidently wrong count. Anything older than
+            // the live window is history, pulled deliberately by
+            // `loadCircleArchive(circleId:)` when someone opens it.
             let cutoff = SyncDates.iso(Date().addingTimeInterval(-25 * 3600))
+            let clipCutoff = SyncDates.iso(Date().addingTimeInterval(-Self.liveClipWindowDays * 24 * 3600))
             let rows: [StoryPostRow] = try await supabase
                 .from("story_posts")
                 .select("id, author_id, caption, media_path, media_url, media_kind, media_duration, circle_id, attached_task_id, created_at")
-                .or("circle_id.not.is.null,created_at.gte.\(cutoff)")
+                .or("and(circle_id.not.is.null,created_at.gte.\(clipCutoff)),and(circle_id.is.null,created_at.gte.\(cutoff))")
                 .order("created_at", ascending: false)
-                .limit(400)
+                .limit(Self.liveStoryPageSize)
                 .execute()
                 .value
 
@@ -221,6 +231,20 @@ extension SocialSyncService {
                         || pendingStoryUploadIds.contains(post.id))
             }
             mapped.append(contentsOf: optimistic)
+
+            // History pulled by `loadCircleArchive` sits outside the live
+            // window, so the next refresh would not return it. Carry it
+            // across rather than letting a routine refresh silently empty
+            // a lookback the person is currently reading.
+            if !archivedCircleIds.isEmpty {
+                let liveIds = Set(mapped.map(\.id))
+                let carried = store.storyPosts.filter { post in
+                    guard let cid = post.circleId else { return false }
+                    return archivedCircleIds.contains(cid) && !liveIds.contains(post.id)
+                }
+                mapped.append(contentsOf: carried)
+            }
+
             mapped.sort { $0.createdAt > $1.createdAt }
 
             // Posts this account chose to hide never re-enter from the
@@ -276,6 +300,95 @@ extension SocialSyncService {
         } catch {
             print("[SocialSync] stories refresh failed: \(error)")
         }
+    }
+
+    // MARK: - Circle archives
+
+    /// How far back the routine refresh reaches for circle clips.
+    /// Everything older is history: real, kept, and pulled on demand.
+    static let liveClipWindowDays: Double = 30
+    /// The cap on one live refresh. Reached only by someone in many busy
+    /// circles at once; the window above is what keeps this flat.
+    static let liveStoryPageSize = 400
+    /// One page of archive. Pulled in a loop until a short page arrives,
+    /// so a long-running circle's whole history lands rather than the
+    /// first page of it.
+    static let archivePageSize = 200
+
+    /// Pull one circle's clips from before the live window — the whole
+    /// history, oldest included — and merge them in.
+    ///
+    /// Mirrors `MessageGraphService.loadOlderMessages`: pages backwards
+    /// from the oldest thing already held, stops on a short page. Runs
+    /// once per circle per session, because history cannot change.
+    /// Opening "Our story" is the trigger; nothing pays this cost until
+    /// someone actually asks to read back.
+    func loadCircleArchive(circleId: UUID) async {
+        guard let store, myUserId != nil else { return }
+        guard !archivedCircleIds.contains(circleId), !isLoadingArchive else { return }
+        isLoadingArchive = true
+        defer { isLoadingArchive = false }
+
+        // Start from the oldest clip we already hold for this circle, so
+        // the archive picks up exactly where the live window ends.
+        var before = store.storyPosts
+            .filter { $0.circleId == circleId }
+            .map(\.createdAt)
+            .min() ?? Date()
+
+        var collected: [StoryPostRow] = []
+        do {
+            while true {
+                let page: [StoryPostRow] = try await supabase
+                    .from("story_posts")
+                    .select("id, author_id, caption, media_path, media_url, media_kind, media_duration, circle_id, attached_task_id, created_at")
+                    .eq("circle_id", value: circleId.uuidString)
+                    .lt("created_at", value: SyncDates.iso(before))
+                    .order("created_at", ascending: false)
+                    .limit(Self.archivePageSize)
+                    .execute()
+                    .value
+
+                collected.append(contentsOf: page)
+                guard page.count == Self.archivePageSize,
+                      let oldest = page.map({ SyncDates.parse($0.createdAt) }).min(),
+                      oldest < before else { break }
+                before = oldest
+            }
+        } catch {
+            print("[SocialSync] circle archive failed: \(error)")
+            return
+        }
+
+        // Mark loaded even when the circle turns out to have no history —
+        // an empty answer is still an answer, and re-asking every time
+        // "Our story" opens would be a query per open for nothing.
+        archivedCircleIds.insert(circleId)
+        guard !collected.isEmpty else { return }
+
+        await ensureProfiles(remoteIds: Array(Set(collected.map(\.authorId))))
+
+        let hidden = myUserId.map { ModerationService.persistedHiddenStories(userId: $0) } ?? []
+        let existing = Set(store.storyPosts.map(\.id))
+        let fresh = collected
+            .filter { !existing.contains($0.id) && !hidden.contains($0.id) }
+            .map { row in
+                StoryPost(
+                    id: row.id,
+                    authorId: localId(forRemote: row.authorId),
+                    createdAt: SyncDates.parse(row.createdAt),
+                    caption: row.caption,
+                    mediaId: row.hasMedia ? row.id : nil,
+                    circleId: row.circleId,
+                    attachedCircleTaskId: row.attachedTaskId
+                )
+            }
+        guard !fresh.isEmpty else { return }
+
+        store.storyPosts.append(contentsOf: fresh)
+        store.storyPosts.sort { $0.createdAt > $1.createdAt }
+        ensureMediaAssets(for: collected)
+        store.persistAll()
     }
 
     /// Make sure a `MediaAsset` exists for every synced post with media

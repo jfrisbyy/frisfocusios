@@ -41,6 +41,8 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
+    /// The finished pact whose closing is on screen, if any.
+    @State private var closingPact: Pact?
     @State private var showSeasonSetupFromComplete: Bool = false
     @State private var showExitDemoDialog: Bool = false
 
@@ -186,6 +188,21 @@ struct ContentView: View {
                 AddFriendLinkView(userId: target.id)
                     .environment(auth)
             }
+            // A pact's window closing is the one moment in this app with
+            // a real ending, and it used to pass in silence. Raised here
+            // rather than inside the pact page because the whole problem
+            // is that nobody goes back to a pact after it ends.
+            .sheet(item: $closingPact, onDismiss: {
+                // Acknowledge whichever closing was showing, then pick up
+                // the next one — someone back after two weeks away may
+                // have more than one window to close, and they should
+                // arrive one at a time, oldest first.
+                if let shown = closingPact { store.acknowledgePactClosing(shown.id) }
+                closingPact = store.pactAwaitingClosing
+            }) { pact in
+                PactClosingView(pact: pact)
+                    .environment(store)
+            }
             .task(id: auth.user?.id) {
                 // Keep the user's own editable profile (custom name,
                 // @username, photo) in sync with who is signed in, and tell
@@ -255,6 +272,8 @@ struct ContentView: View {
             .onAppear {
                 print("[FrisFocus] Tasks: \(store.tasks.count), To-dos: \(store.todos.count), Notes: \(store.notes.count), LogEntries: \(store.logEntries.count)")
                 store.performDayRolloverIfNeeded()
+                store.settleExpiredPacts()
+                if closingPact == nil { closingPact = store.pactAwaitingClosing }
                 store.evaluateCarryForwardPrompt()
                 // Build today's on-device reminders and hand the widget
                 // its first snapshot of the day.
@@ -279,10 +298,14 @@ struct ContentView: View {
                     .receive(on: DispatchQueue.main)
             ) { _ in
                 store.performDayRolloverIfNeeded()
+                store.settleExpiredPacts()
+                if closingPact == nil { closingPact = store.pactAwaitingClosing }
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     store.performDayRolloverIfNeeded()
+                    store.settleExpiredPacts()
+                    if closingPact == nil { closingPact = store.pactAwaitingClosing }
                     store.evaluateCarryForwardPrompt()
                     store.schedulePlanReminderRefresh()
                     // A network hiccup at launch may have left the app
