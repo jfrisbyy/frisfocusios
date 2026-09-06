@@ -352,3 +352,65 @@ struct ReachableTargetTests {
         #expect(min(30, Store.strongDayValue(from: [])) == 1)
     }
 }
+
+// MARK: - Retiring a replaced profile photo
+//
+// The gap: every avatar/header upload wrote a NEW uniquely-named object
+// and never removed the one it replaced. The `avatars` bucket is public,
+// so a photo someone had replaced stayed fetchable at its old URL
+// forever — not what "I changed my picture" is understood to mean.
+//
+// These cover the parser that decides what gets deleted, because getting
+// it wrong deletes the wrong object.
+
+@Suite("Avatar object path")
+struct AvatarObjectPathTests {
+
+    private let me = "user-abc"
+    private func url(_ tail: String) -> String {
+        "https://example.supabase.co/storage/v1/object/public/\(tail)"
+    }
+
+    @Test("A normal avatar URL resolves to its object path")
+    func resolvesOwnAvatar() {
+        let path = ProfileStore.avatarObjectPath(
+            from: url("avatars/user-abc/avatar_1234.jpg"), myUserId: me)
+        #expect(path == "user-abc/avatar_1234.jpg")
+    }
+
+    @Test("A header URL resolves too")
+    func resolvesOwnHeader() {
+        let path = ProfileStore.avatarObjectPath(
+            from: url("avatars/user-abc/header_9999.jpg"), myUserId: me)
+        #expect(path == "user-abc/header_9999.jpg")
+    }
+
+    @Test("Someone else's prefix is never resolvable")
+    func refusesOtherPeoplesObjects() {
+        // The whole point of the owner check: a stored URL is data, and
+        // data must not be able to name a delete outside your own folder.
+        #expect(ProfileStore.avatarObjectPath(
+            from: url("avatars/user-zzz/avatar_1.jpg"), myUserId: me) == nil)
+    }
+
+    @Test("Only names this app generates are resolvable")
+    func refusesForeignFilenames() {
+        #expect(ProfileStore.avatarObjectPath(
+            from: url("avatars/user-abc/something-else.jpg"), myUserId: me) == nil)
+    }
+
+    @Test("Another bucket is never touched")
+    func refusesOtherBuckets() {
+        #expect(ProfileStore.avatarObjectPath(
+            from: url("stories/user-abc/avatar_1.jpg"), myUserId: me) == nil)
+    }
+
+    @Test("Malformed and truncated URLs resolve to nothing")
+    func refusesMalformed() {
+        #expect(ProfileStore.avatarObjectPath(from: "", myUserId: me) == nil)
+        #expect(ProfileStore.avatarObjectPath(from: "not a url at all", myUserId: me) == nil)
+        // Bucket present but no file component after the owner.
+        #expect(ProfileStore.avatarObjectPath(
+            from: url("avatars/user-abc"), myUserId: me) == nil)
+    }
+}

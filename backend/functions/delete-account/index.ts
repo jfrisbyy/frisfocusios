@@ -53,14 +53,34 @@ async function removePaths(admin: Admin, bucket: string, paths: string[]): Promi
   }
 }
 
-/** Delete every file directly inside `bucket/{folder}/`. */
+/** Delete every file directly inside `bucket/{folder}/`.
+ *
+ *  Loops rather than taking a single page. A one-shot `list` capped at
+ *  1000 quietly left everything past the first thousand objects behind —
+ *  and "we deleted most of your photos" is not what account deletion
+ *  promises. Every path this app writes is flat (`<userId>/<file>`), so
+ *  listing the folder does reach every file; there are no subfolders
+ *  hiding below.
+ *
+ *  Each pass re-lists from the start because the previous pass deleted
+ *  what it saw, so offsets would shift underneath us. The pass counter
+ *  is a guard against a delete that silently fails: without it, a bucket
+ *  that refuses removal would spin here forever.
+ */
 async function clearFolder(admin: Admin, bucket: string, folder: string): Promise<void> {
+  const pageSize = 1000;
+  const maxPasses = 50; // 50k objects — far past any real account.
   try {
-    const { data: files } = await admin.storage.from(bucket).list(folder, { limit: 1000 });
-    if (files && files.length > 0) {
+    for (let pass = 0; pass < maxPasses; pass++) {
+      const { data: files } = await admin.storage
+        .from(bucket)
+        .list(folder, { limit: pageSize });
+      if (!files || files.length === 0) return;
       const paths = files.map((f: { name: string }) => `${folder}/${f.name}`);
       await removePaths(admin, bucket, paths);
+      if (files.length < pageSize) return;
     }
+    console.error(`storage folder clear hit the pass limit [${bucket}/${folder}]`);
   } catch (err) {
     console.error(`storage folder clear failed [${bucket}/${folder}]:`, err);
   }

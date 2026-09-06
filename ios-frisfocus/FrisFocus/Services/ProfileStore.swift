@@ -380,6 +380,7 @@ final class ProfileStore {
                 .from("avatars")
                 .upload(path, data: data, options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: true))
             let url = try supabase.storage.from("avatars").getPublicURL(path: path)
+            await retireOldImage(at: myProfile?.avatarUrl, myUserId: myUserId)
             return url.absoluteString
         } catch {
             fail("Couldn't upload your photo.", error)
@@ -401,11 +402,50 @@ final class ProfileStore {
                 .from("avatars")
                 .upload(path, data: data, options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: true))
             let url = try supabase.storage.from("avatars").getPublicURL(path: path)
+            await retireOldImage(at: myProfile?.headerUrl, myUserId: myUserId)
             return url.absoluteString
         } catch {
             fail("Couldn't upload your header photo.", error)
             return nil
         }
+    }
+
+    /// Remove a previously uploaded avatar/header once its replacement is
+    /// live.
+    ///
+    /// Each upload writes a new uniquely-named object, so without this
+    /// every photo a person ever set stays in the bucket — and `avatars`
+    /// is public, which means an old picture remains fetchable at its old
+    /// URL forever. Replacing your photo should retire the old one.
+    ///
+    /// Deliberately best-effort and silent: the new photo is already
+    /// live, so failing to tidy the old one must never surface as an
+    /// error to someone who just changed their picture.
+    ///
+    /// Only ever deletes inside the caller's own `<userId>/` prefix, and
+    /// only a name this app generates, so a malformed or foreign URL
+    /// cannot be turned into a delete of something else.
+    private func retireOldImage(at urlString: String?, myUserId: String) async {
+        guard let urlString,
+              let path = Self.avatarObjectPath(from: urlString, myUserId: myUserId)
+        else { return }
+        _ = try? await supabase.storage.from("avatars").remove(paths: [path])
+    }
+
+    /// The `<userId>/<file>` object path inside the avatars bucket that a
+    /// stored public URL refers to — or nil if it is not one of ours.
+    static func avatarObjectPath(from urlString: String, myUserId: String) -> String? {
+        guard let url = URL(string: urlString) else { return nil }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        // .../object/public/avatars/<userId>/<file>
+        guard let bucketIndex = parts.firstIndex(of: "avatars"),
+              parts.count >= bucketIndex + 3 else { return nil }
+        let owner = parts[bucketIndex + 1]
+        let file = parts[bucketIndex + 2]
+        guard owner == myUserId,
+              file.hasPrefix("avatar_") || file.hasPrefix("header_"),
+              !file.contains("..") else { return nil }
+        return "\(owner)/\(file)"
     }
 
     /// Square-ish JPEG sized for an avatar — keeps uploads small.
