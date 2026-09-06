@@ -291,6 +291,32 @@ Deno.serve(async (req) => {
       return json({ ok: true, sent: 0, skipped: "blocked" });
     }
 
+    // Respect a mute, one direction only. Unlike a block, a mute is the
+    // recipient's private preference about the sender — the sender is
+    // never told, and muting someone does not stop THEM hearing from you.
+    const { data: muteRows } = await admin
+      .from("mutes")
+      .select("muted_id")
+      .eq("muter_id", payload.recipientId)
+      .eq("muted_id", senderId)
+      .limit(1);
+    if (muteRows && muteRows.length > 0) {
+      return json({ ok: true, sent: 0, skipped: "muted" });
+    }
+
+    // Respect the recipient's per-kind preferences. Stored as the DISABLED
+    // set, so no row means everything is on and a newly added kind is on
+    // for existing accounts without a backfill.
+    const { data: prefRow } = await admin
+      .from("notification_preferences")
+      .select("disabled_kinds")
+      .eq("user_id", payload.recipientId)
+      .maybeSingle();
+    const disabled: string[] = prefRow?.disabled_kinds ?? [];
+    if (disabled.includes(payload.type)) {
+      return json({ ok: true, sent: 0, skipped: "kind_disabled" });
+    }
+
     // Credentials gate — graceful no-op until the publisher adds the key.
     const keyId = Deno.env.get("APNS_KEY_ID");
     const teamId = Deno.env.get("APNS_TEAM_ID");
