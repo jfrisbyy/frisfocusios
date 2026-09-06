@@ -1,0 +1,101 @@
+name: iOS
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & test
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          swift --version
+
+      # Config.swift is git-ignored because it carries environment values.
+      # Repository secrets fill it in when available; otherwise the
+      # placeholders still compile, which is all this job needs.
+      - name: Generate Config.swift
+        env:
+          FRISFOCUS_SUPABASE_URL: ${{ secrets.FRISFOCUS_SUPABASE_URL }}
+          FRISFOCUS_SUPABASE_ANON_KEY: ${{ secrets.FRISFOCUS_SUPABASE_ANON_KEY }}
+          FRISFOCUS_RORK_AUTH_URL: ${{ secrets.FRISFOCUS_RORK_AUTH_URL }}
+          FRISFOCUS_RORK_APP_KEY: ${{ secrets.FRISFOCUS_RORK_APP_KEY }}
+          FRISFOCUS_PROJECT_ID: ${{ secrets.FRISFOCUS_PROJECT_ID }}
+        run: ./scripts/bootstrap-config.sh
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('ios-frisfocus/FrisFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      # The compile check is the point of this job: it is the only thing
+      # standing between an edit and a broken build, since the agents
+      # doing the work have no Swift toolchain.
+      - name: Build (compile check)
+        working-directory: ios-frisfocus
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project FrisFocus.xcodeproj \
+            -scheme FrisFocus \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Pick a simulator
+        id: sim
+        run: |
+          # Resolve a concrete booted-capable device rather than hardcoding a
+          # name that a future runner image might not ship.
+          udid=$(xcrun simctl list devices available -j \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
+                          print(next(x['udid'] for rt in d for x in d[rt] if 'iPhone' in x['name']))")
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          echo "Using simulator $udid"
+
+      - name: Test
+        working-directory: ios-frisfocus
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project FrisFocus.xcodeproj \
+            -scheme FrisFocus \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+  backend:
+    name: Edge functions typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Check edge functions
+        run: |
+          # Type-check every function entrypoint. Remote imports are
+          # fetched once and cached by Deno.
+          for f in backend/functions/*/index.ts; do
+            echo "==> $f"
+            deno check "$f"
+          done

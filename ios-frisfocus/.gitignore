@@ -21,7 +21,8 @@ xcuserdata/
 # Swift Package Manager
 .build/
 .swiftpm/
-Package.resolved
+# NOTE: Package.resolved is deliberately NOT ignored. Committing it pins
+# dependency versions so CI and every clone build the same thing.
 
 # macOS
 .DS_Store
@@ -31,4 +32,8 @@ Package.resolved
 # Rork
 .rork/
 .env
+
+# Generated build configuration — carries environment values, never
+# committed. Regenerate with scripts/bootstrap-config.sh; add new keys to
+# scripts/config/Config.example.swift.
 Config.swift
