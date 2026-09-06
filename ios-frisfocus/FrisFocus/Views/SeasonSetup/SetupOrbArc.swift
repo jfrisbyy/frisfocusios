@@ -106,7 +106,13 @@ private enum ArcMath {
         let angle = Angle.degrees(startDegrees + sweepDegrees * clamped).radians
         let c = center(in: size)
         let r = radius(in: size)
-        return CGPoint(x: c.x + r * cos(angle), y: c.y + r * sin(angle))
+        // Pin the trig to Double explicitly. Multiplying the result by a
+        // CGFloat radius otherwise leaves `cos`/`sin` ambiguous between
+        // CoreGraphics' CGFloat overload and the Double one, which is a
+        // hard error under Xcode 16's MemberImportVisibility.
+        let dx: Double = cos(angle)
+        let dy: Double = sin(angle)
+        return CGPoint(x: c.x + r * CGFloat(dx), y: c.y + r * CGFloat(dy))
     }
 }
 

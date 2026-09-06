@@ -486,12 +486,19 @@ class AuthManager {
             do {
                 try await supabase
                     .from("profiles")
-                    .upsert(ProfileUpsert(
-                        id: user.id,
-                        email: user.email,
-                        name: user.name,
-                        avatarUrl: user.picture
-                    ))
+                    .upsert(
+                        ProfileUpsert(
+                            id: user.id,
+                            email: user.email,
+                            name: user.name,
+                            avatarUrl: user.picture
+                        ),
+                        // `email` is write-only: signed-in members have no
+                        // SELECT privilege on that column, so asking
+                        // PostgREST to return the row would fail the whole
+                        // upsert. Nothing here needs the row back.
+                        returning: .minimal
+                    )
                     .execute()
             } catch {
                 print("[AuthManager] Profile sync failed: \(error)")
