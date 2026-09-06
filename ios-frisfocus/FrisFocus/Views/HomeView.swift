@@ -165,6 +165,7 @@ struct HomeView: View {
         .onAppear {
             store.refreshRecurringEvents()
             invitationDismissed = SeasonInvitationStore.dismissedKinds(for: store.currentSeason.id)
+            maybeFireRolloverLesson()
         }
     }
 
@@ -496,6 +497,27 @@ struct HomeView: View {
         default:
             break
         }
+    }
+
+    /// The rollover, on the first open of the second day.
+    ///
+    /// `currentSeasonDay` is derived from the season's start date, which
+    /// the Store already normalises to start-of-day — so a value of 2 or
+    /// more means a day of this season has genuinely closed behind the
+    /// person. That is the honest signal, and it needs no new stored
+    /// state: the rollover housekeeping itself
+    /// (`performDayRolloverIfNeeded`) leaves no observable "a day just
+    /// turned" flag, and adding one would be writing to the Store to
+    /// learn something the season's own dates already say.
+    ///
+    /// Nothing here is scoped to "first open" beyond `claim`, which is
+    /// once-per-lifetime — so the sentence lands on the first home this
+    /// person sees on day two, and never again on its own.
+    private func maybeFireRolloverLesson() {
+        guard homeLesson == nil,
+              store.currentSeasonDay >= 2,
+              walkthrough.claim(.tomorrowStartsNew) else { return }
+        homeLesson = .tomorrowStartsNew
     }
 
     /// Fire the home concept lessons just-in-time: the day-shape lesson a

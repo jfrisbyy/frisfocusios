@@ -379,6 +379,7 @@ struct CaptionBlockText: View {
 
 struct CaptureReviewView: View {
     @Environment(Store.self) private var store
+    @Environment(WalkthroughManager.self) private var walkthrough
 
     let result: CaptureResult
     let mode: CaptureMode
@@ -475,6 +476,9 @@ struct CaptureReviewView: View {
     @State private var showAttachPicker: Bool = false
     @State private var sheetPickHandled: Bool = false
     @State private var finishTask: Task<Void, Never>?
+    /// The "who sees this" lesson, raised once — in the beat right
+    /// after the first post is actually sent somewhere.
+    @State private var destinationLesson: WalkthroughLesson?
 
     // Task sticker state. Stickers share the active-selection + trash
     // plumbing with captions (ids are unique across both) and bake into
@@ -605,6 +609,13 @@ struct CaptureReviewView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(28)
+        }
+        .walkthroughLessonSheet($destinationLesson) { lesson in
+            walkthrough.markSeen(lesson)
+            walkthrough.release(lesson)
+            // Hand the normal exit beat back — the attach chip still
+            // gets its window before the editor closes itself.
+            scheduleFinish(after: 1.4)
         }
         .task { await prepareScaledBases() }
         .task {
@@ -2338,7 +2349,17 @@ struct CaptureReviewView: View {
                     sentToast = toast ?? "Posted to your people"
                     attachChipVisible = true
                 }
-                scheduleFinish(after: 1.4)
+                // The destination was just chosen for the first time —
+                // name what it did, over the confirmation, while it's
+                // still true. The auto-exit is pushed out rather than
+                // cancelled: a lesson that somehow never appears must
+                // not be able to strand the editor open.
+                if walkthrough.claim(.whoSeesThis) {
+                    destinationLesson = .whoSeesThis
+                    scheduleFinish(after: 30)
+                } else {
+                    scheduleFinish(after: 1.4)
+                }
                 return
             }
 

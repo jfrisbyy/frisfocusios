@@ -71,6 +71,11 @@ struct CirclesView: View {
     @Environment(GoldenHourService.self) private var goldenHour
     @State private var goldenTarget: GoldenHourTarget?
 
+    @Environment(WalkthroughManager.self) private var walkthrough
+    /// The "a story lasts a day" lesson, raised once — the first time
+    /// there is somebody else's story on this page to watch.
+    @State private var storyLesson: WalkthroughLesson?
+
     /// Zoom-transition namespace: story players grow out of the exact
     /// avatar / strip that opened them and shrink back into it.
     @Namespace private var storyZoom
@@ -281,8 +286,34 @@ struct CirclesView: View {
                 destination(for: route)
             }
             .profileQuickCard(isPresented: $showProfileSheet)
+            .walkthroughLessonSheet($storyLesson) { walkthrough.markSeen($0); walkthrough.release($0) }
+            // Stories arrive by sync while the page is open as often as
+            // they are already there when it opens, so both entries have
+            // to be watched.
+            .onAppear { maybeFireStoryLesson() }
+            .onChange(of: someoneElsesStoryIsWatchable) { _, _ in maybeFireStoryLesson() }
             .task { await loadMessages() }
         }
+    }
+
+    // MARK: - Story expiry lesson
+
+    /// True once a story that is not the user's own is sitting in the
+    /// row, unexpired and playable. `activeFriendStories` already
+    /// carries the 24-hour rule, so this is exactly "there is somebody
+    /// else's day here, and it will be gone tomorrow".
+    private var someoneElsesStoryIsWatchable: Bool {
+        store.activeFriendStories.contains { $0.authorId != store.currentUserId }
+    }
+
+    /// Fire the expiry lesson the first time that is true. Told before
+    /// anything vanishes, disappearance reads as the design; told after,
+    /// it reads as an apology for a bug.
+    private func maybeFireStoryLesson() {
+        guard someoneElsesStoryIsWatchable,
+              storyLesson == nil,
+              walkthrough.claim(.storiesExpire) else { return }
+        storyLesson = .storiesExpire
     }
 
     // MARK: - Header

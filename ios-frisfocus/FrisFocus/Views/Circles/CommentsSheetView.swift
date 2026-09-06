@@ -27,6 +27,7 @@ struct CommentsSheetView: View {
     @Environment(SocialSyncService.self) private var socialSync
     @Environment(ModerationService.self) private var moderation
     @Environment(AuthManager.self) private var auth
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.dismiss) private var dismiss
 
     let postId: UUID
@@ -43,6 +44,9 @@ struct CommentsSheetView: View {
     /// The comment pending a delete confirmation — the user's own, or
     /// someone else's left on the user's own post.
     @State private var deleteCandidate: Comment?
+    /// The safety-tools lesson, raised once — the first time the "…" on
+    /// someone else's comment is reached for.
+    @State private var safetyLesson: WalkthroughLesson?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,6 +87,7 @@ struct CommentsSheetView: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .profileDestination($profileTarget, store: store)
+        .walkthroughLessonSheet($safetyLesson) { walkthrough.markSeen($0); walkthrough.release($0) }
         .sheet(item: $reportTarget) { target in
             ReportSheet(
                 reportedUserId: target.reportedUserId,
@@ -257,6 +262,18 @@ struct CommentsSheetView: View {
         }
     }
 
+    /// Raise the safety lesson once a safety tool has actually been
+    /// used — never when the menu is merely reached for.
+    ///
+    /// A Menu reports nothing about opening, so teaching at that moment
+    /// means taking the tap, and this menu is reached for exactly when
+    /// something is wrong. Teaching after the act costs nothing and
+    /// still arrives while it matters.
+    private func fireSafetyLesson() {
+        guard safetyLesson == nil, walkthrough.claim(.safetyTools) else { return }
+        safetyLesson = .safetyTools
+    }
+
     /// Whether a comment author has been blocked — their comments
     /// vanish immediately, before any server refresh.
     private func isBlockedAuthor(_ localId: UUID) -> Bool {
@@ -275,6 +292,11 @@ struct CommentsSheetView: View {
             await moderation.block(remote, myUserId: myId)
             await socialSync.refreshFriends()
             await socialSync.refreshStories()
+            // Block is the heaviest of the four, and the one people
+            // reach for not knowing mute exists. Saying so afterwards is
+            // useful; saying it beforehand would have meant intercepting
+            // someone mid-decision.
+            fireSafetyLesson()
         }
     }
 

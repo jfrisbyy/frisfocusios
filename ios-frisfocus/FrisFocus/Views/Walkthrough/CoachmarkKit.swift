@@ -304,6 +304,13 @@ struct WalkthroughLessonSheet: View {
 
 /// The small "?" that resurfaces a contextual lesson on its surface.
 struct WalkthroughHelpButton: View {
+    /// Ink for the glyph. The default is the ink-on-parchment value the
+    /// button shipped with, so no existing call site changes — but a
+    /// hard-coded dark tint is invisible on the gold Golden Hour banner
+    /// and on the circle hero's night sky, which is how two lessons
+    /// ended up with no way back to them at all. Surfaces that aren't
+    /// warm parchment pass their own.
+    var tint: Color = Theme.textPrimary.opacity(0.45)
     let action: () -> Void
 
     var body: some View {
@@ -313,7 +320,7 @@ struct WalkthroughHelpButton: View {
         } label: {
             Image(systemName: "questionmark.circle")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                .foregroundStyle(tint)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("What does this mean?")

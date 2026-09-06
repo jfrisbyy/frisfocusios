@@ -59,6 +59,7 @@ struct StoryPlayerView: View {
     @Environment(ModerationService.self) private var moderation
     @Environment(AuthManager.self) private var auth
     @Environment(MessageGraphService.self) private var messageGraph
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.dismiss) private var dismiss
 
     let mode: StoryPlayerMode
@@ -162,6 +163,10 @@ struct StoryPlayerView: View {
     /// Asks before muting the current author — the one moment to say
     /// plainly how little mute does compared with a block.
     @State private var showMuteConfirm: Bool = false
+
+    /// The safety-tools lesson, raised once — the first time the "…" on
+    /// someone else's segment is reached for.
+    @State private var safetyLesson: WalkthroughLesson?
 
     /// Tick rate for the progress driver. 25 fps reads as smooth
     /// without burning a re-render every vsync.
@@ -340,6 +345,11 @@ struct StoryPlayerView: View {
         .sheet(item: $seenByPost, onDismiss: { isPaused = false }) { post in
             StorySeenByView(post: post)
                 .environment(store)
+        }
+        .walkthroughLessonSheet($safetyLesson) { lesson in
+            walkthrough.markSeen(lesson)
+            walkthrough.release(lesson)
+            isPaused = false
         }
         .profileDestination($profileTarget, store: store)
         .onChange(of: profileTarget != nil) { _, profileOpen in
@@ -703,6 +713,22 @@ struct StoryPlayerView: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("More options")
+    }
+
+    /// Raise the safety lesson, pausing the tape behind it so the
+    /// segment doesn't run out from under the reading.
+    ///
+    /// Fired AFTER a safety tool has been used, never when the menu is
+    /// reached for. A Menu reports nothing about opening, so teaching at
+    /// that moment means stealing the tap — and people reach for this
+    /// menu precisely when something is wrong. Interrupting someone on
+    /// their way to reporting a post, to explain reporting, is the worst
+    /// possible moment to teach. Once they have hidden something, naming
+    /// the other three is genuinely useful and costs them nothing.
+    private func fireSafetyLesson() {
+        guard safetyLesson == nil, walkthrough.claim(.safetyTools) else { return }
+        isPaused = true
+        safetyLesson = .safetyTools
     }
 
     /// The user's own avatar disc used in `.mine` mode — their real
@@ -1270,6 +1296,8 @@ struct StoryPlayerView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         moderation.hideStory(post.id)
         store.storyPosts.removeAll { $0.id == post.id }
+        // They have just used one of the four; name the rest.
+        fireSafetyLesson()
         // `posts` recomputes. Clamp the playhead so we never index past
         // the end; dismiss when nothing remains to watch.
         if posts.isEmpty {

@@ -17,10 +17,13 @@
 //   • Layer B — the contextual CONCEPT layer. Quiet just-in-time lessons
 //     that fire the first time the user naturally reaches each surface
 //     (the day's shape, a full day, the privacy model, the read, share
-//     attribution, and on the social half: the first friend, the first
-//     proof, the first Golden Hour, the first circle). Each fires once
-//     and, where the surface has room for it, is re-accessible via a
-//     small "?".
+//     attribution; on the social half: the first friend, the first
+//     proof, the first Golden Hour, the first circle, the first story
+//     you can watch, the first thing you post, the first cheer, the
+//     first pact, the first safety menu; and two that are about time
+//     rather than a feature — the second day's rollover and the first
+//     week's shape). Each fires once and, where the surface has room
+//     for it, is re-accessible via a small "?".
 //
 //  Governing principle: mechanics are shown early (you can't discover a
 //  hidden gesture by doing); concepts are explained in context. The
@@ -120,6 +123,71 @@ nonisolated struct WalkthroughLesson: Identifiable, Equatable {
         title: "A circle is a room, not a feed.",
         message: "Everyone in it is doing the work alongside you. Nothing scrolls past — you step in and see who’s there.",
         icon: "person.3"
+    )
+    /// The first time someone else's story is there to watch. The two
+    /// halves of the rule are stated together because they differ:
+    /// general posts age out at 24h, circle clips never do (see
+    /// `StoryPost.isExpired`). Told only as "stories vanish", the
+    /// circle archive that quietly persists would read as a leak.
+    static let storiesExpire = WalkthroughLesson(
+        id: "storiesExpire",
+        title: "A story lasts a day.",
+        message: "After that it’s gone — not deleted, just over. Clips posted inside a circle are the exception: those stay with the circle.",
+        icon: "clock"
+    )
+    /// The first thing the person posts themselves. The destination
+    /// picker is the only privacy control that matters here, and it
+    /// defaults to something — so the choice has to be named once, at
+    /// the moment it was first made rather than before it means anything.
+    static let whoSeesThis = WalkthroughLesson(
+        id: "whoSeesThis",
+        title: "Who sees it is chosen here.",
+        message: "Your friends, a circle, one person — the picker decides, every time you post. Nothing travels past where you sent it.",
+        icon: "eye"
+    )
+    /// The first cheer to land. Without this, the missing comment box
+    /// under a cheer reads as something unfinished rather than the
+    /// point: a cheer is a gift, not the top of a thread.
+    static let cheersAreTheReply = WalkthroughLesson(
+        id: "cheersAreTheReply",
+        title: "A cheer is the whole reply.",
+        message: "One line, one tap, and it’s said. There’s nothing to write underneath — react to it, or cheer back, and let it rest.",
+        icon: "hands.clap"
+    )
+    /// The first pact, from either side of it.
+    static let pactShape = WalkthroughLesson(
+        id: "pactShape",
+        title: "Two people, one window.",
+        message: "The same days, the same finish line, both sides visible the whole way. There’s no winner — you get there together.",
+        icon: "person.2.fill"
+    )
+    /// The first "…" opened on someone else's content. Each tool is
+    /// named with what it actually does: "block" and "mute" are the
+    /// two people reach for interchangeably and regret unevenly.
+    static let safetyTools = WalkthroughLesson(
+        id: "safetyTools",
+        title: "The quiet menu is always there.",
+        message: "Hide takes one thing off your view. Mute turns a person down without telling them. Report sends it to us. Block ends it both ways.",
+        icon: "hand.raised"
+    )
+
+    // MARK: The returning day
+
+    /// The second day. Rollover is invisible by design, which is
+    /// exactly why the first one needs a sentence: an empty board on
+    /// day two otherwise reads as work that was lost overnight.
+    static let tomorrowStartsNew = WalkthroughLesson(
+        id: "tomorrowStartsNew",
+        title: "Yesterday closed where it closed.",
+        message: "Today starts fresh. Rhythms you set return on their own, and anything left loose yesterday is offered back — never dragged over.",
+        icon: "sunrise"
+    )
+    /// Around the first week, once the charts hold real days.
+    static let weekShape = WalkthroughLesson(
+        id: "weekShape",
+        title: "A week has a shape too.",
+        message: "There are enough days behind you now for this to mean something. Week, month, season — the same days, seen from further back.",
+        icon: "chart.bar"
     )
 }
 

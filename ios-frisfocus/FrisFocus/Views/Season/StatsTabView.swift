@@ -18,6 +18,7 @@ import UIKit
 
 struct StatsTabView: View {
     @Environment(Store.self) private var store
+    @Environment(WalkthroughManager.self) private var walkthrough
 
     /// The three zoom levels of the stats tab.
     private enum StatsScope: String, CaseIterable {
@@ -34,6 +35,9 @@ struct StatsTabView: View {
     /// Bars grow from the baseline when the tab opens or the week flips.
     @State private var barsRevealed: Bool = false
     @State private var showWeekShare: Bool = false
+    /// The "a week has a shape" lesson, raised once — around the first
+    /// week, when the charts finally hold enough days to read.
+    @State private var lesson: WalkthroughLesson?
 
     // Glass-on-sky tokens — matching SeasonInlineDetailView.
     private let glassFill = Color.white.opacity(0.10)
@@ -67,7 +71,11 @@ struct StatsTabView: View {
             .padding(.top, 14)
         }
         .padding(.horizontal, 22)
-        .onAppear { barsRevealed = true }
+        .onAppear {
+            barsRevealed = true
+            maybeFireWeekLesson()
+        }
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
         .onChange(of: weekOffset) { _, newOffset in
             barsRevealed = false
             selectedDay = newOffset == 0 ? today : nil
@@ -79,6 +87,31 @@ struct StatsTabView: View {
         .fullScreenCover(isPresented: $showWeekShare) {
             ShareCameraView(context: store.weekShareContext())
         }
+    }
+
+    // MARK: - The week's shape
+
+    /// Distinct local days of this season that actually carry a log
+    /// entry. Elapsed days alone would be a lie: a season a week old
+    /// with two logged days has no shape to show, and pointing at an
+    /// empty chart teaches nothing.
+    private var loggedSeasonDays: Int {
+        let start = cal.startOfDay(for: store.currentSeason.startDate)
+        let days = store.logEntries
+            .filter { $0.date >= start }
+            .map { cal.startOfDay(for: $0.date) }
+        return Set(days).count
+    }
+
+    /// Fired from the stats tab itself, so it can only land on someone
+    /// who has actually opened it — with a week behind them and real
+    /// days in the chart underneath the card.
+    private func maybeFireWeekLesson() {
+        guard lesson == nil,
+              store.currentSeasonDay >= 7,
+              loggedSeasonDays >= 4,
+              walkthrough.claim(.weekShape) else { return }
+        lesson = .weekShape
     }
 
     // MARK: - Scope switcher
@@ -881,4 +914,5 @@ private struct Line: Shape {
     }
     .background(Theme.skyDeep)
     .environment(Store())
+    .environment(WalkthroughManager())
 }

@@ -16,8 +16,13 @@ import UIKit
 
 struct SeasonCheerCard: View {
     @Environment(Store.self) private var store
+    @Environment(WalkthroughManager.self) private var walkthrough
 
     let cheers: [Cheer]
+
+    /// The "a cheer is the whole reply" lesson, raised once — the first
+    /// time one is actually sitting on the card.
+    @State private var lesson: WalkthroughLesson?
 
     /// At most this many rows render on the home card; the rest live
     /// on the history page behind the "all cheers" line.
@@ -52,7 +57,22 @@ struct SeasonCheerCard: View {
                     CheerHistoryView()
                         .environment(store)
                 }
+                .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
+                // This branch only renders with a cheer on screen, so
+                // appearing IS the first cheer received. A second one
+                // landing while the card is up re-runs the check for
+                // the session in which teaching was still available.
+                .onAppear { maybeFireCheerLesson() }
+                .onChange(of: visible.count) { _, _ in maybeFireCheerLesson() }
         }
+    }
+
+    /// The brevity of a cheer is the design: there is no comment box
+    /// under one, so without a word said an inbound cheer reads as a
+    /// message you have somehow failed to answer.
+    private func maybeFireCheerLesson() {
+        guard lesson == nil, walkthrough.claim(.cheersAreTheReply) else { return }
+        lesson = .cheersAreTheReply
     }
 
     // MARK: - Card
@@ -68,6 +88,15 @@ struct SeasonCheerCard: View {
             }
 
             historyLine
+                // Overlaid, not appended: the "all cheers" line is
+                // centered, and a sibling in the row would shove it off.
+                .overlay(alignment: .trailing) {
+                    if walkthrough.seen.contains(WalkthroughLesson.cheersAreTheReply.id) {
+                        WalkthroughHelpButton(tint: Theme.textCream.opacity(0.55)) {
+                            lesson = .cheersAreTheReply
+                        }
+                    }
+                }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -314,5 +343,6 @@ struct SeasonCheerCard: View {
             .ignoresSafeArea()
         SeasonCheerCard(cheers: store.activeCheersToday)
             .environment(store)
+            .environment(WalkthroughManager())
     }
 }

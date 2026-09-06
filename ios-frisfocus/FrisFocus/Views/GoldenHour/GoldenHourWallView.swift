@@ -23,7 +23,14 @@ struct GoldenHourWallView: View {
     @Environment(GoldenHourService.self) private var service
     @Environment(AuthManager.self) private var auth
     @Environment(ModerationService.self) private var moderation
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.dismiss) private var dismiss
+
+    /// The window lesson, re-opened on demand from the wall's "?".
+    /// It first fires on the gold banner (GoldenHourComponents), which
+    /// has no room for a re-entry — and the blur rule it explains is
+    /// visible right here, so this is where the way back belongs.
+    @State private var lesson: WalkthroughLesson?
 
     @State private var fullScreenPost: GoldenHourPost?
     @State private var reportTarget: ReportTarget?
@@ -50,6 +57,7 @@ struct GoldenHourWallView: View {
         .onAppear {
             service.cancelClosingReminder(circleId: moment.circleId, day: moment.day)
         }
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
         .fullScreenCover(item: $fullScreenPost) { post in
             GoldenHourMediaViewer(post: post)
         }
@@ -191,6 +199,14 @@ struct GoldenHourWallView: View {
                 Text(circle?.name ?? "Your circle")
                     .font(.serif(20, weight: .medium))
                     .foregroundStyle(GoldenTheme.cream)
+            }
+
+            // Gold on ink — the default ink tint is unreadable here.
+            if walkthrough.seen.contains(WalkthroughLesson.goldenHourWindow.id) {
+                WalkthroughHelpButton(tint: GoldenTheme.gold.opacity(0.85)) {
+                    lesson = .goldenHourWindow
+                }
+                .padding(.leading, 8)
             }
 
             Spacer()

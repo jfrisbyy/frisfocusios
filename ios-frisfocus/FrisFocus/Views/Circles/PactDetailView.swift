@@ -15,9 +15,14 @@ import UIKit
 
 struct PactDetailView: View {
     @Environment(Store.self) private var store
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.dismiss) private var dismiss
 
     let pact: Pact
+
+    /// The "two people, one window" lesson, fired once — the first time
+    /// the person is standing inside a pact, from either side of it.
+    @State private var lesson: WalkthroughLesson?
 
     @State private var showCheerComposer: Bool = false
     @State private var showSettings: Bool = false
@@ -80,6 +85,13 @@ struct PactDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .edgeSwipeBack()
         .profileDestination($profileTarget, store: store)
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
+        // Reaching this page means a pact exists with this person in
+        // it — proposed by them or by you. That is the first moment
+        // the symmetry is a thing they can check rather than a promise.
+        .onAppear {
+            if walkthrough.claim(.pactShape) { lesson = .pactShape }
+        }
         .sheet(isPresented: $showCheerComposer) {
             if let partner {
                 CheerComposerView(friend: partner)
@@ -179,6 +191,13 @@ struct PactDetailView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Back to Pacts")
             Spacer()
+            // Cream, not ink — the hero behind this bar is a night
+            // gradient, where the default tint reads as nothing.
+            if walkthrough.seen.contains(WalkthroughLesson.pactShape.id) {
+                WalkthroughHelpButton(tint: Theme.textCream.opacity(0.7)) {
+                    lesson = .pactShape
+                }
+            }
         }
     }
 
@@ -626,4 +645,5 @@ private struct TodayTaskRow: View {
         }
     }
     .environment(store)
+    .environment(WalkthroughManager())
 }

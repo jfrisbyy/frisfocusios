@@ -453,6 +453,13 @@ struct CircleDetailView: View {
                 if pendingCount > 0 {
                     pendingHeaderBadge
                 }
+                // Cream, not ink: the hero is a night sky, and the
+                // button's default tint disappears into it entirely.
+                if walkthrough.seen.contains(WalkthroughLesson.firstCircle.id) {
+                    WalkthroughHelpButton(tint: Theme.textCream.opacity(0.7)) {
+                        lesson = .firstCircle
+                    }
+                }
                 ourStoryButton
             }
         }

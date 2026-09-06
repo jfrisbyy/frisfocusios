@@ -47,6 +47,7 @@ private struct ShareCardAudience: Equatable {
 struct SharePreviewView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(Store.self) private var store
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let result: CaptureResult
@@ -66,6 +67,9 @@ struct SharePreviewView: View {
     @State private var isWorking: Bool = false
     @State private var sharePayload: SharePayload?
     @State private var postedConfirmation: String?
+    /// The "who sees this" lesson, raised once — in the beat right
+    /// after the first card is actually sent somewhere.
+    @State private var destinationLesson: WalkthroughLesson?
 
     // Attach flow — the composed clean card kept around so it can land
     // on a journey or note after posting (or via "Just save").
@@ -186,6 +190,13 @@ struct SharePreviewView: View {
             .environment(store)
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.hidden)
+        }
+        .walkthroughLessonSheet($destinationLesson) { lesson in
+            walkthrough.markSeen(lesson)
+            walkthrough.release(lesson)
+            // Hand the normal exit beat back — the attach chip still
+            // gets its window before the editor closes itself.
+            scheduleFinish(after: 3.4)
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: showAudiencePanel)
         .animation(.easeInOut(duration: 0.2), value: isDrawing)
@@ -1273,7 +1284,17 @@ struct SharePreviewView: View {
                 postedConfirmation = toast
                 attachChipVisible = true
             }
-            scheduleFinish(after: 3.4)
+            // The destination was just chosen for the first time — name
+            // what it did, over the confirmation, while it's still true.
+            // The auto-exit is pushed out rather than cancelled: a
+            // lesson that somehow never appears must not be able to
+            // strand the editor open.
+            if walkthrough.claim(.whoSeesThis) {
+                destinationLesson = .whoSeesThis
+                scheduleFinish(after: 30)
+            } else {
+                scheduleFinish(after: 3.4)
+            }
         }
     }
 
