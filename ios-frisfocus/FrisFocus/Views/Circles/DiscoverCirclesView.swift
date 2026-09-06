@@ -59,6 +59,13 @@ struct DiscoverCirclesView: View {
             guard let myId else { return }
             await service.loadDiscover(myUserId: myId)
         }
+        // Joining an open circle subscribes this screen's own graph
+        // service to realtime. Without this the channel outlived the
+        // screen — one leaked subscription per visit, still delivering
+        // after sign-out. The sibling screens that start realtime
+        // (SharedCirclesListView, NotificationRouteHost) already do this;
+        // this one was the odd one out.
+        .onDisappear { service.stopRealtime() }
         .task(id: query) {
             // Debounced server-side search — waits for a typing pause.
             guard let myId else { return }
