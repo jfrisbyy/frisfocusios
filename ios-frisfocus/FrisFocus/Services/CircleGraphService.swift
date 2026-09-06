@@ -294,16 +294,6 @@ private nonisolated struct MemberRoleUpdate: Encodable, Sendable {
     let role: String
 }
 
-/// Moves `circles.owner_id`. Separate from the role rows because
-/// ownership is read from the circle, not from the membership.
-private nonisolated struct CircleOwnerUpdate: Encodable, Sendable {
-    let ownerId: String
-
-    enum CodingKeys: String, CodingKey {
-        case ownerId = "owner_id"
-    }
-}
-
 private nonisolated struct JoinRequestInsert: Encodable, Sendable {
     let circleId: String
     let requesterId: String
@@ -949,12 +939,16 @@ final class CircleGraphService {
     /// new owner's role, the outgoing owner's demotion to plain member, and
     /// `circles.owner_id`.
     ///
-    /// `owner_id` is written last on purpose. It's both the column every
-    /// surface reads ownership from and the one RLS grants owner authority
-    /// by, so flipping it first would revoke the permission needed for the
-    /// two role writes still to come. Written last, a failure part-way
-    /// leaves the circle still owned by whoever started the transfer rather
-    /// than owned by nobody.
+    /// This goes through a single server-side transaction rather than three
+    /// writes from here, because no ordering of those three is actually
+    /// safe. `my_circle_role()` reads the CALLER'S OWN membership role, and
+    /// the circles UPDATE policy requires it to be owner or admin — so once
+    /// this device demotes itself the `owner_id` write is refused, leaving
+    /// `circle_members` naming the new owner while `circles.owner_id` still
+    /// names the old one. Nothing could repair it either, since the
+    /// outgoing owner can no longer satisfy the policy. The RPC checks
+    /// authority against `circles.owner_id` once and commits all three
+    /// writes together.
     func transferOwnership(circleId: UUID, toUserId: String, myUserId: String) async {
         isWorking = true
         defer { isWorking = false }
@@ -969,21 +963,13 @@ final class CircleGraphService {
                 return
             }
             try await supabase
-                .from("circle_members")
-                .update(MemberRoleUpdate(role: "owner"))
-                .eq("circle_id", value: circleId.uuidString)
-                .eq("user_id", value: toUserId)
-                .execute()
-            try await supabase
-                .from("circle_members")
-                .update(MemberRoleUpdate(role: "member"))
-                .eq("circle_id", value: circleId.uuidString)
-                .eq("user_id", value: myUserId)
-                .execute()
-            try await supabase
-                .from("circles")
-                .update(CircleOwnerUpdate(ownerId: toUserId))
-                .eq("id", value: circleId.uuidString)
+                .rpc(
+                    "transfer_circle_ownership",
+                    params: [
+                        "p_circle_id": circleId.uuidString,
+                        "p_to_user": toUserId
+                    ]
+                )
                 .execute()
             await load(myUserId: myUserId)
         } catch {
