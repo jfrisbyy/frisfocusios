@@ -44,6 +44,7 @@ struct FriendDetailView: View {
     @State private var reportTarget: ReportTarget?
     @State private var showBlockConfirm: Bool = false
     @State private var showUnfriendConfirm: Bool = false
+    @State private var showMuteConfirm: Bool = false
     @State private var showMutualsList: Bool = false
     @State private var isRelationshipWorking: Bool = false
     @State private var mutuals: [RemoteProfile] = []
@@ -244,6 +245,18 @@ struct FriendDetailView: View {
             Text("Blocking removes the friendship and stops all messages and requests between you. They aren't notified.")
         }
         .confirmationDialog(
+            "Mute \(friend.displayName)?",
+            isPresented: $showMuteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Mute") {
+                Task { await muteFriend() }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Their stories leave your feed and their notifications stop arriving. You stay friends, this page stays open to you, and they are never told.")
+        }
+        .confirmationDialog(
             "Unfriend \(friend.displayName)?",
             isPresented: $showUnfriendConfirm,
             titleVisibility: .visible
@@ -342,6 +355,21 @@ struct FriendDetailView: View {
         dismiss()
     }
 
+    /// Quiet this person. Unlike block and unfriend, nothing here is
+    /// severed and the page stays open — so we deliberately do NOT
+    /// dismiss. The only visible change is that their moments stop
+    /// arriving uninvited.
+    private func muteFriend() async {
+        guard let remote = remoteProfile, let myId = myUserId else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        await moderation.mute(remote.id, myUserId: myId)
+    }
+
+    private func unmuteFriend() async {
+        guard let remote = remoteProfile, let myId = myUserId else { return }
+        await moderation.unmute(remote.id, myUserId: myId)
+    }
+
     private func blockFriend() async {
         guard let remote = remoteProfile, let myId = myUserId, !isRelationshipWorking else { return }
         isRelationshipWorking = true
@@ -370,6 +398,23 @@ struct FriendDetailView: View {
                 }
                 if let remote = remoteProfile {
                     Divider()
+                    // The gentle option first: quieting someone should be
+                    // easier to reach than severing them.
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        if moderation.isMuted(remote.id) {
+                            Task { await unmuteFriend() }
+                        } else {
+                            showMuteConfirm = true
+                        }
+                    } label: {
+                        Label(
+                            moderation.isMuted(remote.id)
+                                ? "Unmute \(friend.displayName)"
+                                : "Mute \(friend.displayName)",
+                            systemImage: moderation.isMuted(remote.id) ? "bell" : "bell.slash"
+                        )
+                    }
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         reportTarget = ReportTarget(

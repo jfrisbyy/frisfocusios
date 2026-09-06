@@ -25,6 +25,7 @@ import UIKit
 struct PeopleStoryRow: View {
     @Environment(Store.self) private var store
     @Environment(SocialSyncService.self) private var social
+    @Environment(ModerationService.self) private var moderation
 
     var userInitials: String = ""
     var userPhotoURL: URL? = nil
@@ -60,10 +61,14 @@ struct PeopleStoryRow: View {
                     FriendStoryBubble(
                         friend: friend,
                         state: ringState(for: friend),
-                        thumbMedia: store.storyThumbMedia(forFriendId: friend.id),
-                        thumbCaption: store.storyThumbCaption(forFriendId: friend.id)
+                        thumbMedia: isMuted(friend) ? nil : store.storyThumbMedia(forFriendId: friend.id),
+                        thumbCaption: isMuted(friend) ? nil : store.storyThumbCaption(forFriendId: friend.id)
                     ) {
-                        onFriendTap(friend, store.hasAnyActiveStories(forFriendId: friend.id))
+                        // A muted friend keeps their place in the row —
+                        // they are still a person you can open — but the
+                        // tap lands on their profile instead of dropping
+                        // you into a tape you asked not to be shown.
+                        onFriendTap(friend, !isMuted(friend) && store.hasAnyActiveStories(forFriendId: friend.id))
                     }
                     .zoomSource(id: "story-\(friend.id.uuidString)", in: zoomNamespace)
                 }
@@ -99,9 +104,17 @@ struct PeopleStoryRow: View {
     }
 
     private func ringState(for friend: Friend) -> StoryRingState {
+        // Muted people read as ring-less: no bright ring calling for a
+        // watch, no thumbnail, and — through `rankValue` — a seat at the
+        // quiet end of the row. Nothing is removed, only turned down.
+        if isMuted(friend) { return .none }
         if store.hasUnviewedStories(forFriendId: friend.id) { return .fresh }
         if store.hasAnyActiveStories(forFriendId: friend.id) { return .seen }
         return .none
+    }
+
+    private func isMuted(_ friend: Friend) -> Bool {
+        moderation.mutedLocalIds.contains(friend.id)
     }
 
     /// My local posts whose upload failed — the bubble offers a resend.
@@ -585,6 +598,7 @@ private struct AddPersonBubble: View {
         )
         .environment(Store())
         .environment(SocialSyncService())
+        .environment(ModerationService())
     }
     .background(Theme.warmWheat)
 }

@@ -341,8 +341,8 @@ struct ProfileSheetView: View {
             } label: {
                 hubRow(
                     icon: "bell.badge.fill",
-                    title: "Reminders",
-                    subtitle: "Plan nudges through the day"
+                    title: "Notifications",
+                    subtitle: "Plan nudges, and what friends can send"
                 )
             }
             .buttonStyle(.plain)
@@ -367,8 +367,8 @@ struct ProfileSheetView: View {
             } label: {
                 hubRow(
                     icon: "hand.raised.fill",
-                    title: "Blocked",
-                    subtitle: "People you've blocked"
+                    title: "Blocked and muted",
+                    subtitle: "People you've blocked or quieted"
                 )
             }
             .buttonStyle(.plain)

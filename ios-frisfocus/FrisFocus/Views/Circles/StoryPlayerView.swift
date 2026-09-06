@@ -159,6 +159,10 @@ struct StoryPlayerView: View {
     /// Asks for confirmation before blocking the current author.
     @State private var showBlockConfirm: Bool = false
 
+    /// Asks before muting the current author — the one moment to say
+    /// plainly how little mute does compared with a block.
+    @State private var showMuteConfirm: Bool = false
+
     /// Tick rate for the progress driver. 25 fps reads as smooth
     /// without burning a re-render every vsync.
     private let tick: TimeInterval = 0.04
@@ -308,6 +312,16 @@ struct StoryPlayerView: View {
             Button("Cancel", role: .cancel) { isPaused = false }
         } message: {
             Text("They won't be able to message you or see your days, and you won't see theirs.")
+        }
+        .confirmationDialog(
+            "Mute this person?",
+            isPresented: $showMuteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Mute") { muteCurrentAuthor() }
+            Button("Cancel", role: .cancel) { isPaused = false }
+        } message: {
+            Text("Their stories leave your feed and their notifications stop arriving. You stay friends, their profile stays open to you, and they are never told.")
         }
         .sheet(item: $cheerTarget, onDismiss: {
             // Resume playback the moment the cheer composer is
@@ -635,13 +649,32 @@ struct StoryPlayerView: View {
     }
 
     /// The "…" safety menu on someone else's segment: hide the post,
-    /// report it, or block its author entirely.
+    /// mute or unmute its author, report it, or block them entirely.
+    /// Mute sits above report on purpose — the softest way out of a
+    /// tape should be the first one offered.
     private func moderationMenu(for post: StoryPost) -> some View {
         Menu {
             Button {
                 hideCurrentPost(post)
             } label: {
                 Label("Hide this story", systemImage: "eye.slash")
+            }
+            if let remote = socialSync.remoteId(forLocal: post.authorId) {
+                Button {
+                    if moderation.isMuted(remote) {
+                        unmuteAuthor(remote: remote)
+                    } else {
+                        isPaused = true
+                        showMuteConfirm = true
+                    }
+                } label: {
+                    Label(
+                        moderation.isMuted(remote)
+                            ? "Unmute \(authorName(for: post))"
+                            : "Mute \(authorName(for: post))",
+                        systemImage: moderation.isMuted(remote) ? "bell" : "bell.slash"
+                    )
+                }
             }
             Button {
                 isPaused = true
@@ -1250,6 +1283,35 @@ struct StoryPlayerView: View {
         isPaused = false
     }
 
+    /// Quiet the current segment's author and close the player — the
+    /// tape you just asked to stop hearing shouldn't keep playing.
+    /// Nothing is severed and nothing is sent to them; their profile
+    /// still opens onto everything they share.
+    private func muteCurrentAuthor() {
+        guard let post = currentPost,
+              let remote = socialSync.remoteId(forLocal: post.authorId),
+              let myId = auth.user?.id else {
+            isPaused = false
+            return
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task {
+            await moderation.mute(remote, myUserId: myId)
+            dismiss()
+        }
+    }
+
+    /// Let a muted author back into the feed. No confirmation — turning
+    /// the volume back up costs nothing — and the tape plays on.
+    private func unmuteAuthor(remote: String) {
+        guard let myId = auth.user?.id else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task {
+            await moderation.unmute(remote, myUserId: myId)
+            isPaused = false
+        }
+    }
+
     /// Block the current segment's author: sever the relationship,
     /// refresh the mirrors, and close the player — their tape is gone.
     private func blockCurrentAuthor() {
@@ -1362,10 +1424,15 @@ struct StoryPlayerView: View {
     // MARK: - Continuous feed paging
 
     /// Friends with an active tape, ordered like the story row (fresh
-    /// tapes first, then watched — stable within each band).
+    /// tapes first, then watched — stable within each band). Muted
+    /// people are left out: this order is the continuous feed, and a
+    /// muted tape must never arrive on its own. Their tape still plays
+    /// when it is opened on purpose from their profile — it simply has
+    /// no neighbours to drift into.
     private func computeTapeOrder() -> [UUID] {
-        store.friends.enumerated()
-            .filter { store.hasAnyActiveStories(forFriendId: $0.element.id) }
+        let muted = moderation.mutedLocalIds
+        return store.friends.enumerated()
+            .filter { store.hasAnyActiveStories(forFriendId: $0.element.id) && !muted.contains($0.element.id) }
             .sorted { lhs, rhs in
                 let l = store.hasUnviewedStories(forFriendId: lhs.element.id) ? 0 : 1
                 let r = store.hasUnviewedStories(forFriendId: rhs.element.id) ? 0 : 1

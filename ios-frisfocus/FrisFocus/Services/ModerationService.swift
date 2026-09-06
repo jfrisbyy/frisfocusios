@@ -2,18 +2,26 @@
 //  ModerationService.swift
 //  FrisFocus
 //
-//  Safety tools required for a social app: blocking, reporting, and
-//  hiding. Block is symmetric — once you block someone the friendship
-//  is severed, any pending requests are cleared, and RLS stops either
-//  of you from messaging or re-requesting the other. Reporting files a
-//  row for out-of-band review. Hiding is quieter: one piece of content
-//  (a story post, a proof) disappears from this account's surfaces
-//  without touching the relationship — persisted per account so sync
-//  refreshes can never resurrect it.
+//  Safety tools required for a social app: blocking, muting, reporting,
+//  and hiding. Block is symmetric — once you block someone the
+//  friendship is severed, any pending requests are cleared, and RLS
+//  stops either of you from messaging or re-requesting the other.
+//  Reporting files a row for out-of-band review. Hiding is quieter: one
+//  piece of content (a story post, a proof) disappears from this
+//  account's surfaces without touching the relationship — persisted per
+//  account so sync refreshes can never resurrect it.
+//
+//  Mute is the softest of the four and deliberately NOT a permission.
+//  It quiets someone — their stories leave the feed, their pushes stop
+//  server-side — while leaving the friendship, the thread, and their
+//  profile exactly as they were. Opening a muted person's profile still
+//  shows everything they share; that is the whole difference from a
+//  block. RLS scopes the `mutes` table to the muter, so the muted
+//  person can never learn they were muted.
 //
 //  Injected once at the app root so every surface can read `blockedIds`
-//  to hide a blocked person, and call `block` / `report` / `hideStory`
-//  / `hideProof` from their "..." menus.
+//  / `mutedIds` to quiet or hide a person, and call `block` / `mute` /
+//  `report` / `hideStory` / `hideProof` from their "..." menus.
 //
 
 import Foundation
@@ -32,6 +40,20 @@ private nonisolated struct BlockInsert: Encodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case blockerId = "blocker_id"
         case blockedId = "blocked_id"
+    }
+}
+
+private nonisolated struct MuteRow: Codable, Sendable {
+    let mutedId: String
+    enum CodingKeys: String, CodingKey { case mutedId = "muted_id" }
+}
+
+private nonisolated struct MuteInsert: Encodable, Sendable {
+    let muterId: String
+    let mutedId: String
+    enum CodingKeys: String, CodingKey {
+        case muterId = "muter_id"
+        case mutedId = "muted_id"
     }
 }
 
@@ -63,6 +85,16 @@ final class ModerationService {
     /// Account ids the signed-in user has blocked. Surfaces read this to
     /// hide blocked people from lists, search, and conversations.
     var blockedIds: Set<String> = []
+    /// Account ids the signed-in user has muted. Feed surfaces read this
+    /// to leave a muted person's stories out of the tape; nothing else
+    /// changes — the friendship, the thread, and their profile stay
+    /// whole, and they are never told.
+    var mutedIds: Set<String> = []
+    /// The same muted people keyed the way the Store keys everyone —
+    /// local UUIDs. Mirrored rather than derived on demand: the mapping
+    /// is a SHA-256 per id, and the feed surfaces ask this question once
+    /// per friend, per sort comparison, per render.
+    private(set) var mutedLocalIds: Set<UUID> = []
     /// Story posts this account chose to hide — filtered from every tape
     /// and dropped at sync ingest so refreshes can't bring them back.
     var hiddenStoryPostIds: Set<UUID> = []
@@ -79,6 +111,17 @@ final class ModerationService {
     @ObservationIgnored private var hiddenOwnerUserId: String?
 
     func isBlocked(_ id: String) -> Bool { blockedIds.contains(id) }
+    func isMuted(_ id: String) -> Bool { mutedIds.contains(id) }
+
+    /// Re-derive the local-id mirror. Story posts carry local author
+    /// ids and the remote → local mapping is a pure hash, so a feed
+    /// surface can filter on `mutedLocalIds` without holding the sync
+    /// service just to translate ids. Called from every place
+    /// `mutedIds` changes so the two can never drift apart.
+    private func refreshMutedLocalIds() {
+        mutedLocalIds = Set(mutedIds.map(RemoteIDMapper.localUUID(forRemoteId:)))
+    }
+
     func isStoryHidden(_ postId: UUID) -> Bool { hiddenStoryPostIds.contains(postId) }
     func isProofHidden(_ messageId: UUID) -> Bool { hiddenProofIds.contains(messageId) }
     func isGoldenHourHidden(_ postId: UUID) -> Bool { hiddenGoldenHourPostIds.contains(postId) }
@@ -101,10 +144,27 @@ final class ModerationService {
         } catch {
             print("[Moderation] loadBlocks failed: \(error)")
         }
+        // Mutes get their own attempt on purpose: a blocks fetch that
+        // fails must not also leave a muted person loud, and a mutes
+        // fetch that fails must not lose the blocks we just read.
+        do {
+            let rows: [MuteRow] = try await supabase
+                .from("mutes")
+                .select("muted_id")
+                .eq("muter_id", value: myUserId)
+                .execute()
+                .value
+            mutedIds = Set(rows.map { $0.mutedId })
+            refreshMutedLocalIds()
+        } catch {
+            print("[Moderation] loadMutes failed: \(error)")
+        }
     }
 
     func clear() {
         blockedIds = []
+        mutedIds = []
+        mutedLocalIds = []
         hiddenStoryPostIds = []
         hiddenProofIds = []
         hiddenGoldenHourPostIds = []
@@ -186,6 +246,25 @@ final class ModerationService {
         }
     }
 
+    /// Profiles for the people the user has muted — for the same
+    /// management screen, so the quiet list is as easy to undo as the
+    /// hard one.
+    func loadMutedProfiles() async -> [RemoteProfile] {
+        guard !mutedIds.isEmpty else { return [] }
+        do {
+            let rows: [RemoteProfile] = try await supabase
+                .from("profiles")
+                .select("id, name, username, avatar_url, header_url")
+                .in("id", values: Array(mutedIds))
+                .execute()
+                .value
+            return rows.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        } catch {
+            print("[Moderation] loadMutedProfiles failed: \(error)")
+            return []
+        }
+    }
+
     // MARK: Block
 
     /// Block someone: record the block, sever any friendship, and clear
@@ -241,6 +320,44 @@ final class ModerationService {
             blockedIds.remove(profileId)
         } catch {
             fail("Couldn't unblock this person.", error)
+        }
+    }
+
+    // MARK: Mute
+
+    /// Mute someone: one row, nothing else touched. The friendship, the
+    /// thread, and every permission stay exactly as they were — only the
+    /// feed goes quiet here and the pushes go quiet on the server. There
+    /// is deliberately no notification, no severing, and no trace the
+    /// other person can read.
+    func mute(_ profileId: String, myUserId: String) async {
+        guard profileId != myUserId else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await supabase
+                .from("mutes")
+                .upsert(MuteInsert(muterId: myUserId, mutedId: profileId), onConflict: "muter_id,muted_id")
+                .execute()
+            mutedIds.insert(profileId)
+            refreshMutedLocalIds()
+        } catch {
+            fail("Couldn't mute this person.", error)
+        }
+    }
+
+    func unmute(_ profileId: String, myUserId: String) async {
+        do {
+            try await supabase
+                .from("mutes")
+                .delete()
+                .eq("muter_id", value: myUserId)
+                .eq("muted_id", value: profileId)
+                .execute()
+            mutedIds.remove(profileId)
+            refreshMutedLocalIds()
+        } catch {
+            fail("Couldn't unmute this person.", error)
         }
     }
 

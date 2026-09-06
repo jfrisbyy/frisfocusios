@@ -12,16 +12,26 @@ import UIKit
 
 struct SignalZoneView: View {
     @Environment(Store.self) private var store
+    @Environment(ModerationService.self) private var moderation
 
     /// Find-friends doorway — a sheet straight into the Friends hub,
     /// reachable from the no-friend quiet card and the footer line.
     @State private var showFindFriends: Bool = false
 
+    /// The friend stories this zone is allowed to peek at: everyone's
+    /// but mine, minus anyone the user has muted. Muting only quiets
+    /// the feed — their profile still shows every one of these — so the
+    /// filter lives here rather than in the sync that fills the Store.
+    private var visibleStories: [StoryPost] {
+        let muted = moderation.mutedLocalIds
+        return store.activeFriendStories
+            .filter { $0.authorId != store.currentUserId && !muted.contains($0.authorId) }
+    }
+
     /// Up to three of the freshest friend stories, shaped into the
     /// card model this zone has always rendered.
     private var entries: [CircleEntry] {
-        store.activeFriendStories
-            .filter { $0.authorId != store.currentUserId }
+        visibleStories
             .prefix(3)
             .compactMap { post -> CircleEntry? in
                 guard let friend = store.friend(by: post.authorId) else { return nil }
@@ -38,7 +48,7 @@ struct SignalZoneView: View {
     }
 
     private var sublineText: String {
-        let authors = Set(store.activeFriendStories.map { $0.authorId }).subtracting([store.currentUserId])
+        let authors = Set(visibleStories.map { $0.authorId })
         switch authors.count {
         case 0: return "your friends' moments land here"
         case 1: return "one of yours showed up today"
@@ -197,4 +207,5 @@ struct SignalZoneView: View {
 #Preview {
     SignalZoneView()
         .environment(Store())
+        .environment(ModerationService())
 }
