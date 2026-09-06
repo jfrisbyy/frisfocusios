@@ -27,6 +27,7 @@ struct SharedCircleDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(Store.self) private var store
     @Environment(SocialSyncService.self) private var socialSync
+    @Environment(WalkthroughManager.self) private var walkthrough
 
     let service: CircleGraphService
     let circleId: UUID
@@ -47,6 +48,10 @@ struct SharedCircleDetailView: View {
     @State private var numberUnit = ""
     @State private var numberTarget = ""
     @State private var friendService = FriendGraphService()
+    /// The "a circle is a room" concept lesson — this page and the
+    /// local-graph circle detail both raise it; whichever room the
+    /// person walks into first wins, and the manager refuses the second.
+    @State private var lesson: WalkthroughLesson?
     @FocusState private var contributionFocused: Bool
 
     /// Golden Hour — the circle's daily synchronized moment. The service
@@ -75,6 +80,14 @@ struct SharedCircleDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .edgeSwipeBack()
         .profileDestination($profileTarget, store: store)
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
+        // Held until the circle has actually resolved, so the lesson can
+        // never land on the "no longer available" page.
+        .onChange(of: circle?.id, initial: true) { _, resolved in
+            guard resolved != nil, lesson == nil,
+                  walkthrough.claim(.firstCircle) else { return }
+            lesson = .firstCircle
+        }
         .task {
             service.startRealtime(myUserId: myUserId)
             await friendService.load(myUserId: myUserId)

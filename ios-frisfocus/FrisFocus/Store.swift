@@ -495,6 +495,11 @@ final class Store {
 
         // Legacy keys cleared by the DEBUG migration below.
         static let legacyOneShots = "oneShots"
+
+        /// Storage keys whose contents failed to decode on the last
+        /// launch. Kept out of the DataKey slices deliberately: it has to
+        /// survive the very load that failed.
+        static let decodeFailures = "store.decodeFailures.v1"
     }
 
     /// Bumped whenever the on-disk shape changes incompatibly. The
@@ -858,9 +863,36 @@ final class Store {
             return try JSONDecoder().decode([T].self, from: data)
         } catch {
             UserDefaults.standard.set(data, forKey: "recovery.\(key)")
+            // Record WHICH slices failed, not just that something did.
+            // Returning nil here is what makes the app come up looking
+            // brand new after a bad decode: the season is gone, the tasks
+            // are gone, and nothing on screen says so while the bytes sit
+            // untouched under a recovery key nobody reads. The flag lets
+            // the app admit it instead of quietly presenting an empty life
+            // as if it were the truth.
+            var failed = UserDefaults.standard.stringArray(forKey: Keys.decodeFailures) ?? []
+            if !failed.contains(key) {
+                failed.append(key)
+                UserDefaults.standard.set(failed, forKey: Keys.decodeFailures)
+            }
             print("[Store] Decode failed for '\(key)' — raw data preserved under 'recovery.\(key)': \(error)")
             return nil
         }
+    }
+
+    /// Slices that failed to decode on this launch, by storage key.
+    ///
+    /// Read by the home so a person whose data did not load is told, and
+    /// their bytes are not quietly overwritten by an empty replacement.
+    var unreadableDataKeys: [String] {
+        userDefaults.stringArray(forKey: Keys.decodeFailures) ?? []
+    }
+
+    /// Clear the warning once the person has seen it. The `recovery.*`
+    /// blobs are deliberately left in place — acknowledging a problem is
+    /// not the same as agreeing to discard the evidence.
+    func acknowledgeUnreadableData() {
+        userDefaults.removeObject(forKey: Keys.decodeFailures)
     }
 
     /// Schedule a save of everything that changed. Mutations mark their
@@ -1013,6 +1045,24 @@ final class Store {
             guard defaults.object(forKey: backupKey) == nil,
                   let data = defaults.data(forKey: key) else { continue }
             defaults.set(data, forKey: backupKey)
+        }
+        pruneBackups(keeping: version)
+    }
+
+    /// Keep only the newest snapshot.
+    ///
+    /// Every model-version bump copied every slice and nothing ever
+    /// removed one, so a long-lived install accumulated a full duplicate
+    /// of its own data per release — inside UserDefaults, which is read
+    /// into memory whole at launch. Only the most recent snapshot is
+    /// worth anything anyway: it is the one taken from a shape the
+    /// current build might still be able to read.
+    private static func pruneBackups(keeping version: Int) {
+        let defaults = UserDefaults.standard
+        let keep = "backup.v\(version)."
+        for key in defaults.dictionaryRepresentation().keys
+        where key.hasPrefix("backup.v") && !key.hasPrefix(keep) {
+            defaults.removeObject(forKey: key)
         }
     }
 

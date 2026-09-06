@@ -125,7 +125,7 @@ struct WorkZoneView: View {
         // Points privacy: fires the moment a number is first legible on
         // this page, and re-checks whenever anything it waits on moves.
         .onChange(of: pointsLessonInputs) { _, _ in maybeFirePointsLesson() }
-        .walkthroughLessonSheet($pointsLesson) { walkthrough.markSeen($0) }
+        .walkthroughLessonSheet($pointsLesson) { walkthrough.markSeen($0); walkthrough.release($0) }
         .confirmationDialog(
             "Clear today's plan?",
             isPresented: $showClearConfirm,
@@ -453,28 +453,31 @@ struct WorkZoneView: View {
     }
 
     /// Everything the points lesson waits on, gathered into one watchable
-    /// value so a single observer covers all of it — a scored card on
-    /// screen, the mechanics tour finished, and the read lesson (the only
-    /// other sheet this page can raise, from NeedsYou below) out of the
-    /// way, since two sheets cannot rise at once.
+    /// value so a single observer covers all of it: a scored card on
+    /// screen, and the mechanics tour finished.
+    ///
+    /// The read lesson used to be a third input here. NeedsYou sits on
+    /// this same page and only one sheet can rise at once, so the work
+    /// zone had to hold back for a lesson it doesn't own, by name — a
+    /// rule every future surface would have had to learn and would have
+    /// forgotten. The manager's presentation slot settles that now:
+    /// whoever asks second is simply refused. Do not reintroduce a
+    /// per-lesson guard here.
     private var pointsLessonInputs: [Bool] {
         [
             planShowsPointValue,
-            walkthrough.tourActive,
-            store.canShowReadPrompt && walkthrough.shouldFire(.theRead)
+            walkthrough.tourActive
         ]
     }
 
     /// Make the privacy promise at the first honest moment: a number the
-    /// user could reasonably read as a public score is now on screen, and
-    /// nothing else is speaking. Not during the tour — one voice at a
-    /// time — and never twice.
+    /// user could reasonably read as a public score is now on screen.
+    /// `claim` carries the rest — not during the tour, not while another
+    /// surface is speaking, and never twice.
     private func maybeFirePointsLesson() {
         guard pointsLesson == nil,
               planShowsPointValue,
-              !walkthrough.tourActive,
-              walkthrough.shouldFire(.pointsPrivate),
-              !(store.canShowReadPrompt && walkthrough.shouldFire(.theRead))
+              walkthrough.claim(.pointsPrivate)
         else { return }
         pointsLesson = .pointsPrivate
     }

@@ -41,7 +41,7 @@ struct NeedsYouSection: View {
             }
         }
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.85), value: store.rankedNeedsYou)
-        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0) }
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
         .onChange(of: store.canShowReadPrompt) { _, can in
             fireReadLessonIfReady(available: can)
         }
@@ -50,8 +50,12 @@ struct NeedsYouSection: View {
 
     /// Fire the read concept the first time a read can actually be asked
     /// for — in context, never upfront.
+    ///
+    /// `claim` is the last condition on purpose: it spends the session's
+    /// teaching, so it must only be asked once everything cheaper has
+    /// already said yes.
     private func fireReadLessonIfReady(available: Bool) {
-        guard available, lesson == nil, walkthrough.shouldFire(.theRead) else { return }
+        guard available, lesson == nil, walkthrough.claim(.theRead) else { return }
         lesson = .theRead
     }
 

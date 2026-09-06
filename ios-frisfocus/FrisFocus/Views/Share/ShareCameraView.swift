@@ -204,14 +204,17 @@ struct ShareCameraView: View {
             Task { await camera.requestAccessAndStart() }
             // Attribution — taught the first time the share surface is
             // reached, after a beat so it doesn't fight the camera open.
-            if walkthrough.shouldFire(.shareAttribution) {
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(700))
-                    if attributionLesson == nil { attributionLesson = .shareAttribution }
-                }
+            // The floor is claimed AFTER the beat, never across it: a
+            // lesson that holds the slot through a wait the user may walk
+            // out of would silence every other surface for the session.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(700))
+                guard attributionLesson == nil,
+                      walkthrough.claim(.shareAttribution) else { return }
+                attributionLesson = .shareAttribution
             }
         }
-        .walkthroughLessonSheet($attributionLesson) { walkthrough.markSeen($0) }
+        .walkthroughLessonSheet($attributionLesson) { walkthrough.markSeen($0); walkthrough.release($0) }
         .onDisappear {
             pressTimerTask?.cancel()
             camera.stop()

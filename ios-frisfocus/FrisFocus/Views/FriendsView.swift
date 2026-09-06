@@ -64,13 +64,11 @@ struct FriendsView: View {
                 WalkthroughHelpButton { lesson = .peoplePrivacy }
             }
         }
-        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0) }
-        .onAppear {
-            // The privacy model, exactly when it becomes relevant.
-            if auth.user != nil, walkthrough.shouldFire(.peoplePrivacy) {
-                lesson = .peoplePrivacy
-            }
-        }
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
+        .onAppear { maybeFirePrivacyLesson() }
+        // Accepting a request lands right here, so the graph gaining its
+        // first friend is the same beat as the friendship being made.
+        .onChange(of: service.friends.count) { _, _ in maybeFirePrivacyLesson() }
         .task { await reload() }
         .refreshable { await reload() }
         .alert("Something went wrong", isPresented: $service.showError) {
@@ -97,6 +95,21 @@ struct FriendsView: View {
                 .environment(auth)
                 .environment(socialSync)
         }
+    }
+
+    /// The privacy model, at the moment it stops being hypothetical:
+    /// someone is actually on the other side of it.
+    ///
+    /// This doubles as the "first friend" lesson — the two teach the
+    /// same sentence, so there is one lesson and it waits for a real
+    /// friendship rather than firing on an empty People page.
+    private func maybeFirePrivacyLesson() {
+        guard auth.user != nil,
+              lesson == nil,
+              !service.friends.isEmpty,
+              walkthrough.claim(.peoplePrivacy)
+        else { return }
+        lesson = .peoplePrivacy
     }
 
     @ViewBuilder

@@ -27,9 +27,14 @@ import UIKit
 
 struct CircleDetailView: View {
     @Environment(Store.self) private var store
+    @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.dismiss) private var dismiss
 
     let circle: FFCircle
+
+    /// The "a circle is a room" concept lesson, fired once — the first
+    /// time the person is standing inside one.
+    @State private var lesson: WalkthroughLesson?
 
     @State private var showCaptureSheet: Bool = false
     @State private var showSettings: Bool = false
@@ -128,7 +133,14 @@ struct CircleDetailView: View {
             CircleEventDetailView(eventId: target.eventId)
                 .environment(store)
         }
-        .onAppear { store.refreshRecurringEvents() }
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
+        .onAppear {
+            store.refreshRecurringEvents()
+            // The room, taught from inside the room. Reaching this page
+            // means a circle already has the person in it, which is the
+            // first moment "not a feed" is a claim they can check.
+            if walkthrough.claim(.firstCircle) { lesson = .firstCircle }
+        }
     }
 
     // MARK: - Layered body

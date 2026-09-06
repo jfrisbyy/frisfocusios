@@ -92,6 +92,11 @@ struct ProofsInboxView: View {
     /// The real friend graph — powers the new-conversation picker.
     /// App-wide, so it shares live state with the banners and dots.
     @Environment(FriendGraphService.self) private var friendGraph
+    @Environment(WalkthroughManager.self) private var walkthrough
+
+    /// The "a proof is private" concept lesson, fired once — the first
+    /// time one has actually arrived from somebody.
+    @State private var lesson: WalkthroughLesson?
 
     /// The friend whose 1:1 thread is open full-screen, if any.
     @State private var openFriend: RemoteProfile?
@@ -122,6 +127,15 @@ struct ProofsInboxView: View {
     /// "find a friend first".
     private var hasNoFriends: Bool {
         !friendGraph.isLoading && friendGraph.friends.filter { !moderation.isBlocked($0.id) }.isEmpty
+    }
+
+    /// True once a proof somebody else sent is sitting in this inbox.
+    /// A note doesn't count: the lesson draws the line between a proof
+    /// and a story, so it should arrive with the first proof rather than
+    /// with the first message of any kind.
+    private var hasIncomingProof: Bool {
+        guard let myId else { return false }
+        return message.messages.contains { $0.isProof && !$0.isMine(myId) }
     }
 
     var body: some View {
@@ -173,6 +187,11 @@ struct ProofsInboxView: View {
             }
         }
         .task { await load() }
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
+        // Realtime drops new messages straight into the service, so the
+        // first proof can land while this page is already open.
+        .onChange(of: hasIncomingProof) { _, _ in maybeFireProofLesson() }
+        .onAppear { maybeFireProofLesson() }
         .fullScreenCover(item: $openFriend, onDismiss: {
             pendingInitialMessageId = nil
         }) { friend in
@@ -297,6 +316,14 @@ struct ProofsInboxView: View {
         }
     }
 
+    /// Teach what a proof is at the only honest moment: one has arrived
+    /// from a real person and is sitting here to be opened. Before that
+    /// the distinction is a rule about nothing.
+    private func maybeFireProofLesson() {
+        guard lesson == nil, hasIncomingProof, walkthrough.claim(.firstProof) else { return }
+        lesson = .firstProof
+    }
+
     /// Press-and-hold on a conversation card — jump straight to the
     /// camera to send a proof to just that person.
     private func sendProof(_ friend: RemoteProfile) {
@@ -316,6 +343,13 @@ struct ProofsInboxView: View {
                 Text("Proofs")
                     .font(.serif(24, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
+            }
+
+            // Once the promise has been made it stays findable, on the
+            // surface the promise is about.
+            if walkthrough.seen.contains(WalkthroughLesson.firstProof.id) {
+                WalkthroughHelpButton { lesson = .firstProof }
+                    .padding(.leading, 7)
             }
 
             Spacer()

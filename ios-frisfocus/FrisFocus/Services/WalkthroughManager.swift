@@ -17,7 +17,10 @@
 //   • Layer B — the contextual CONCEPT layer. Quiet just-in-time lessons
 //     that fire the first time the user naturally reaches each surface
 //     (the day's shape, a full day, the privacy model, the read, share
-//     attribution). Each fires once and is re-accessible via a small "?".
+//     attribution, and on the social half: the first friend, the first
+//     proof, the first Golden Hour, the first circle). Each fires once
+//     and, where the surface has room for it, is re-accessible via a
+//     small "?".
 //
 //  Governing principle: mechanics are shown early (you can't discover a
 //  hidden gesture by doing); concepts are explained in context. The
@@ -63,7 +66,14 @@ nonisolated struct WalkthroughLesson: Identifiable, Equatable {
         message: "Friends never see them unless you choose — they encode what’s hard for you, not for anyone else.",
         icon: "lock"
     )
-    /// First visit to the People surface — the privacy model.
+    /// The first real friendship — the privacy model, at the moment it
+    /// stops being hypothetical.
+    ///
+    /// This is also the "first friend" lesson. The two were the same
+    /// sentence written twice (you'll see each other's days; the numbers
+    /// stay private), so there is one lesson, fired when someone is
+    /// actually on the other side of it rather than on an empty People
+    /// page where the promise is about nobody.
     static let peoplePrivacy = WalkthroughLesson(
         id: "peoplePrivacy",
         title: "You’ll see the shape of their days.",
@@ -83,6 +93,33 @@ nonisolated struct WalkthroughLesson: Identifiable, Equatable {
         title: "Anything you share outside carries your name.",
         message: "Inside FrisFocus, it’s just for your people. Outside, it goes out as yours.",
         icon: "square.and.arrow.up"
+    )
+
+    // MARK: First Light · the social half
+
+    /// The first proof someone sends you — the line between a proof and
+    /// a story, drawn while one is sitting there unopened.
+    static let firstProof = WalkthroughLesson(
+        id: "firstProof",
+        title: "A proof is for one person.",
+        message: "A story goes to everyone. This went only to you, and it stays between the two of you.",
+        icon: "envelope"
+    )
+    /// The first Golden Hour to actually fire. The blur rule is the
+    /// whole module: unexplained, a wall that never clears reads as a
+    /// broken app rather than a door you were late to.
+    static let goldenHourWindow = WalkthroughLesson(
+        id: "goldenHourWindow",
+        title: "Golden Hour is now, or not at all.",
+        message: "Five minutes, everyone at once. Miss it and the wall stays blurred for good.",
+        icon: "sun.horizon"
+    )
+    /// The first circle the person stands inside.
+    static let firstCircle = WalkthroughLesson(
+        id: "firstCircle",
+        title: "A circle is a room, not a feed.",
+        message: "Everyone in it is doing the work alongside you. Nothing scrolls past — you step in and see who’s there.",
+        icon: "person.3"
     )
 }
 
@@ -275,7 +312,15 @@ final class WalkthroughManager {
     // MARK: - Contextual lesson control
 
     /// Whether a concept lesson should fire on genuine first-use.
-    func shouldFire(_ lesson: WalkthroughLesson) -> Bool {
+    ///
+    /// Private on purpose. Surfaces used to ask this directly and raise
+    /// their own sheet, which is how one page ended up checking another
+    /// page's lesson by name to avoid colliding with it. `claim` is the
+    /// only way in now, so the collision rule lives here instead of
+    /// being re-derived by every new surface. A deliberate re-open (the
+    /// "?") is the one thing that bypasses all of it — it sets the
+    /// view's own sheet state and never asks the manager at all.
+    private func shouldFire(_ lesson: WalkthroughLesson) -> Bool {
         !seen.contains(lesson.id)
     }
 

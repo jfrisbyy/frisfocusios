@@ -323,17 +323,22 @@ struct WalkthroughHelpButton: View {
 // MARK: - Presentation helper
 
 extension View {
-    /// Presents a contextual concept lesson as a quiet bottom-sheet,
-    /// marking it seen when dismissed.
+    /// Presents a contextual concept lesson as a quiet bottom-sheet.
+    ///
+    /// `onDismiss` runs on EVERY way out — the "Got it" button and a
+    /// swipe down alike. Call sites use it to mark the lesson seen and
+    /// hand the manager's presentation slot back, and a swiped-away
+    /// sheet must not be able to leave the floor claimed for the rest
+    /// of the session.
     func walkthroughLessonSheet(
         _ item: Binding<WalkthroughLesson?>,
-        onSeen: @escaping (WalkthroughLesson) -> Void
+        onDismiss: @escaping (WalkthroughLesson) -> Void
     ) -> some View {
         sheet(item: item) { lesson in
             WalkthroughLessonSheet(lesson: lesson) {
-                onSeen(lesson)
                 item.wrappedValue = nil
             }
+            .onDisappear { onDismiss(lesson) }
         }
     }
 }

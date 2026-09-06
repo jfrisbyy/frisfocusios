@@ -104,9 +104,13 @@ struct GoldenDrainBar: View {
 ///  • the rest of the day      → nothing at all. Absence is the design.
 struct GoldenHourBanner: View {
     @Environment(GoldenHourService.self) private var service
+    @Environment(WalkthroughManager.self) private var walkthrough
     let onOpen: (UUID) -> Void
 
     @State private var pulsing = false
+    /// The Golden Hour concept lesson, raised once — the first time a
+    /// moment actually fires for this person.
+    @State private var lesson: WalkthroughLesson?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -116,6 +120,10 @@ struct GoldenHourBanner: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        // The sheet hangs off the timeline, not the banner: the banner
+        // vanishes the second the window shuts, and the lesson must
+        // survive its own subject disappearing mid-read.
+        .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
     }
 
     @ViewBuilder
@@ -133,6 +141,19 @@ struct GoldenHourBanner: View {
         }
         .buttonStyle(.plain)
         .onAppear { pulsing = true }
+        // The rule, taught while the window is still open. Told after it
+        // closes, "miss it and the wall stays blurred" is an epitaph;
+        // told now, it is the reason to move. Live only — during the
+        // viewing hour the wall itself already explains the blur.
+        //
+        // Both Home and Circles hold one of these at once, and the
+        // claim is what keeps that from being two sheets: the second
+        // banner to ask is simply refused.
+        .onChange(of: phase, initial: true) { _, current in
+            guard current == .live, lesson == nil,
+                  walkthrough.claim(.goldenHourWindow) else { return }
+            lesson = .goldenHourWindow
+        }
         .accessibilityLabel(
             phase == .live
                 ? "Golden Hour is live in \(circleName). Tap to capture."

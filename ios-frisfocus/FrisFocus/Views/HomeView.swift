@@ -341,7 +341,7 @@ struct HomeView: View {
                 if !active { store.coldStartCoaching = false }
             }
             .overlay { MechanicsTourOverlay() }
-            .walkthroughLessonSheet($homeLesson) { walkthrough.markSeen($0) }
+            .walkthroughLessonSheet($homeLesson) { walkthrough.markSeen($0); walkthrough.release($0) }
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
                     // A rejected session never fails silently — the way
@@ -499,15 +499,20 @@ struct HomeView: View {
     }
 
     /// Fire the home concept lessons just-in-time: the day-shape lesson a
-    /// few tasks in, the full-day note when the day is complete. Never
-    /// during the tour, and only one at a time.
+    /// few tasks in, the full-day note when the day is complete.
+    ///
+    /// Both go through `claim`, which is what keeps this to one voice:
+    /// it refuses during the tour, once this session's teaching is spent,
+    /// and while any other surface holds the floor. The two branches are
+    /// mutually exclusive by their done-counts, so a refused full day
+    /// never falls through into claiming the day shape.
     private func maybeFireHomeLessons(done: Int) {
-        guard !walkthrough.tourActive, homeLesson == nil else { return }
+        guard homeLesson == nil else { return }
         let total = store.coldStartProgress.total
         guard total > 0 else { return }
-        if done >= total, walkthrough.shouldFire(.fullDay) {
+        if done >= total, walkthrough.claim(.fullDay) {
             homeLesson = .fullDay
-        } else if done >= 2, done < total, walkthrough.shouldFire(.dayShape) {
+        } else if done >= 2, done < total, walkthrough.claim(.dayShape) {
             homeLesson = .dayShape
         }
     }

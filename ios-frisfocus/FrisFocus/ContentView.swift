@@ -86,6 +86,12 @@ struct ContentView: View {
             // marker, and the soft notification prime card.
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
+                    if !store.unreadableDataKeys.isEmpty {
+                        UnreadableDataBanner {
+                            store.acknowledgeUnreadableData()
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                     if auth.user != nil,
                        seasonSync.isRestoring,
                        store.appMode == .clean,
@@ -509,6 +515,53 @@ private struct AccountRestoreCover: View {
 
 /// Quiet top pill while a signed-in account's season is still coming
 /// down from the cloud — the moment data lands, it disappears.
+/// Shown when a slice of the person's own data would not decode on this
+/// launch.
+///
+/// Without it a failed decode is completely silent: `loadArray` returns
+/// nil, the season and the tasks are simply absent, and the app comes up
+/// looking brand new while the real bytes sit under a recovery key nobody
+/// reads. Someone would reasonably conclude their life's record had been
+/// deleted. Saying so plainly is the difference between a bug and a
+/// betrayal — and it warns them off re-entering everything, which is what
+/// would actually overwrite the recoverable copy.
+private struct UnreadableDataBanner: View {
+    let onAcknowledge: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.sunOuter)
+            Text("Some of your history didn't load. It's still saved — don't re-enter it yet.")
+                .font(.sans(12.5, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: onAcknowledge) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(.leading, 14)
+        .padding(.vertical, 8)
+        .background(
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Theme.sunOuter.opacity(0.5), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Some of your history didn't load. It is still saved. Don't re-enter it yet.")
+    }
+}
+
 private struct CloudRestoreBanner: View {
     var body: some View {
         HStack(spacing: 9) {
