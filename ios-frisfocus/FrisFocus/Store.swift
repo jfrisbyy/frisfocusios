@@ -176,6 +176,25 @@ final class Store {
     /// needs to remember to call it.
     @ObservationIgnored weak var seasonSync: SeasonSyncService?
 
+    /// Hand a piece of sync bookkeeping to the season sync service.
+    ///
+    /// `SeasonSyncService` is main-actor isolated and `Store` is not, so
+    /// these calls cannot be made inline — the compiler rejects them
+    /// outright. Everything routed through here is bookkeeping the sync
+    /// push reads later (delete tombstones, dirty-slice marks) rather than
+    /// something this call depends on having finished, so hopping to the
+    /// main actor is both sufficient and correct.
+    ///
+    /// The service is captured strongly for the hop: it is `weak` here
+    /// only to avoid a retain cycle between the two long-lived objects,
+    /// and a hop that outlives the service simply does nothing.
+    private func onSeasonSync(
+        _ body: @escaping @Sendable @MainActor (SeasonSyncService) -> Void
+    ) {
+        guard let sync = seasonSync else { return }
+        Task { @MainActor in body(sync) }
+    }
+
     /// Whether the user opted into tags on notes. Off by default —
     /// nothing about tags surfaces anywhere until this is flipped in
     /// the manage-folders sheet.
@@ -388,8 +407,10 @@ final class Store {
         let restoredIds = Set(snap.logEntries.map(\.id))
         let removedIds = logEntries.map(\.id).filter { !restoredIds.contains($0) }
         logEntries = snap.logEntries
-        if !removedIds.isEmpty { seasonSync?.recordLogEntryDeletions(removedIds) }
-        seasonSync?.clearLogEntryTombstones(Array(restoredIds))
+        if !removedIds.isEmpty {
+            onSeasonSync { $0.recordLogEntryDeletions(removedIds) }
+        }
+        onSeasonSync { $0.clearLogEntryTombstones(Array(restoredIds)) }
         signalFacts = snap.signalFacts
         persistAll()
         return snap.label
@@ -802,7 +823,7 @@ final class Store {
 
     /// One persistable slice of the Store. Each case maps to a single
     /// UserDefaults key.
-    enum DataKey: CaseIterable {
+    enum DataKey: CaseIterable, Sendable {
         case season, pastSeasons, archivedSeasons, tasks, todos, logEntries, notes, folders, proofPins, proofLibrary
         case friends, circles, circleTaskCompletions, circleContributions
         case circleEvents, eventRSVPs, eventCheckIns
@@ -880,10 +901,14 @@ final class Store {
         let keys = dirtyKeys
         dirtyKeys = []
         let encoder = JSONEncoder()
+        var syncedKeys: [DataKey] = []
         for key in keys {
             write(key, with: encoder)
-            if Store.seasonSyncedKeys.contains(key) {
-                seasonSync?.sliceChanged(key)
+            if Store.seasonSyncedKeys.contains(key) { syncedKeys.append(key) }
+        }
+        if !syncedKeys.isEmpty {
+            onSeasonSync { sync in
+                for key in syncedKeys { sync.sliceChanged(key) }
             }
         }
 
@@ -3175,7 +3200,7 @@ extension Store {
         let removedIds = logEntries.filter(predicate).map(\.id)
         guard !removedIds.isEmpty else { return }
         logEntries.removeAll(where: predicate)
-        seasonSync?.recordLogEntryDeletions(removedIds)
+        onSeasonSync { $0.recordLogEntryDeletions(removedIds) }
     }
 
     // MARK: - Task scheduling & lifecycle
