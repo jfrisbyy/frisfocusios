@@ -288,6 +288,22 @@ private nonisolated struct CircleSharingUpdate: Encodable, Sendable {
     }
 }
 
+/// A role change on one `circle_members` row — the only column a
+/// governance action ever writes there.
+private nonisolated struct MemberRoleUpdate: Encodable, Sendable {
+    let role: String
+}
+
+/// Moves `circles.owner_id`. Separate from the role rows because
+/// ownership is read from the circle, not from the membership.
+private nonisolated struct CircleOwnerUpdate: Encodable, Sendable {
+    let ownerId: String
+
+    enum CodingKeys: String, CodingKey {
+        case ownerId = "owner_id"
+    }
+}
+
 private nonisolated struct JoinRequestInsert: Encodable, Sendable {
     let circleId: String
     let requesterId: String
@@ -447,6 +463,26 @@ struct CircleInvitation: Identifiable {
     let collectiveUnit: String?
     let collectiveTarget: Double?
     let inviter: RemoteProfile
+}
+
+/// Why a governance action was refused before it ever reached the
+/// network. RLS enforces the same rules server-side, but a denial there
+/// arrives as an anonymous permission error; refusing here lets the
+/// person read the actual reason.
+nonisolated enum CircleGovernanceError: LocalizedError {
+    case notPermitted
+    case ownerNotRemovable
+    case useTransfer
+    case notAMember
+
+    var errorDescription: String? {
+        switch self {
+        case .notPermitted: return "You don't have permission to do that in this circle."
+        case .ownerNotRemovable: return "A circle's owner can't be removed."
+        case .useTransfer: return "Ownership moves by transfer, not by a role change."
+        case .notAMember: return "That person isn't a member of this circle."
+        }
+    }
 }
 
 // MARK: - Service
@@ -822,6 +858,152 @@ final class CircleGraphService {
         } catch {
             fail("Couldn't delete the circle.", error)
         }
+    }
+
+    // MARK: Governance
+    //
+    // Roles and membership are the one part of a circle where a local-only
+    // edit is worse than no edit at all: `circle_members` is the table RLS
+    // reads, so a member who is only removed on the device keeps every bit
+    // of their access and simply reappears on the next refresh. These
+    // three write to the server and reload from it.
+    //
+    // Each one re-reads the circle's roles first and refuses what it isn't
+    // allowed to do. RLS refuses the same things, but it answers with an
+    // anonymous permission error; checking here means the person is told
+    // which rule stopped them.
+
+    /// Remove a member. Owner or admin only, an admin can remove plain
+    /// members but not another admin, and the owner can't be removed by
+    /// anyone — ownership is handed on first. Their completions and
+    /// contributions stay behind as history; only the membership goes.
+    func removeMember(circleId: UUID, userId: String, myUserId: String) async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let roles = try await memberRoles(circleId: circleId)
+            let mine = roles[myUserId] ?? "member"
+            let theirs = roles[userId] ?? "member"
+            guard mine == "owner" || mine == "admin" else {
+                fail("Only the circle's owner or an admin can remove someone.", CircleGovernanceError.notPermitted)
+                return
+            }
+            guard theirs != "owner" else {
+                fail("The owner can't be removed — transfer ownership first.", CircleGovernanceError.ownerNotRemovable)
+                return
+            }
+            guard mine == "owner" || theirs == "member" else {
+                fail("Only the owner can remove an admin.", CircleGovernanceError.notPermitted)
+                return
+            }
+            try await supabase
+                .from("circle_members")
+                .delete()
+                .eq("circle_id", value: circleId.uuidString)
+                .eq("user_id", value: userId)
+                .execute()
+            await load(myUserId: myUserId)
+        } catch {
+            fail("Couldn't remove them from the circle.", error)
+        }
+    }
+
+    /// Promote a member to admin, or demote an admin back to member.
+    /// Owner-only. Ownership deliberately can't be handed over this way —
+    /// it also has to move `circles.owner_id`, which `transferOwnership`
+    /// does in one piece.
+    func setRole(circleId: UUID, userId: String, role: CircleRole, myUserId: String) async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let roles = try await memberRoles(circleId: circleId)
+            guard (roles[myUserId] ?? "member") == "owner" else {
+                fail("Only the circle's owner can change roles.", CircleGovernanceError.notPermitted)
+                return
+            }
+            guard role != .owner else {
+                fail("Ownership moves by transfer, not by a role change.", CircleGovernanceError.useTransfer)
+                return
+            }
+            guard let theirs = roles[userId] else {
+                fail("They're not a member of this circle.", CircleGovernanceError.notAMember)
+                return
+            }
+            guard theirs != "owner" else {
+                fail("The owner's role can't be changed — transfer ownership first.", CircleGovernanceError.ownerNotRemovable)
+                return
+            }
+            try await supabase
+                .from("circle_members")
+                .update(MemberRoleUpdate(role: role.rawValue))
+                .eq("circle_id", value: circleId.uuidString)
+                .eq("user_id", value: userId)
+                .execute()
+            await load(myUserId: myUserId)
+        } catch {
+            fail("Couldn't update their role.", error)
+        }
+    }
+
+    /// Hand the circle to another member. Owner-only. Three rows move: the
+    /// new owner's role, the outgoing owner's demotion to plain member, and
+    /// `circles.owner_id`.
+    ///
+    /// `owner_id` is written last on purpose. It's both the column every
+    /// surface reads ownership from and the one RLS grants owner authority
+    /// by, so flipping it first would revoke the permission needed for the
+    /// two role writes still to come. Written last, a failure part-way
+    /// leaves the circle still owned by whoever started the transfer rather
+    /// than owned by nobody.
+    func transferOwnership(circleId: UUID, toUserId: String, myUserId: String) async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let roles = try await memberRoles(circleId: circleId)
+            guard (roles[myUserId] ?? "member") == "owner" else {
+                fail("Only the circle's owner can hand it on.", CircleGovernanceError.notPermitted)
+                return
+            }
+            guard toUserId != myUserId, roles[toUserId] != nil else {
+                fail("Ownership can only pass to another member.", CircleGovernanceError.notAMember)
+                return
+            }
+            try await supabase
+                .from("circle_members")
+                .update(MemberRoleUpdate(role: "owner"))
+                .eq("circle_id", value: circleId.uuidString)
+                .eq("user_id", value: toUserId)
+                .execute()
+            try await supabase
+                .from("circle_members")
+                .update(MemberRoleUpdate(role: "member"))
+                .eq("circle_id", value: circleId.uuidString)
+                .eq("user_id", value: myUserId)
+                .execute()
+            try await supabase
+                .from("circles")
+                .update(CircleOwnerUpdate(ownerId: toUserId))
+                .eq("id", value: circleId.uuidString)
+                .execute()
+            await load(myUserId: myUserId)
+        } catch {
+            fail("Couldn't transfer ownership.", error)
+        }
+    }
+
+    /// The `profiles.id` → role map for one circle. Prefers the loaded
+    /// copy and falls back to a small read, because governance is driven
+    /// from the settings sheet, whose service instance has never run a
+    /// full `load`.
+    private func memberRoles(circleId: UUID) async throws -> [String: String] {
+        if let circle = circles.first(where: { $0.id == circleId }) { return circle.roles }
+        let rows: [CircleMemberRow] = try await supabase
+            .from("circle_members")
+            .select("circle_id, user_id, role")
+            .eq("circle_id", value: circleId.uuidString)
+            .execute()
+            .value
+        return Dictionary(rows.map { ($0.userId, $0.role) }, uniquingKeysWith: { first, _ in first })
     }
 
     // MARK: Invitations
