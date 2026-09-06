@@ -112,6 +112,30 @@ changes what the table allows, and there is no test here that would
 catch getting it wrong. It is a real cost at scale and the wrong thing
 to do blind — it wants a pass with a way to verify each merge.
 
+### Localization: what is actually left
+
+The app ships one language and no string catalog. The infrastructure is
+smaller than it looks and the work is bigger, so it is worth separating
+the two.
+
+SwiftUI's `Text("…")` takes a `LocalizedStringKey`, so **1160 literals in
+`Views/` are already localization keys** — adding a String Catalog makes
+Xcode extract them at build time with no code change. That is the cheap
+half.
+
+The expensive half, measured rather than estimated:
+
+| Count | What | Why it is not automatic |
+|---|---|---|
+| 392 | `Text(someVariable)` | Uses the `String` overload, which is never localized. Each one has to be triaged: genuinely user-entered content should become `Text(verbatim:)` to say so; anything else is a missed string. |
+| 265 | `Text("… \(value) …")` | Interpolation needs a plural rule per language, not a translated sentence. "1 moment" / "3 moments" is the easy case; languages with more than two plural forms are not. |
+| — | Accessibility labels, alert titles, confirmation dialogs, notification bodies | Written as plain `String`, outside `Text` entirely. |
+
+None of it blocks a single-language beta, which is why it is sequenced
+last. Do not read "1160 strings are already keys" as "the app is nearly
+localized" — the 392 and the 265 are where the real work is, and both
+need a translator, not a refactor.
+
 ## Before a beta release — items that need a human
 
 These cannot be done from the repository and several have long lead times.
