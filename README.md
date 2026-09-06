@@ -83,8 +83,9 @@ These cannot be done from the repository and several have long lead times.
 | **Family Controls (Distribution) entitlement** | `FocusBlockingService` uses `FamilyControls` + `ManagedSettings`. Development is auto-granted; **distribution requires Apple's approval**, which can take weeks. Start this first. | Apple Developer account |
 | `DEVELOPMENT_TEAM` | Currently empty — the project cannot be archived or uploaded. | Xcode signing |
 | Bundle identifier | Moving from the generated `app.rork.…` placeholder to `com.frisfocus.app`. Permanent after first App Store release. | App Store Connect |
-| Hosted Privacy Policy + Terms URLs | App Store Connect requires public URLs. The in-app `LegalView` text is the source copy to publish. | Web host |
-| Support email / URL | Required by App Store Connect. Planned: `support@frisfocus.app`. | Domain + mailbox |
+| Hosted Privacy Policy + Terms URLs | App Store Connect requires public URLs. `LegalContact.privacyURL` / `.termsURL` name where the app expects them; the in-app `LegalView` text is the source copy to publish there. | Web host |
+| Support email | `LegalContact.supportEmail` (`support@frisfocus.app`) is linked from both legal documents. The mailbox has to exist before review. | Domain + mailbox |
+| Legal entity + governing law | Neither document names the company behind FrisFocus or a jurisdiction. Deliberately not invented — fill in before publishing. | You |
 | Crash reporting account | Planned: Sentry. Needs a project DSN before the SDK can report. | Sentry |
 | APNs keys | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`, `APNS_BUNDLE_ID` as Supabase secrets, or `send-push` skips silently. | Apple + Supabase |
 | OpenRouter key | `OPENROUTER_API_KEY` as a Supabase secret, or the season conversation returns 503. | OpenRouter |

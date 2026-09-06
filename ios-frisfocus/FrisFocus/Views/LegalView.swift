@@ -10,6 +10,29 @@
 
 import SwiftUI
 
+/// Where FrisFocus can be reached, and where these documents live on the
+/// web.
+///
+/// App Store Connect requires a support URL and a PUBLICLY HOSTED privacy
+/// policy — text living only inside the binary does not satisfy either.
+/// The copy below is the source of truth for what gets published there, so
+/// keeping the addresses beside it is what stops the two drifting apart.
+enum LegalContact {
+    static let supportEmail = "support@frisfocus.app"
+    static let privacyURL = URL(string: "https://frisfocus.app/privacy")!
+    static let termsURL = URL(string: "https://frisfocus.app/terms")!
+
+    /// Prefilled so a report arrives with something to act on rather than
+    /// an empty message.
+    static func mailtoURL(subject: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = supportEmail
+        components.queryItems = [URLQueryItem(name: "subject", value: subject)]
+        return components.url
+    }
+}
+
 /// One of the two legal documents, driving both the pushed rows in the
 /// account hub and the sheet links under the sign-in buttons.
 enum LegalDocument: String, Identifiable, CaseIterable {
@@ -71,7 +94,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
         ),
         LegalSection(
             heading: "Questions or concerns",
-            body: "Use the report flows inside the app to flag content or reach us about a privacy concern. Reports are reviewed by a person."
+            body: "Use the report flows inside the app to flag a specific person or piece of content — reports are reviewed by a person. For anything else, including a question about your data or a request to have it removed, write to \(LegalContact.supportEmail)."
         ),
     ]
 
@@ -146,6 +169,9 @@ struct LegalView: View {
                     .padding(.top, 22)
                 }
 
+                contactRow
+                    .padding(.top, 26)
+
                 Spacer(minLength: 40)
             }
             .padding(.horizontal, 24)
@@ -155,6 +181,30 @@ struct LegalView: View {
         .navigationTitle(document.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Theme.warmWheat, for: .navigationBar)
+    }
+
+    /// A tappable address rather than one more sentence about writing to
+    /// us. Rendered as a Link so it works in the pre-account sheet too,
+    /// where there is no navigation stack to lean on.
+    @ViewBuilder
+    private var contactRow: some View {
+        if let mailto = LegalContact.mailtoURL(subject: "FrisFocus — \(document.title)") {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Reach a person")
+                    .font(.serif(17, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Link(destination: mailto) {
+                    HStack(spacing: 7) {
+                        Image(systemName: "envelope")
+                            .font(.system(size: 13, weight: .regular))
+                        Text(LegalContact.supportEmail)
+                            .font(.sans(14, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.sunOuter)
+                }
+                .accessibilityLabel("Email \(LegalContact.supportEmail)")
+            }
+        }
     }
 }
 
