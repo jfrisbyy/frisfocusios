@@ -514,6 +514,7 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				CODE_SIGN_ENTITLEMENTS = FrisFocus/FrisFocus.entitlements;
+				APS_ENVIRONMENT = development;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FrisFocus/Info.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -556,6 +557,7 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				CODE_SIGN_ENTITLEMENTS = FrisFocus/FrisFocus.entitlements;
+				APS_ENVIRONMENT = production;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FrisFocus/Info.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;

@@ -142,6 +142,42 @@
                 <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
             </array>
         </dict>
+
+        <!-- MetricKit crash and hang diagnostics from the previous run
+             (DiagnosticsService). Unlinked: rows carry a random
+             per-install id, never the account, and the table grants
+             INSERT and nothing else — not even to the device that wrote
+             the row, which cannot read its own diagnostics back. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeCrashData</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+
+        <!-- Which step of onboarding an install reached, so a door
+             nobody gets through can be found and fixed. Named steps
+             only — no screen recording, no free-form events, no timing
+             of what someone typed. Unlinked, on the same per-install id
+             as the crash data above. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeProductInteraction</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+            </array>
+        </dict>
     </array>
 
     <key>NSPrivacyAccessedAPITypes</key>

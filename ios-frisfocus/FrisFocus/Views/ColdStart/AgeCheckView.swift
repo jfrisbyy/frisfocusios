@@ -139,9 +139,11 @@ struct AgeCheckView: View {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 if isOldEnough {
                     AgeGate.recordPass()
+                    DiagnosticsService.shared.record(.ageCheckPassed)
                     onPass()
                 } else {
                     AgeGate.recordBlock()
+                    DiagnosticsService.shared.record(.ageCheckBlocked)
                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) {
                         turnedAway = true
                     }

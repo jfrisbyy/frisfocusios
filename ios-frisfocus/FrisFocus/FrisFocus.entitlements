@@ -2,8 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Driven by the build configuration (APS_ENVIRONMENT), never
+	     hard-coded. Xcode's automatic signing usually rewrites this to
+	     "production" when archiving, but "usually" is not a guarantee,
+	     and the failure is silent: a TestFlight build carrying a
+	     development value registers a development APNs token, the
+	     production APNs server rejects every push to it, and nobody
+	     finds out until beta users mention they never get notified. -->
 	<key>aps-environment</key>
-	<string>development</string>
+	<string>$(APS_ENVIRONMENT)</string>
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.com.frisfocus.app</string>

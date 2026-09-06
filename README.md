@@ -74,6 +74,34 @@ Schema changes live in `backend/migrations/` and are applied to the Supabase
 project. Never change the schema only through the dashboard — an unversioned
 policy change is how a table ends up world-readable without anyone noticing.
 
+### Advisor findings we deliberately leave open
+
+Two categories of Supabase linter warning stay in the report on purpose.
+Both were tested, not assumed.
+
+**`rls_enabled_no_policy` on `ai_usage`, `moderation_actions`,
+`test_engine_state`** — RLS on with zero policies means deny-all to
+`anon` and `authenticated`; only `service_role` reaches them. For a quota
+ledger, a moderation audit trail, and test-harness state, that *is* the
+intended posture. A policy here would be a widening, not a fix.
+
+**`anon`/`authenticated` can execute the SECURITY DEFINER helpers**
+(`is_blocked`, `is_circle_member`, `are_friends`, `can_see_story`, …) —
+these are the functions RLS policies are built out of, and a policy
+expression is evaluated with the *calling* role's rights. Revoking
+`EXECUTE` from `PUBLIC` was rehearsed inside a rolled-back transaction:
+with the grant in place an anonymous `select from story_posts` returns
+0 rows; with it revoked the same query fails with
+`42501: permission denied for function is_blocked`. So revoking turns a
+clean empty result into a hard error on every policy that references the
+helper. The helpers resolve everything through `user_id()`, which is null
+for `anon`, so they disclose nothing — the warning describes reachability,
+not exposure. Closing it properly means restructuring the policies, not
+changing a grant.
+
+The client-facing entry-point RPCs are a different matter and *are*
+revoked — see `20260906000012_revoke_anon_rpc_execute.sql`.
+
 ## Before a beta release — items that need a human
 
 These cannot be done from the repository and several have long lead times.
@@ -90,4 +118,5 @@ These cannot be done from the repository and several have long lead times.
 | APNs keys | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`, `APNS_BUNDLE_ID` as Supabase secrets, or `send-push` skips silently. | Apple + Supabase |
 | OpenRouter key | `OPENROUTER_API_KEY` as a Supabase secret, or the season conversation returns 503. | OpenRouter |
 | Moderator allowlist | `MODERATOR_USER_IDS` (comma-separated user ids) as a Supabase secret. Until it is set, the `moderation` function refuses every request — reports pile up unread, which is the situation this replaced. | Supabase |
+| Separate staging project | The app already points wherever `FRISFOCUS_*` env vars say (see `scripts/bootstrap-config.sh`), so a second Supabase project needs no code change — only provisioning, which costs money and is your call. Until then beta traffic and development share one database. | Supabase |
 | APNs bundle id | `APNS_BUNDLE_ID` must match the new `com.frisfocus.app`, or `send-push` falls back to its default. | Supabase |

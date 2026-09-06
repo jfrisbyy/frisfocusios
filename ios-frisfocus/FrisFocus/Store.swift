@@ -882,6 +882,18 @@ final class Store {
         do {
             return try JSONDecoder().decode([T].self, from: data)
         } catch {
+            // Whole-array decoding is all-or-nothing: one row written by
+            // a newer build, or one field that changed shape, and a
+            // thousand tasks become zero. Before giving up, try each
+            // element on its own and keep everything that still reads.
+            // Losing the one broken row is a bad day; losing the season
+            // because of it is the end of the account.
+            if let salvaged: [T] = salvageElements(from: data), !salvaged.isEmpty {
+                UserDefaults.standard.set(data, forKey: "recovery.\(key)")
+                print("[Store] Partial decode for '\(key)': kept \(salvaged.count), raw data preserved under 'recovery.\(key)'")
+                recordDecodeFailure(key)
+                return salvaged
+            }
             UserDefaults.standard.set(data, forKey: "recovery.\(key)")
             // Record WHICH slices failed, not just that something did.
             // Returning nil here is what makes the app come up looking
@@ -890,14 +902,44 @@ final class Store {
             // untouched under a recovery key nobody reads. The flag lets
             // the app admit it instead of quietly presenting an empty life
             // as if it were the truth.
-            var failed = UserDefaults.standard.stringArray(forKey: Keys.decodeFailures) ?? []
-            if !failed.contains(key) {
-                failed.append(key)
-                UserDefaults.standard.set(failed, forKey: Keys.decodeFailures)
-            }
+            recordDecodeFailure(key)
             print("[Store] Decode failed for '\(key)' — raw data preserved under 'recovery.\(key)': \(error)")
             return nil
         }
+    }
+
+    /// Decode a JSON array one element at a time, keeping what parses.
+    ///
+    /// Reads the bytes as untyped JSON first, so one malformed element
+    /// cannot take the outer array's structure with it; each element is
+    /// then re-serialized and decoded alone, and only the ones that
+    /// genuinely fail are dropped. Returns nil when the bytes are not a
+    /// JSON array at all — the truly unrecoverable case.
+    ///
+    /// Not private: the tests cover this directly, because the failure
+    /// it prevents is one nobody will reproduce by hand.
+    static func salvageElements<T: Decodable>(from data: Data) -> [T]? {
+        guard let raw = try? JSONSerialization.jsonObject(with: data),
+              let elements = raw as? [Any] else { return nil }
+        let decoder = JSONDecoder()
+        var kept: [T] = []
+        kept.reserveCapacity(elements.count)
+        for element in elements {
+            guard JSONSerialization.isValidJSONObject([element]),
+                  let bytes = try? JSONSerialization.data(withJSONObject: [element]),
+                  let one = try? decoder.decode([T].self, from: bytes),
+                  let value = one.first else { continue }
+            kept.append(value)
+        }
+        return kept
+    }
+
+    /// Note that a slice did not read cleanly, so the app can say so.
+    private static func recordDecodeFailure(_ key: String) {
+        var failed = UserDefaults.standard.stringArray(forKey: Keys.decodeFailures) ?? []
+        guard !failed.contains(key) else { return }
+        failed.append(key)
+        UserDefaults.standard.set(failed, forKey: Keys.decodeFailures)
     }
 
     /// Slices that failed to decode on this launch, by storage key.
@@ -2076,6 +2118,10 @@ extension Store {
     /// loop.
     func completeTask(_ task: FFTask, quantity: Double? = nil) {
         guard !hasLogEntryToday(forTaskId: task.id) else { return }
+
+        // The end of the onboarding funnel: someone built a season and
+        // then actually used it. Recorded once per install.
+        DiagnosticsService.shared.record(.firstTaskCompleted)
 
         // Detect whether this completion is a "return" — no completed
         // LogEntry for this task in the prior 5 days. A task with no

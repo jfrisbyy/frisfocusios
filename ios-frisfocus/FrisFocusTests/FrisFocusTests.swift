@@ -238,3 +238,73 @@ struct ColdStartPricingTests {
         #expect(first > last)
     }
 }
+
+// MARK: - Salvaging a partly-unreadable slice
+//
+// The gap: `loadArray` decoded each persisted slice as a whole array, so
+// a single element written by a newer build — or one field that changed
+// shape — turned a thousand tasks into zero. The bytes were preserved
+// under a recovery key nobody reads, which is not the same as keeping
+// someone's season.
+
+@Suite("Partial decode salvage")
+struct SalvageTests {
+
+    private struct Row: Codable, Equatable {
+        let id: Int
+        let name: String
+    }
+
+    private func data(_ json: String) -> Data { Data(json.utf8) }
+
+    @Test("A clean array survives salvage unchanged")
+    func cleanArray() {
+        let rows: [Row]? = Store.salvageElements(
+            from: data(#"[{"id":1,"name":"a"},{"id":2,"name":"b"}]"#)
+        )
+        #expect(rows == [Row(id: 1, name: "a"), Row(id: 2, name: "b")])
+    }
+
+    @Test("One unreadable element costs only that element")
+    func oneBadElement() {
+        // The middle row is missing `name`, so it cannot decode. The
+        // whole-array path loses all three; this must keep two.
+        let rows: [Row]? = Store.salvageElements(
+            from: data(#"[{"id":1,"name":"a"},{"id":2},{"id":3,"name":"c"}]"#)
+        )
+        #expect(rows == [Row(id: 1, name: "a"), Row(id: 3, name: "c")])
+    }
+
+    @Test("An element with extra unknown fields still reads")
+    func forwardCompatibleElement() {
+        // A row written by a newer build carrying a field this build has
+        // never heard of is not corrupt — it must not be dropped.
+        let rows: [Row]? = Store.salvageElements(
+            from: data(#"[{"id":1,"name":"a","addedLater":true}]"#)
+        )
+        #expect(rows == [Row(id: 1, name: "a")])
+    }
+
+    @Test("Bytes that are not a JSON array are not salvageable")
+    func notAnArray() {
+        let object: [Row]? = Store.salvageElements(from: data(#"{"id":1,"name":"a"}"#))
+        #expect(object == nil)
+        let garbage: [Row]? = Store.salvageElements(from: data("not json at all"))
+        #expect(garbage == nil)
+    }
+
+    @Test("An array of entirely unreadable rows salvages nothing")
+    func allBad() {
+        // Empty, not nil: the bytes *were* an array. loadArray treats an
+        // empty salvage as a full failure, so this distinction is what
+        // decides whether the slice is reported unreadable.
+        let rows: [Row]? = Store.salvageElements(from: data(#"[{"x":1},{"y":2}]"#))
+        #expect(rows == [])
+    }
+
+    @Test("An empty array is not mistaken for a failure")
+    func emptyArray() {
+        let rows: [Row]? = Store.salvageElements(from: data("[]"))
+        #expect(rows == [])
+    }
+}

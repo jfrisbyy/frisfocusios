@@ -25,7 +25,21 @@ struct ColdStartFlowView: View {
     @State private var phase: Phase = .pick
     @State private var didRestorePhase = false
 
-    private enum Phase: String { case pick, board, capstone, calibrate, season }
+    private enum Phase: String {
+        case pick, board, capstone, calibrate, season
+
+        /// Reaching a phase is the funnel step. `pick` has none — the
+        /// door opening is already recorded by the fork.
+        var funnelStep: FunnelStep? {
+            switch self {
+            case .pick: return nil
+            case .board: return .coldStartDirectionsChosen
+            case .capstone: return .coldStartBoardFilled
+            case .calibrate: return .coldStartCapstone
+            case .season: return .coldStartCalibrated
+            }
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -127,6 +141,12 @@ struct ColdStartFlowView: View {
 
     private func advance(to next: Phase) {
         viewModel.savedPhase = next.rawValue
+        // Every phase change passes through here, so the funnel is
+        // recorded in one place rather than sprinkled across five
+        // callbacks that can each be forgotten independently.
+        if let step = next.funnelStep {
+            DiagnosticsService.shared.record(step)
+        }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.5)) {
             phase = next
         }

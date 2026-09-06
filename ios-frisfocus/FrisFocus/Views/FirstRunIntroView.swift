@@ -95,6 +95,7 @@ struct FirstRunIntroView: View {
                 ZStack {
                     DawnBackdrop(progress: 0.2).ignoresSafeArea()
                     AgeCheckView(onPass: { advance(to: .account) })
+                        .onAppear { DiagnosticsService.shared.record(.ageCheckShown) }
                 }
                 .transition(stageTransition)
 
@@ -116,8 +117,14 @@ struct FirstRunIntroView: View {
                 ZStack {
                     DawnBackdrop(progress: 0.3).ignoresSafeArea()
                     ForkView(
-                        onQuick: { advance(to: .quickPath) },
-                        onDeep: { advance(to: .deepPath) }
+                        onQuick: {
+                            DiagnosticsService.shared.record(.coldStartOpened)
+                            advance(to: .quickPath)
+                        },
+                        onDeep: {
+                            DiagnosticsService.shared.record(.seasonSetupOpened)
+                            advance(to: .deepPath)
+                        }
                     )
                 }
                 .transition(stageTransition)
@@ -129,6 +136,7 @@ struct FirstRunIntroView: View {
                         // (raises the persisted seam), then walk the
                         // people-card + invite beats.
                         store.commitColdStart(result)
+                        DiagnosticsService.shared.record(.coldStartCommitted)
                         advance(to: .peopleCard)
                     },
                     onBack: { advance(to: .fork) }
@@ -141,6 +149,7 @@ struct FirstRunIntroView: View {
                     coldStartContext: nil,
                     onFinished: {
                         store.finalizeConversationColdStart()
+                        DiagnosticsService.shared.record(.seasonSetupCommitted)
                         advance(to: .peopleCard)
                     },
                     onExit: { advance(to: .fork) }

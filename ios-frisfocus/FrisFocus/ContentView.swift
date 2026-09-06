@@ -210,6 +210,10 @@ struct ContentView: View {
                 if let myId = auth.user?.id {
                     print("[FrisFocus] startup: signed in as user=\(myId) — loading account data")
                     notifications.setUserId(myId)
+                    // A session exists, so anything the funnel recorded
+                    // before sign-in can finally go up.
+                    DiagnosticsService.shared.setSignedIn(true)
+                    DiagnosticsService.shared.record(.signedIn)
                     // Teaching progress belongs to the person, not the
                     // handset: without this a new phone replays the whole
                     // tour to someone who has used the app for months.
@@ -258,6 +262,7 @@ struct ContentView: View {
                     print("[FrisFocus] startup: NO signed-in session (auth.user is nil) — nothing to load; app will look empty until sign-in")
                     notifications.setUserId(nil)
                     walkthrough.setUserId(nil)
+                    DiagnosticsService.shared.setSignedIn(false)
                     messageGraph.stopRealtime()
                     friendGraph.stopRealtime()
                     goldenHour.clear()
@@ -271,6 +276,10 @@ struct ContentView: View {
             }
             .onAppear {
                 print("[FrisFocus] Tasks: \(store.tasks.count), To-dos: \(store.todos.count), Notes: \(store.notes.count), LogEntries: \(store.logEntries.count)")
+                // MetricKit hands over the *previous* run's crashes and
+                // hangs, so this has to be subscribed before anything
+                // else can go wrong in this one.
+                DiagnosticsService.shared.start()
                 store.performDayRolloverIfNeeded()
                 store.settleExpiredPacts()
                 if closingPact == nil { closingPact = store.pactAwaitingClosing }
