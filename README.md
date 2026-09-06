@@ -89,3 +89,5 @@ These cannot be done from the repository and several have long lead times.
 | Crash reporting account | Planned: Sentry. Needs a project DSN before the SDK can report. | Sentry |
 | APNs keys | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`, `APNS_BUNDLE_ID` as Supabase secrets, or `send-push` skips silently. | Apple + Supabase |
 | OpenRouter key | `OPENROUTER_API_KEY` as a Supabase secret, or the season conversation returns 503. | OpenRouter |
+| Moderator allowlist | `MODERATOR_USER_IDS` (comma-separated user ids) as a Supabase secret. Until it is set, the `moderation` function refuses every request — reports pile up unread, which is the situation this replaced. | Supabase |
+| APNs bundle id | `APNS_BUNDLE_ID` must match the new `com.frisfocus.app`, or `send-push` falls back to its default. | Supabase |
