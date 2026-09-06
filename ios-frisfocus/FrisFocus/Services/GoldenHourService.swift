@@ -688,7 +688,18 @@ final class GoldenHourService {
                     ))
                 }
             }
-            return out
+            // iOS keeps at most 64 pending local notifications per app and
+            // silently discards the rest — so an unbounded scheduler does
+            // not fail loudly, it quietly starves every other reminder the
+            // app has. Golden Hour is the only one here that scales with
+            // something the person can grow without limit (circles), and
+            // the heads-up doubled its per-circle cost, so it is the one
+            // that has to be capped.
+            //
+            // Soonest first, because the notification you will actually
+            // receive next matters more than one three days out.
+            out.sort { $0.fireAt < $1.fireAt }
+            return Array(out.prefix(Self.maxScheduledMoments))
         }()
 
         Task {
@@ -745,6 +756,16 @@ final class GoldenHourService {
 
     /// How long before the window opens the heads-up lands.
     static let headsUpLead: TimeInterval = 10 * 60
+
+    /// The most Golden Hour moments to keep scheduled at once.
+    ///
+    /// Each one costs up to two of the app's 64 pending local
+    /// notifications (the fire alert, plus a heads-up in fixed mode), so
+    /// this caps Golden Hour's share at 24 — leaving room for the plan
+    /// reminders (up to 24), milestone nudges, and event reminders that
+    /// share the same budget. Twelve circles' worth of the next few days,
+    /// which is far past where anyone actually is.
+    static let maxScheduledMoments = 12
 
     /// Whether a circle's Golden Hour should be pre-announced.
     ///

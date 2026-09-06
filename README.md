@@ -118,6 +118,27 @@ changes what the table allows, and there is no test here that would
 catch getting it wrong. It is a real cost at scale and the wrong thing
 to do blind — it wants a pass with a way to verify each merge.
 
+### The 64-notification budget
+
+iOS keeps at most **64 pending local notifications per app** and silently
+discards the rest — an over-scheduling bug does not fail loudly, it
+quietly starves whichever reminders lose the race. Four things here
+schedule locally, and the budget has to be read as a whole:
+
+| Source | Worst case | Bounded by |
+|---|---|---|
+| Plan reminders | 24 | 2 days x (1 morning + 8 timed + 3 bands) |
+| Golden Hour | 24 | `maxScheduledMoments` (12 moments x up to 2 each) |
+| Milestone nudges | one per milestone | the season's milestone count |
+| Event reminders | one per event | circle events |
+
+Golden Hour was the only one that scaled with something a person can
+grow without limit — circles — and the fixed-mode heads-up doubled its
+per-circle cost. It now keeps the soonest 12 moments and drops the rest,
+because the alert you receive next matters more than one three days out.
+
+Anything added here has to be counted against the same 64.
+
 ### Localization: what is actually left
 
 `FrisFocus/Localizable.xcstrings` now exists (empty, source language
