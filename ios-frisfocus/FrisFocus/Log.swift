@@ -49,16 +49,24 @@ nonisolated struct AppLog: Sendable {
         logger = Logger(subsystem: subsystem, category: category)
     }
 
+    // Each of these calls the autoclosure into a local before
+    // interpolating it. That is not a style choice: OSLogInterpolation's
+    // String overload takes an *escaping* autoclosure, so interpolating
+    // `message()` directly would capture a non-escaping parameter in an
+    // escaping closure, which does not compile.
+
     /// Ordinary tracing. Free when nothing is listening.
     func debug(_ message: @autoclosure () -> String) {
         guard logger.isEnabled(type: .debug) else { return }
-        logger.debug("\(message(), privacy: .public)")
+        let text = message()
+        logger.debug("\(text, privacy: .public)")
     }
 
     /// Something went wrong. Always recorded — this is what a support
     /// sysdiagnose is read for.
     func error(_ message: @autoclosure () -> String) {
-        logger.error("\(message(), privacy: .public)")
+        let text = message()
+        logger.error("\(text, privacy: .public)")
     }
 
     /// Carries something belonging to a person — an account id, a name,
@@ -66,7 +74,8 @@ nonisolated struct AppLog: Sendable {
     /// as `<private>` to anyone who did not attach a debugger.
     func sensitive(_ message: @autoclosure () -> String) {
         guard logger.isEnabled(type: .debug) else { return }
-        logger.debug("\(message(), privacy: .private)")
+        let text = message()
+        logger.debug("\(text, privacy: .private)")
     }
 }
 
