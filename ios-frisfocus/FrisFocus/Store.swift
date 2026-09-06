@@ -5579,18 +5579,34 @@ extension Store {
 
     /// Toggle the current user's like on a story post. Appends a
     /// `Like` if none exists, removes it if one does. Persists
-    /// immediately so the heart state survives a relaunch.
+    /// immediately so the heart state survives a relaunch, and writes
+    /// through to `story_likes` so it survives anything else.
+    ///
+    /// The write-through was missing entirely. This method updated the
+    /// local slice and stopped, while `SocialSyncService.likeChanged` —
+    /// which performs the insert/delete AND sends the author their
+    /// `storyLike` notification — had no callers anywhere in the app.
+    /// Since `refreshStories` rebuilds `likes` wholesale from the server,
+    /// every like lived only on the device that tapped it and vanished at
+    /// the next pull; the author was never told, on any device.
     func toggleLike(postId: UUID) {
-        if let idx = likes.firstIndex(where: { $0.postId == postId && $0.fromFriendId == currentUserId }) {
+        let existing = likes.firstIndex { $0.postId == postId && $0.fromFriendId == currentUserId }
+        let like: Like
+        if let idx = existing {
+            like = likes[idx]
             likes.remove(at: idx)
         } else {
-            likes.append(Like(
+            like = Like(
                 postId: postId,
                 fromFriendId: currentUserId,
                 fromName: "You"
-            ))
+            )
+            likes.append(like)
         }
         persistAll()
+        // The row id travels with the change so an unlike deletes the same
+        // row the like created, rather than relying on a fresh UUID.
+        social?.likeChanged(postId: postId, liked: existing == nil, likeId: like.id)
     }
 
     /// Append a comment on a story post from the current user. Empty
