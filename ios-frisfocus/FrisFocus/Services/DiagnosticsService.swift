@@ -89,15 +89,15 @@ final class DiagnosticsService: NSObject {
     /// A random id for this installation. Not the account, not the
     /// device — reinstalling produces a new one, and it is never joined
     /// to anything that identifies a person.
-    @ObservationIgnored private let installId: String
-    @ObservationIgnored private var isSignedIn = false
+    private let installId: String
+    private var isSignedIn = false
     /// Funnel steps recorded before a session existed. The table takes
     /// authenticated writes only, so pre-sign-in steps wait here and go
     /// up together once an account appears.
-    @ObservationIgnored private var buffered: [DiagnosticsRow] = []
+    private var buffered: [DiagnosticsRow] = []
     /// Steps already recorded this install, so a step someone reaches
     /// twice (a restarted cold start) is counted once.
-    @ObservationIgnored private var recordedSteps: Set<String> = []
+    private var recordedSteps: Set<String> = []
 
     private static let installIdKey = "diagnostics.installId.v1"
     private static let recordedStepsKey = "diagnostics.recordedSteps.v1"
@@ -218,30 +218,30 @@ extension DiagnosticsService: MXMetricManagerSubscriber {
                 if let code = crash.exceptionCode { detail["exception_code"] = code.stringValue }
                 detail["termination_reason"] = crash.terminationReason ?? "unknown"
                 detail["frames"] = Self.topFrames(of: crash.callStackTree)
-                extracted.append(("crash", crash.terminationReason ?? "crash", detail, at))
+                extracted.append((kind: "crash", name: crash.terminationReason ?? "crash", detail: detail, at: at))
             }
 
             for hang in payload.hangDiagnostics ?? [] {
                 extracted.append((
-                    "hang",
-                    "hang",
-                    [
+                    kind: "hang",
+                    name: "hang",
+                    detail: [
                         "duration_s": String(format: "%.1f", hang.hangDuration.value),
                         "frames": Self.topFrames(of: hang.callStackTree),
                     ],
-                    at
+                    at: at
                 ))
             }
 
             for write in payload.diskWriteExceptionDiagnostics ?? [] {
                 extracted.append((
-                    "disk_write",
-                    "excessive_disk_write",
-                    [
+                    kind: "disk_write",
+                    name: "excessive_disk_write",
+                    detail: [
                         "written_kb": String(format: "%.0f", write.writesCaused.value),
                         "frames": Self.topFrames(of: write.callStackTree),
                     ],
-                    at
+                    at: at
                 ))
             }
         }

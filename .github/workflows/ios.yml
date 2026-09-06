@@ -66,7 +66,21 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # xcodebuild prints each error where it happens, thousands of lines
+      # up from the end — and the log APIs only hand back the tail, so a
+      # failure reads as "exit code 65" with no cause. Reprint just the
+      # diagnostics at the very bottom, where they can actually be read.
+      - name: Compiler errors
+        if: failure()
+        run: |
+          echo "::group::Compiler diagnostics"
+          grep -E "(error|warning): " "$RUNNER_TEMP/build.log" \
+            | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
+            | sort -u | head -60 || echo "(no diagnostics matched)"
+          echo "::endgroup::"
 
       - name: Pick a simulator
         id: sim
@@ -89,7 +103,17 @@ jobs:
             -configuration Debug \
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      - name: Test failures
+        if: failure()
+        run: |
+          echo "::group::Failing tests"
+          grep -E "(error|warning): |✘|Test .* failed|failed after" "$RUNNER_TEMP/test.log" \
+            | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
+            | sort -u | head -60 || echo "(no failures matched)"
+          echo "::endgroup::"
 
   backend:
     name: Edge functions typecheck
