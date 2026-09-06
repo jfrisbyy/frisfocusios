@@ -76,10 +76,18 @@ jobs:
       - name: Compiler errors
         if: failure()
         run: |
-          echo "::group::Compiler diagnostics"
-          grep -E "(error|warning): " "$RUNNER_TEMP/build.log" \
+          # Errors first and on their own. Sorting them together with
+          # warnings let a wall of pre-existing warnings push the actual
+          # errors off the end, which is how the first version of this
+          # step managed to be useless.
+          echo "### Errors"
+          grep -E "error: " "$RUNNER_TEMP/build.log" \
             | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
-            | sort -u | head -60 || echo "(no diagnostics matched)"
+            | sort -u | head -40 || echo "(none matched)"
+          echo "::group::Warnings (informational)"
+          grep -E "warning: " "$RUNNER_TEMP/build.log" \
+            | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
+            | sort -u | head -30 || echo "(none)"
           echo "::endgroup::"
 
       - name: Pick a simulator
@@ -109,11 +117,10 @@ jobs:
       - name: Test failures
         if: failure()
         run: |
-          echo "::group::Failing tests"
-          grep -E "(error|warning): |✘|Test .* failed|failed after" "$RUNNER_TEMP/test.log" \
+          echo "### Failures"
+          grep -E "error: |✘|Test .* failed|failed after" "$RUNNER_TEMP/test.log" \
             | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
-            | sort -u | head -60 || echo "(no failures matched)"
-          echo "::endgroup::"
+            | sort -u | head -40 || echo "(none matched)"
 
   backend:
     name: Edge functions typecheck
