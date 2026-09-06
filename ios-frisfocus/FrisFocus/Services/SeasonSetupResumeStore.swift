@@ -29,7 +29,7 @@ enum SeasonSetupResumeStore {
         do {
             return try JSONDecoder().decode(SetupConversationSnapshot.self, from: data)
         } catch {
-            print("[SeasonSetupResume] decode failed: \(error)")
+            Log.seasonSetupResume.error("decode failed: \(error)")
             // A corrupt snapshot shouldn't strand the user — drop it.
             clear()
             return nil
@@ -42,7 +42,7 @@ enum SeasonSetupResumeStore {
             let data = try JSONEncoder().encode(snapshot)
             UserDefaults.standard.set(data, forKey: key)
         } catch {
-            print("[SeasonSetupResume] encode failed: \(error)")
+            Log.seasonSetupResume.error("encode failed: \(error)")
         }
     }
 

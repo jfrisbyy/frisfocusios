@@ -257,7 +257,7 @@ extension SocialSyncService {
                 store.scheduleReminder(for: event, now: now)
             }
         } catch {
-            print("[SocialSync] events refresh failed: \(error)")
+            Log.socialSync.error("events refresh failed: \(error)")
         }
     }
 
@@ -312,7 +312,7 @@ extension SocialSyncService {
                     }
                 }
             } catch {
-                print("[SocialSync] event create failed (will retry on next refresh): \(error)")
+                Log.socialSync.error("event create failed (will retry on next refresh): \(error)")
             }
         }
     }
@@ -327,7 +327,7 @@ extension SocialSyncService {
                     .eq("id", value: eventId.uuidString)
                     .execute()
             } catch {
-                print("[SocialSync] event delete failed: \(error)")
+                Log.socialSync.error("event delete failed: \(error)")
             }
         }
     }
@@ -353,7 +353,7 @@ extension SocialSyncService {
                         .execute()
                 }
             } catch {
-                print("[SocialSync] event RSVP sync failed: \(error)")
+                Log.socialSync.error("event RSVP sync failed: \(error)")
             }
         }
     }
@@ -370,7 +370,7 @@ extension SocialSyncService {
                     at: SyncDates.iso(checkIn.at)
                 ), onConflict: "id").execute()
             } catch {
-                print("[SocialSync] event check-in sync failed: \(error)")
+                Log.socialSync.error("event check-in sync failed: \(error)")
             }
         }
     }

@@ -45,7 +45,7 @@ nonisolated enum ProofMediaCache {
             try data.write(to: url, options: .atomic)
             return url
         } catch {
-            print("[ProofMediaCache] Write failed for \(path): \(error)")
+            Log.proofMediaCache.error("Write failed for \(path): \(error)")
             return nil
         }
     }
@@ -59,7 +59,7 @@ nonisolated enum ProofMediaCache {
             let (data, _) = try await URLSession.shared.data(from: signedURL)
             return store(data, forMediaPath: path, kind: kind)
         } catch {
-            print("[ProofMediaCache] Download failed for \(path): \(error)")
+            Log.proofMediaCache.error("Download failed for \(path): \(error)")
             return nil
         }
     }

@@ -208,7 +208,7 @@ struct ContentView: View {
                 // @username, photo) in sync with who is signed in, and tell
                 // the notification manager who owns this device's token.
                 if let myId = auth.user?.id {
-                    print("[FrisFocus] startup: signed in as user=\(myId) — loading account data")
+                    Log.app.sensitive("startup: signed in as user=\(myId) — loading account data")
                     notifications.setUserId(myId)
                     // A session exists, so anything the funnel recorded
                     // before sign-in can finally go up.
@@ -259,7 +259,7 @@ struct ContentView: View {
                     await cadence.refresh(myUserId: myId)
                     await cadence.sync(into: store, myUserId: myId)
                 } else {
-                    print("[FrisFocus] startup: NO signed-in session (auth.user is nil) — nothing to load; app will look empty until sign-in")
+                    Log.app.debug("startup: NO signed-in session (auth.user is nil) — nothing to load; app will look empty until sign-in")
                     notifications.setUserId(nil)
                     walkthrough.setUserId(nil)
                     DiagnosticsService.shared.setSignedIn(false)
@@ -275,7 +275,7 @@ struct ContentView: View {
                 }
             }
             .onAppear {
-                print("[FrisFocus] Tasks: \(store.tasks.count), To-dos: \(store.todos.count), Notes: \(store.notes.count), LogEntries: \(store.logEntries.count)")
+                Log.app.debug("Tasks: \(store.tasks.count), To-dos: \(store.todos.count), Notes: \(store.notes.count), LogEntries: \(store.logEntries.count)")
                 // MetricKit hands over the *previous* run's crashes and
                 // hangs, so this has to be subscribed before anything
                 // else can go wrong in this one.

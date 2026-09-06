@@ -46,7 +46,7 @@ extension Store {
             do {
                 try data.write(to: docs.appendingPathComponent(filename), options: .atomic)
             } catch {
-                print("[ProofLibrary] photo write failed: \(error)")
+                Log.proofLibrary.error("photo write failed: \(error)")
                 return nil
             }
             item = ProofLibraryItem(kind: .photo, filename: filename, source: source)
@@ -55,7 +55,7 @@ extension Store {
             do {
                 try data.write(to: docs.appendingPathComponent(filename), options: .atomic)
             } catch {
-                print("[ProofLibrary] video write failed: \(error)")
+                Log.proofLibrary.error("video write failed: \(error)")
                 return nil
             }
             item = ProofLibraryItem(kind: .video, filename: filename, duration: duration, source: source)
@@ -134,7 +134,7 @@ extension Store {
             do {
                 try data.write(to: docs.appendingPathComponent(filename), options: .atomic)
             } catch {
-                print("[ProofLibrary] backfill write failed: \(error)")
+                Log.proofLibrary.error("backfill write failed: \(error)")
                 return
             }
             var item = ProofLibraryItem(kind: kind, filename: filename, duration: duration, source: source)
@@ -205,7 +205,7 @@ extension Store {
         proofLibrary.append(contentsOf: imported)
         persistAll()
         flushPendingSaves()
-        print("[ProofLibrary] back-filled \(imported.count) existing proofs")
+        Log.proofLibrary.debug("back-filled \(imported.count) existing proofs")
     }
 
     /// A friendly title for an attach target — used to label library

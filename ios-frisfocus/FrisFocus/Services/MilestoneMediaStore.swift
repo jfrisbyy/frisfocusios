@@ -32,7 +32,7 @@ enum MilestoneMediaStore {
             try data.write(to: url, options: .atomic)
             return MilestoneAttachment(kind: .photo, filename: filename)
         } catch {
-            print("[MilestoneMediaStore] write failed: \(error)")
+            Log.milestoneMediaStore.error("write failed: \(error)")
             return nil
         }
     }
@@ -46,7 +46,7 @@ enum MilestoneMediaStore {
             try data.write(to: url, options: .atomic)
             return MilestoneAttachment(kind: .photo, filename: filename, isProof: true)
         } catch {
-            print("[MilestoneMediaStore] proof write failed: \(error)")
+            Log.milestoneMediaStore.error("proof write failed: \(error)")
             return nil
         }
     }
@@ -60,7 +60,7 @@ enum MilestoneMediaStore {
             try data.write(to: url, options: .atomic)
             return MilestoneAttachment(kind: .video, filename: filename, duration: duration, isProof: true)
         } catch {
-            print("[MilestoneMediaStore] proof video write failed: \(error)")
+            Log.milestoneMediaStore.error("proof video write failed: \(error)")
             return nil
         }
     }

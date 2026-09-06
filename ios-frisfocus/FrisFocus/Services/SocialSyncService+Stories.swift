@@ -298,7 +298,7 @@ extension SocialSyncService {
             ensureMediaAssets(for: rows)
             store.persistAll()
         } catch {
-            print("[SocialSync] stories refresh failed: \(error)")
+            Log.socialSync.error("stories refresh failed: \(error)")
         }
     }
 
@@ -356,7 +356,7 @@ extension SocialSyncService {
                 before = oldest
             }
         } catch {
-            print("[SocialSync] circle archive failed: \(error)")
+            Log.socialSync.error("circle archive failed: \(error)")
             return
         }
 
@@ -460,7 +460,7 @@ extension SocialSyncService {
                 }
             }
         } catch {
-            print("[SocialSync] media download failed for \(row.id): \(error)")
+            Log.socialSync.error("media download failed for \(row.id): \(error)")
         }
     }
 
@@ -523,7 +523,7 @@ extension SocialSyncService {
                 persistStoryUploadState()
                 return
             }
-            print("[SocialSync] story upload failed: \(error)")
+            Log.socialSync.error("story upload failed: \(error)")
             failedStoryUploadIds.insert(post.id)
             persistStoryUploadState()
         }
@@ -591,7 +591,7 @@ extension SocialSyncService {
                     _ = try? await supabase.storage.from("stories").remove(paths: [path])
                 }
             } catch {
-                print("[SocialSync] story delete failed: \(error)")
+                Log.socialSync.error("story delete failed: \(error)")
             }
         }
     }
@@ -615,7 +615,7 @@ extension SocialSyncService {
                         .execute()
                 }
             } catch {
-                print("[SocialSync] like sync failed: \(error)")
+                Log.socialSync.error("like sync failed: \(error)")
             }
         }
     }
@@ -632,7 +632,7 @@ extension SocialSyncService {
                 )).execute()
                 self.notifyAuthor(ofPost: comment.postId, kind: .storyComment, preview: comment.text)
             } catch {
-                print("[SocialSync] comment sync failed: \(error)")
+                Log.socialSync.error("comment sync failed: \(error)")
             }
         }
     }
@@ -648,7 +648,7 @@ extension SocialSyncService {
                     )
                     .execute()
             } catch {
-                print("[SocialSync] view sync failed: \(error)")
+                Log.socialSync.error("view sync failed: \(error)")
             }
         }
     }

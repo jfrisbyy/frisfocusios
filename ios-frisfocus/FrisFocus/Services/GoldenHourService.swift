@@ -628,7 +628,7 @@ final class GoldenHourService {
             signedURLCache[path] = (url, Date().addingTimeInterval(TimeInterval(seconds)))
             return url
         } catch {
-            print("[GoldenHour] Signed URL failed for \(path): \(error)")
+            Log.goldenHour.error("Signed URL failed for \(path): \(error)")
             return nil
         }
     }
@@ -714,7 +714,7 @@ final class GoldenHourService {
                 do {
                     try await center.add(request)
                 } catch {
-                    print("[GoldenHour] Failed to schedule fire alert: \(error)")
+                    Log.goldenHour.error("Failed to schedule fire alert: \(error)")
                 }
 
                 guard let headsUpAt = plan.headsUpAt else { continue }
@@ -737,7 +737,7 @@ final class GoldenHourService {
                         trigger: soonTrigger
                     ))
                 } catch {
-                    print("[GoldenHour] Failed to schedule heads-up: \(error)")
+                    Log.goldenHour.error("Failed to schedule heads-up: \(error)")
                 }
             }
         }
@@ -783,7 +783,7 @@ final class GoldenHourService {
             trigger: trigger
         )
         UNUserNotificationCenter.current().add(request) { error in
-            if let error { print("[GoldenHour] Failed to schedule closing reminder: \(error)") }
+            if let error { Log.goldenHour.error("Failed to schedule closing reminder: \(error)") }
         }
     }
 
@@ -819,7 +819,7 @@ final class GoldenHourService {
                     )
                 }
             } catch {
-                print("[GoldenHour] Sweep failed: \(error)")
+                Log.goldenHour.error("Sweep failed: \(error)")
             }
         }
     }
@@ -882,7 +882,7 @@ final class GoldenHourService {
     }
 
     private func fail(_ message: String, _ error: Error) {
-        print("[GoldenHour] \(message) \(error)")
+        Log.goldenHour.error("\(message) \(error)")
         errorMessage = message
         showError = true
     }

@@ -71,7 +71,7 @@ final class CadenceLinkService {
             hasCadence = cadence
             hasFrisFocus = fris
         } catch {
-            print("[Cadence] entitlement check failed: \(error)")
+            Log.cadence.error("entitlement check failed: \(error)")
         }
     }
 
@@ -88,7 +88,7 @@ final class CadenceLinkService {
                 return
             }
         } catch {
-            print("[Cadence] routine load failed: \(error)")
+            Log.cadence.error("routine load failed: \(error)")
         }
         #if DEBUG
         if routines.isEmpty {
@@ -130,7 +130,7 @@ final class CadenceLinkService {
                 .in("id", values: consumedIds)
                 .execute()
         } catch {
-            print("[Cadence] outcome sync failed: \(error)")
+            Log.cadence.error("outcome sync failed: \(error)")
         }
     }
 

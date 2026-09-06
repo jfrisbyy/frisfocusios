@@ -321,7 +321,7 @@ final class SeasonSetupViewModel {
             pendingText = userText
             errorMessage = (error as? LocalizedError)?.errorDescription
                 ?? "Something interrupted the conversation."
-            print("[SeasonSetup] turn failed: \(error)")
+            Log.seasonSetup.error("turn failed: \(error)")
         }
 
         isThinking = false

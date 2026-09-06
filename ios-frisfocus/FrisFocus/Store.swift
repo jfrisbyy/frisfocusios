@@ -616,7 +616,7 @@ final class Store {
                 // season — never reseed demo data over real history.
                 if let storedSeasonData {
                     userDefaults.set(storedSeasonData, forKey: "recovery.\(Keys.currentSeason)")
-                    print("[Store] Season decode failed — raw data preserved under 'recovery.\(Keys.currentSeason)'.")
+                    Log.store.error("Season decode failed — raw data preserved under 'recovery.\(Keys.currentSeason)'.")
                 }
                 self.currentSeason = Store.seedSeason()
             }
@@ -890,7 +890,7 @@ final class Store {
             // because of it is the end of the account.
             if let salvaged: [T] = salvageElements(from: data), !salvaged.isEmpty {
                 UserDefaults.standard.set(data, forKey: "recovery.\(key)")
-                print("[Store] Partial decode for '\(key)': kept \(salvaged.count), raw data preserved under 'recovery.\(key)'")
+                Log.store.debug("Partial decode for '\(key)': kept \(salvaged.count), raw data preserved under 'recovery.\(key)'")
                 recordDecodeFailure(key)
                 return salvaged
             }
@@ -903,7 +903,7 @@ final class Store {
             // the app admit it instead of quietly presenting an empty life
             // as if it were the truth.
             recordDecodeFailure(key)
-            print("[Store] Decode failed for '\(key)' — raw data preserved under 'recovery.\(key)': \(error)")
+            Log.store.error("Decode failed for '\(key)' — raw data preserved under 'recovery.\(key)': \(error)")
             return nil
         }
     }
@@ -1076,7 +1076,7 @@ final class Store {
         do {
             userDefaults.set(try encoder.encode(value), forKey: key)
         } catch {
-            print("[Store] Encode failed for '\(key)': \(error)")
+            Log.store.error("Encode failed for '\(key)': \(error)")
         }
     }
 

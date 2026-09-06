@@ -369,7 +369,7 @@ struct ProofPlayerView: View {
                     failed = true
                 }
             } catch {
-                print("[ProofPlayer] Image load failed: \(error)")
+                Log.proofPlayer.error("Image load failed: \(error)")
                 failed = true
             }
             isLoading = false

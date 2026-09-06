@@ -44,7 +44,7 @@ nonisolated enum VideoTranscoder {
         do {
             try await session.export(to: outputURL, as: .mp4)
         } catch {
-            print("[VideoTranscoder] Export failed: \(error)")
+            Log.videoTranscoder.error("Export failed: \(error)")
             return nil
         }
 

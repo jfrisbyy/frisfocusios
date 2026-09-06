@@ -214,7 +214,7 @@ final class ProfileStore {
                 .value
             return rows.allSatisfy { $0.id == myUserId }
         } catch {
-            print("[ProfileStore] username check failed: \(error)")
+            Log.profileStore.error("username check failed: \(error)")
             return false
         }
     }
@@ -285,7 +285,7 @@ final class ProfileStore {
             myPhone = rows.first?.phone
             phoneLoadedForUserId = myUserId
         } catch {
-            print("[ProfileStore] phone load failed: \(error)")
+            Log.profileStore.error("phone load failed: \(error)")
         }
     }
 
@@ -338,7 +338,7 @@ final class ProfileStore {
             name = mark?.locality ?? mark?.subAdministrativeArea ?? mark?.administrativeArea
         } catch {
             // Geocoding is best-effort — the key alone still matches.
-            print("[ProfileStore] reverse geocode failed: \(error)")
+            Log.profileStore.error("reverse geocode failed: \(error)")
         }
         return await setNearYou(areaKey: key, areaName: name, myUserId: myUserId)
     }
@@ -425,7 +425,7 @@ final class ProfileStore {
     // MARK: Helpers
 
     private func fail(_ message: String, _ error: Error) {
-        print("[ProfileStore] \(message) \(error)")
+        Log.profileStore.error("\(message) \(error)")
         errorMessage = message
         showError = true
     }

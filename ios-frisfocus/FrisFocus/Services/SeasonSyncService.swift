@@ -265,7 +265,7 @@ final class SeasonSyncService {
             if await pullRemote() { return }
             try? await Task.sleep(for: .seconds(Double(attempt + 1)))
         }
-        print("[SeasonSync] restore could not reach cloud after retries; uploads stay gated")
+        Log.seasonSync.debug("restore could not reach cloud after retries; uploads stay gated")
     }
 
     /// Whether a slice currently holds no real user data locally. Used
@@ -309,7 +309,7 @@ final class SeasonSyncService {
         }
         guard !queued.isEmpty else { return }
         persistState()
-        print("[SeasonSync] queued stranded local content: \(queued.joined(separator: ", "))")
+        Log.seasonSync.debug("queued stranded local content: \(queued.joined(separator: ", "))")
     }
 
     /// Fetch the remote season and apply any slice whose remote stamp
@@ -327,7 +327,7 @@ final class SeasonSyncService {
                 .execute()
                 .value
 
-            print("[SeasonSync] pull for user=\(myUserId): \(rows.count) row(s)")
+            Log.seasonSync.sensitive("pull for user=\(myUserId): \(rows.count) row(s)")
             var appliedSeason = false
             var nonEmpty: Set<String> = []
             for row in rows {
@@ -340,7 +340,7 @@ final class SeasonSyncService {
                 // older model) must never count as blank — that would let
                 // an empty local slice overwrite real data.
                 if remoteState != .empty { nonEmpty.insert(row.sliceKey) }
-                print("[SeasonSync] slice=\(row.sliceKey) bytes=\(row.payload.utf8.count) remote=\(remoteState.rawValue) localEmpty=\(localEmpty) remoteStamp=\(row.updatedAt) localStamp=\(localStamp)")
+                Log.seasonSync.debug("slice=\(row.sliceKey) bytes=\(row.payload.utf8.count) remote=\(remoteState.rawValue) localEmpty=\(localEmpty) remoteStamp=\(row.updatedAt) localStamp=\(localStamp)")
 
                 // An unreadable payload is never applied — a corrupt or
                 // future-model row must not nuke local data.
@@ -381,7 +381,7 @@ final class SeasonSyncService {
                         pendingSlices.insert("logEntries")
                         localStamps["logEntries"] = Date()
                     }
-                    print("[SeasonSync] applied slice=\(row.sliceKey)")
+                    Log.seasonSync.debug("applied slice=\(row.sliceKey)")
                 }
             }
             cloudNonEmptySlices = nonEmpty
@@ -404,7 +404,7 @@ final class SeasonSyncService {
             if !pendingSlices.isEmpty { scheduleFlush() }
             return true
         } catch {
-            print("[SeasonSync] pull failed: \(error)")
+            Log.seasonSync.error("pull failed: \(error)")
             return false
         }
     }
@@ -574,7 +574,7 @@ final class SeasonSyncService {
         // Hard gate: never upload until the cloud restore is confirmed,
         // so a fresh install / rebuild can't clobber the backup.
         guard restoreConfirmed else {
-            print("[SeasonSync] flush skipped — cloud restore not yet confirmed")
+            Log.seasonSync.debug("flush skipped — cloud restore not yet confirmed")
             return
         }
         isFlushing = true
@@ -588,7 +588,7 @@ final class SeasonSyncService {
             // the phantom-empty reinstall case (no local mutation) and a
             // stale-stamp case where an empty slice looks "changed".
             if sliceIsEmpty(slice), localStamps[slice] == nil || cloudNonEmptySlices.contains(slice) {
-                print("[SeasonSync] flush skip empty slice=\(slice) (cloud has content or never edited)")
+                Log.seasonSync.debug("flush skip empty slice=\(slice) (cloud has content or never edited)")
                 pendingSlices.remove(slice)
                 continue
             }
@@ -614,7 +614,7 @@ final class SeasonSyncService {
                 ), onConflict: "user_id,slice_key").execute()
                 pendingSlices.remove(slice)
             } catch {
-                print("[SeasonSync] upsert failed for \(slice): \(error)")
+                Log.seasonSync.error("upsert failed for \(slice): \(error)")
             }
         }
 
@@ -660,7 +660,7 @@ final class SeasonSyncService {
         if store.mySeasonCard.isEmpty {
             let remote = await fetchRemoteSeasonCard()
             if !remote.reached || (remote.card?.isEmpty == false) {
-                print("[SeasonSync] skip publishing empty season card over non-empty/unverified cloud card")
+                Log.seasonSync.debug("skip publishing empty season card over non-empty/unverified cloud card")
                 return
             }
         }
@@ -674,7 +674,7 @@ final class SeasonSyncService {
                 ), onConflict: "user_id")
                 .execute()
         } catch {
-            print("[SeasonSync] season card push failed: \(error)")
+            Log.seasonSync.error("season card push failed: \(error)")
         }
     }
 
@@ -693,7 +693,7 @@ final class SeasonSyncService {
                 .value
             return (true, SeasonCard.decode(fromJSON: rows.first?.card))
         } catch {
-            print("[SeasonSync] could not verify remote season card: \(error)")
+            Log.seasonSync.error("could not verify remote season card: \(error)")
             return (false, nil)
         }
     }
@@ -732,7 +732,7 @@ final class SeasonSyncService {
                 localStamps[slice] = newest.stamp
                 pendingSlices.insert(slice)
                 recoveredAny = true
-                print("[SeasonSync] recovered \(slice) from on-device snapshot")
+                Log.seasonSync.debug("recovered \(slice) from on-device snapshot")
             }
         }
         if recoveredAny {
@@ -805,7 +805,7 @@ final class SeasonSyncService {
                 store.pastSeasons.insert(archive.summary(endedAt: snap.stamp), at: 0)
             }
             recoveredAny = true
-            print("[SeasonSync] recovered replaced season \(season.name) into archive (tasksFit=\(tasksFit))")
+            Log.seasonSync.debug("recovered replaced season \(season.name) into archive (tasksFit=\(tasksFit))")
         }
 
         if recoveredAny {
@@ -859,7 +859,7 @@ final class SeasonSyncService {
                 // Already in the bucket from a previous attempt.
                 uploadedMedia.insert(filename)
             } catch {
-                print("[SeasonSync] media upload failed for \(filename): \(error)")
+                Log.seasonSync.error("media upload failed for \(filename): \(error)")
                 return false
             }
         }
@@ -885,7 +885,7 @@ final class SeasonSyncService {
                     guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return }
                     try data.write(to: local, options: .atomic)
                 } catch {
-                    print("[SeasonSync] media download failed for \(filename): \(error)")
+                    Log.seasonSync.error("media download failed for \(filename): \(error)")
                 }
             }
         }

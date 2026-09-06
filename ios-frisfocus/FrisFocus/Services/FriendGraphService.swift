@@ -326,7 +326,7 @@ final class FriendGraphService {
                 .value
             return rows.first
         } catch {
-            print("[FriendGraph] fetchProfile failed: \(error)")
+            Log.friendGraph.error("fetchProfile failed: \(error)")
             return nil
         }
     }
@@ -402,7 +402,7 @@ final class FriendGraphService {
             } catch {
                 // Most likely already friends (unique violation) — safe to
                 // continue and just mark the request resolved.
-                print("[FriendGraph] friendship insert skipped: \(error)")
+                Log.friendGraph.error("friendship insert skipped: \(error)")
             }
             try await supabase
                 .from("friend_requests")
@@ -481,7 +481,7 @@ final class FriendGraphService {
                 .subtracting([myUserId])
             return friends.filter { theirFriendIds.contains($0.id) }
         } catch {
-            print("[FriendGraph] mutuals fetch failed: \(error)")
+            Log.friendGraph.error("mutuals fetch failed: \(error)")
             return []
         }
     }
@@ -505,7 +505,7 @@ final class FriendGraphService {
             guard let raw = rows.first?.createdAt else { return nil }
             return SyncDates.parse(raw)
         } catch {
-            print("[FriendGraph] joined date fetch failed: \(error)")
+            Log.friendGraph.error("joined date fetch failed: \(error)")
             return nil
         }
     }
@@ -563,7 +563,7 @@ final class FriendGraphService {
     }
 
     private func fail(_ message: String, _ error: Error) {
-        print("[FriendGraph] \(message) \(error)")
+        Log.friendGraph.error("\(message) \(error)")
         errorMessage = message
         showError = true
     }

@@ -137,7 +137,7 @@ final class NotificationManager {
                 UIApplication.shared.registerForRemoteNotifications()
             }
         } catch {
-            print("[Notifications] Authorization request failed: \(error)")
+            Log.notifications.error("Authorization request failed: \(error)")
         }
     }
 
@@ -265,7 +265,7 @@ final class NotificationManager {
                     )
                     .execute()
             } catch {
-                print("[Notifications] Preference save failed: \(error)")
+                Log.notifications.error("Preference save failed: \(error)")
             }
         }
     }
@@ -291,7 +291,7 @@ final class NotificationManager {
             disabledPushKinds = kinds
             UserDefaults.standard.set(kinds.sorted(), forKey: Self.disabledKindsKey(userId))
         } catch {
-            print("[Notifications] Preference load failed: \(error)")
+            Log.notifications.error("Preference load failed: \(error)")
         }
     }
 
@@ -306,7 +306,7 @@ final class NotificationManager {
     }
 
     func didFailToRegister(_ error: Error) {
-        print("[Notifications] Remote registration failed: \(error)")
+        Log.notifications.error("Remote registration failed: \(error)")
     }
 
     /// Upsert the token against the current user. `token` is the table's
@@ -325,7 +325,7 @@ final class NotificationManager {
                     )
                     .execute()
             } catch {
-                print("[Notifications] Token upsert failed: \(error)")
+                Log.notifications.error("Token upsert failed: \(error)")
             }
         }
     }
@@ -354,7 +354,7 @@ final class NotificationManager {
     static func syncBadge(_ count: Int) {
         UNUserNotificationCenter.current().setBadgeCount(max(0, count)) { error in
             if let error {
-                print("[Notifications] Badge sync failed: \(error)")
+                Log.notifications.error("Badge sync failed: \(error)")
             }
         }
     }

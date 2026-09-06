@@ -232,7 +232,7 @@ extension Store {
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
         center.add(request) { error in
-            if let error { print("[Reminders] schedule failed for \(id): \(error)") }
+            if let error { Log.reminders.error("schedule failed for \(id): \(error)") }
         }
     }
 }

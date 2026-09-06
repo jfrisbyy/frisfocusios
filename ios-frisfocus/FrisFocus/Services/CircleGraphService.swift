@@ -1032,7 +1032,7 @@ final class CircleGraphService {
             }
             .sorted { $0.circleName.localizedCaseInsensitiveCompare($1.circleName) == .orderedAscending }
         } catch {
-            print("[CircleGraph] loadInvitations failed: \(error)")
+            Log.circleGraph.error("loadInvitations failed: \(error)")
         }
     }
 
@@ -1127,7 +1127,7 @@ final class CircleGraphService {
                 .value
             myPendingRequestCircleIds = Set(rows.map { $0.circleId })
         } catch {
-            print("[CircleGraph] loadMyPendingRequests failed: \(error)")
+            Log.circleGraph.error("loadMyPendingRequests failed: \(error)")
         }
     }
 
@@ -1200,7 +1200,7 @@ final class CircleGraphService {
             joinRequests.removeAll { $0.circleId == circleId }
             joinRequests.append(contentsOf: resolved)
         } catch {
-            print("[CircleGraph] loadJoinRequests failed: \(error)")
+            Log.circleGraph.error("loadJoinRequests failed: \(error)")
         }
     }
 
@@ -1333,7 +1333,7 @@ final class CircleGraphService {
     }
 
     private func fail(_ message: String, _ error: Error) {
-        print("[CircleGraph] \(message) \(error)")
+        Log.circleGraph.error("\(message) \(error)")
         errorMessage = message
         showError = true
     }

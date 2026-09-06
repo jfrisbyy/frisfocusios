@@ -123,7 +123,7 @@ extension Store {
                 try data.write(to: docs.appendingPathComponent(filename), options: .atomic)
                 return (filename, .photo, nil)
             } catch {
-                print("[ProofPin] photo write failed: \(error)")
+                Log.proofPin.error("photo write failed: \(error)")
                 return nil
             }
         case .video(let data, let duration):
@@ -132,7 +132,7 @@ extension Store {
                 try data.write(to: docs.appendingPathComponent(filename), options: .atomic)
                 return (filename, .video, duration)
             } catch {
-                print("[ProofPin] video write failed: \(error)")
+                Log.proofPin.error("video write failed: \(error)")
                 return nil
             }
         }

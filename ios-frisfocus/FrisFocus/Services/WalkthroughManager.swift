@@ -451,7 +451,7 @@ final class WalkthroughManager {
             // Teaching is not worth an error state. A failed read simply
             // leaves the local cache in charge, which is what shipped
             // before this table existed.
-            print("[Walkthrough] progress load failed: \(error)")
+            Log.walkthrough.error("progress load failed: \(error)")
         }
     }
 
@@ -472,7 +472,7 @@ final class WalkthroughManager {
                     .upsert(payload, onConflict: "user_id")
                     .execute()
             } catch {
-                print("[Walkthrough] progress push failed: \(error)")
+                Log.walkthrough.error("progress push failed: \(error)")
             }
         }
     }

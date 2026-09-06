@@ -170,7 +170,7 @@ final class FocusBlockingService {
             refreshAuthStatus()
             return authStatus == .approved
         } catch {
-            print("[FocusBlocking] authorization failed: \(error)")
+            Log.focusBlocking.error("authorization failed: \(error)")
             lastFailure = Self.classify(error)
             // Re-read the system status (it may now be .denied), but
             // never write .unavailable on a real device — the user can

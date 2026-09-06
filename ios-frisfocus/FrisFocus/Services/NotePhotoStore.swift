@@ -32,7 +32,7 @@ enum NotePhotoStore {
             try data.write(to: url, options: .atomic)
             return NotePhoto(filename: filename)
         } catch {
-            print("[NotePhotoStore] write failed: \(error)")
+            Log.notePhotoStore.error("write failed: \(error)")
             return nil
         }
     }
@@ -46,7 +46,7 @@ enum NotePhotoStore {
             try data.write(to: url, options: .atomic)
             return NotePhoto(filename: filename, isProof: true)
         } catch {
-            print("[NotePhotoStore] proof write failed: \(error)")
+            Log.notePhotoStore.error("proof write failed: \(error)")
             return nil
         }
     }
@@ -60,7 +60,7 @@ enum NotePhotoStore {
             try data.write(to: url, options: .atomic)
             return NotePhoto(filename: filename, kind: .video, duration: duration, isProof: true)
         } catch {
-            print("[NotePhotoStore] proof video write failed: \(error)")
+            Log.notePhotoStore.error("proof video write failed: \(error)")
             return nil
         }
     }

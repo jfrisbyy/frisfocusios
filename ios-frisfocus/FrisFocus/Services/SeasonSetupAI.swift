@@ -88,7 +88,7 @@ enum SeasonSetupAI {
         do {
             return try JSONDecoder().decode(SetupWireEnvelope.self, from: data)
         } catch {
-            print("[SeasonSetupAI] decode failed: \(error)")
+            Log.seasonSetupAI.error("decode failed: \(error)")
             throw SeasonSetupAIError.badResponse
         }
     }

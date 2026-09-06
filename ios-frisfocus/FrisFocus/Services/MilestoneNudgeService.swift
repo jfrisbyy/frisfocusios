@@ -74,7 +74,7 @@ enum MilestoneNudgeService {
                 do {
                     try await center.add(request)
                 } catch {
-                    print("[MilestoneNudge] schedule failed for \(milestone.title): \(error)")
+                    Log.milestoneNudge.error("schedule failed for \(milestone.title): \(error)")
                 }
             }
         }

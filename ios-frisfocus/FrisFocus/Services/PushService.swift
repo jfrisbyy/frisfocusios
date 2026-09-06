@@ -88,7 +88,7 @@ enum PushService {
                     options: .init(body: payload)
                 )
             } catch {
-                print("[Push] send(\(kind.rawValue)) failed: \(error)")
+                Log.push.error("send(\(kind.rawValue)) failed: \(error)")
             }
         }
     }

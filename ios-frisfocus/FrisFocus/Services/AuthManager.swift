@@ -152,17 +152,17 @@ class AuthManager {
         if let accessToken = KeychainHelper.get("access_token"),
            let user = userFromToken(accessToken) {
             self.user = user
-            print("[AuthManager] checkAuth: restored session from access token, user=\(user.id)")
+            Log.auth.sensitive("checkAuth: restored session from access token, user=\(user.id)")
             syncProfile(user)
             return
         }
 
         // Token missing or expired — try refresh
         if getRefreshToken() != nil {
-            print("[AuthManager] checkAuth: no valid access token, attempting refresh")
+            Log.auth.debug("checkAuth: no valid access token, attempting refresh")
             await refreshToken()
         } else {
-            print("[AuthManager] checkAuth: no access token and no refresh token — signed out")
+            Log.auth.debug("checkAuth: no access token and no refresh token — signed out")
         }
     }
 
@@ -378,14 +378,14 @@ class AuthManager {
                     // The auth server definitively rejected the refresh
                     // token — the session is over. Sign out, but say so
                     // visibly instead of silently looking empty.
-                    print("[AuthManager] refreshToken: refresh rejected (\(code)) — signing out, flagging expiry")
+                    Log.auth.error("refreshToken: refresh rejected (\(code)) — signing out, flagging expiry")
                     await signOut()
                     sessionExpired = true
                 } else {
                     // Server hiccup (5xx) — keep the stored tokens and
                     // retry on the next foreground instead of destroying
                     // a probably-valid session.
-                    print("[AuthManager] refreshToken: refresh endpoint returned \(code) — keeping session for retry")
+                    Log.auth.debug("refreshToken: refresh endpoint returned \(code) — keeping session for retry")
                 }
                 return
             }
@@ -396,17 +396,17 @@ class AuthManager {
             let refreshedUser = userFromToken(refreshResponse.access_token)
             user = refreshedUser
             if let refreshedUser {
-                print("[AuthManager] refreshToken: session refreshed, user=\(refreshedUser.id)")
+                Log.auth.sensitive("refreshToken: session refreshed, user=\(refreshedUser.id)")
                 sessionExpired = false
                 syncProfile(refreshedUser)
             } else {
-                print("[AuthManager] refreshToken: refresh succeeded but token had no user")
+                Log.auth.debug("refreshToken: refresh succeeded but token had no user")
             }
         } catch {
             // Network failure (offline launch, timeout) — never destroy
             // the session over connectivity. Tokens stay; the app retries
             // silently when it becomes active again.
-            print("[AuthManager] refreshToken: network failure (\(error.localizedDescription)) — keeping session for retry")
+            Log.auth.error("refreshToken: network failure (\(error.localizedDescription)) — keeping session for retry")
         }
     }
 
@@ -421,7 +421,7 @@ class AuthManager {
     @MainActor
     func retryRestoreIfNeeded() async {
         guard user == nil, !isLoading, !isSigningIn, hasRestorableSession else { return }
-        print("[AuthManager] retryRestoreIfNeeded: tokens present, retrying silent restore")
+        Log.auth.debug("retryRestoreIfNeeded: tokens present, retrying silent restore")
         await checkAuth()
     }
 
@@ -440,7 +440,7 @@ class AuthManager {
         guard let exp = decodePayload(token)?.exp else { return }
         let remaining = Date(timeIntervalSince1970: exp).timeIntervalSinceNow
         guard remaining < 15 * 60 else { return }
-        print("[AuthManager] access token expires in \(Int(remaining))s — proactive refresh")
+        Log.auth.debug("access token expires in \(Int(remaining))s — proactive refresh")
         await refreshToken()
     }
 
@@ -501,7 +501,7 @@ class AuthManager {
                     )
                     .execute()
             } catch {
-                print("[AuthManager] Profile sync failed: \(error)")
+                Log.auth.error("Profile sync failed: \(error)")
             }
         }
     }

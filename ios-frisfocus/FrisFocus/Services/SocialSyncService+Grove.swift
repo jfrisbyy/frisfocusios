@@ -119,7 +119,7 @@ extension SocialSyncService {
                 )
             }
         } catch {
-            print("[SocialSync] grove refresh failed: \(error)")
+            Log.socialSync.error("grove refresh failed: \(error)")
         }
     }
 
@@ -157,7 +157,7 @@ extension SocialSyncService {
                 try await supabase.from("focus_participants").insert(participants).execute()
                 await self.refreshGrove()
             } catch {
-                print("[SocialSync] grove start failed: \(error)")
+                Log.socialSync.error("grove start failed: \(error)")
             }
         }
     }
@@ -184,7 +184,7 @@ extension SocialSyncService {
                 )
             }
         } catch {
-            print("[SocialSync] grove shared tasks refresh failed: \(error)")
+            Log.socialSync.error("grove shared tasks refresh failed: \(error)")
         }
     }
 
@@ -204,7 +204,7 @@ extension SocialSyncService {
                 PushService.send(to: remote, kind: .focusInvite, preview: nil)
                 await self.refreshGrove()
             } catch {
-                print("[SocialSync] grove mid-session invite failed: \(error)")
+                Log.socialSync.error("grove mid-session invite failed: \(error)")
             }
         }
     }
@@ -238,7 +238,7 @@ extension SocialSyncService {
                 }
                 await self.refreshGroveSharedTasks(blockId: blockId)
             } catch {
-                print("[SocialSync] grove shared tasks publish failed: \(error)")
+                Log.socialSync.error("grove shared tasks publish failed: \(error)")
             }
         }
     }
@@ -257,7 +257,7 @@ extension SocialSyncService {
                     .eq("user_id", value: myUserId)
                     .execute()
             } catch {
-                print("[SocialSync] presence publish failed: \(error)")
+                Log.socialSync.error("presence publish failed: \(error)")
             }
         }
     }
@@ -270,7 +270,7 @@ extension SocialSyncService {
                     .eq("id", value: blockId.uuidString)
                     .execute()
             } catch {
-                print("[SocialSync] grove end failed: \(error)")
+                Log.socialSync.error("grove end failed: \(error)")
             }
         }
     }

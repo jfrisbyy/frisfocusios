@@ -25,7 +25,7 @@ enum VideoPlaybackAudio {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("[VideoPlaybackAudio] activate failed: \(error.localizedDescription)")
+            Log.videoPlaybackAudio.error("activate failed: \(error.localizedDescription)")
         }
     }
 

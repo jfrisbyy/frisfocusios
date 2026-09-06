@@ -146,7 +146,7 @@ enum CaptureDraftStore {
             let drawingData = drawing.dataRepresentation()
             try drawingData.write(to: directory.appendingPathComponent("drawing.data"), options: .atomic)
         } catch {
-            print("[CaptureDraft] Save failed: \(error)")
+            Log.captureDraft.error("Save failed: \(error)")
         }
     }
 

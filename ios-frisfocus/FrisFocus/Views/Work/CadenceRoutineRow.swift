@@ -170,7 +170,7 @@ struct CadenceRoutineRow: View {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         guard let url = link.runURL else { return }
         UIApplication.shared.open(url, options: [:]) { success in
-            if !success { print("[Cadence] couldn't open \(url) — is Cadence installed?") }
+            if !success { Log.cadence.error("couldn't open \(url) — is Cadence installed?") }
         }
     }
 }

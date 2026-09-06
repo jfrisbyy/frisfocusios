@@ -162,7 +162,7 @@ final class DiscoverService {
             suggestions = assembled
         } catch {
             // Quiet failure — discovery is an enhancement, never a blocker.
-            print("[Discover] load failed: \(error)")
+            Log.discover.error("load failed: \(error)")
         }
     }
 
@@ -178,7 +178,7 @@ final class DiscoverService {
                 .value
             return Set(visible)
         } catch {
-            print("[Discover] block filter failed: \(error)")
+            Log.discover.error("block filter failed: \(error)")
             return nil
         }
     }
@@ -216,7 +216,7 @@ final class DiscoverService {
                 .value
             searchResults = results.filter { $0.id != myUserId }
         } catch {
-            print("[Discover] search failed: \(error)")
+            Log.discover.error("search failed: \(error)")
         }
     }
 
@@ -250,7 +250,7 @@ final class DiscoverService {
                 .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
                 .map { DiscoverSuggestion(profile: $0, mutualCount: 0) }
         } catch {
-            print("[Discover] nearby failed: \(error)")
+            Log.discover.error("nearby failed: \(error)")
         }
     }
 }

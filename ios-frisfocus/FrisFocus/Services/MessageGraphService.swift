@@ -589,7 +589,7 @@ final class MessageGraphService {
             confirmOptimistic(tempId: temp.id, with: created)
             PushService.send(to: recipientId, kind: .note, preview: trimmed, messageId: created.id.uuidString)
         } catch {
-            print("[MessageGraph] Note send failed: \(error)")
+            Log.messageGraph.error("Note send failed: \(error)")
             markFailed(temp, payload: .note(recipientId: recipientId, text: trimmed, storyPostId: storyPostId), myUserId: myUserId)
         }
     }
@@ -681,7 +681,7 @@ final class MessageGraphService {
             confirmOptimistic(tempId: temp.id, with: created)
             PushService.send(to: recipientId, kind: .proof, preview: trimmedCaption, messageId: created.id.uuidString)
         } catch {
-            print("[MessageGraph] Proof send failed: \(error)")
+            Log.messageGraph.error("Proof send failed: \(error)")
             uploadProgress = nil
             markFailed(temp, payload: .proof(
                 recipientId: recipientId,
@@ -894,7 +894,7 @@ final class MessageGraphService {
             signedURLCache[path] = (url, Date().addingTimeInterval(TimeInterval(seconds)))
             return url
         } catch {
-            print("[MessageGraph] Signed URL failed for \(path): \(error)")
+            Log.messageGraph.error("Signed URL failed for \(path): \(error)")
             return nil
         }
     }
@@ -1045,7 +1045,7 @@ final class MessageGraphService {
     }
 
     private func fail(_ message: String, _ error: Error) {
-        print("[MessageGraph] \(message) \(error)")
+        Log.messageGraph.error("\(message) \(error)")
         errorMessage = message
         showError = true
     }

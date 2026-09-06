@@ -339,7 +339,7 @@ extension SocialSyncService {
             store.cheers = rows.map { mapCheer($0) }
             store.persistAll()
         } catch {
-            print("[SocialSync] cheers refresh failed: \(error)")
+            Log.socialSync.error("cheers refresh failed: \(error)")
         }
     }
 
@@ -380,7 +380,7 @@ extension SocialSyncService {
             await ensureProfiles(remoteIds: rows.flatMap { [$0.senderId, $0.recipientId] })
             return rows.map { mapCheer($0) }
         } catch {
-            print("[SocialSync] cheer history fetch failed: \(error)")
+            Log.socialSync.error("cheer history fetch failed: \(error)")
             return []
         }
     }
@@ -398,7 +398,7 @@ extension SocialSyncService {
                 )).execute()
                 PushService.send(to: recipient, kind: .cheer, preview: cheer.message)
             } catch {
-                print("[SocialSync] cheer send failed: \(error)")
+                Log.socialSync.error("cheer send failed: \(error)")
             }
         }
     }
@@ -414,7 +414,7 @@ extension SocialSyncService {
                     .eq("id", value: cheer.id.uuidString)
                     .execute()
             } catch {
-                print("[SocialSync] cheer stamp failed: \(error)")
+                Log.socialSync.error("cheer stamp failed: \(error)")
             }
         }
     }
@@ -439,7 +439,7 @@ extension SocialSyncService {
                     PushService.send(to: sender, kind: .cheerReaction, preview: reaction)
                 }
             } catch {
-                print("[SocialSync] cheer reaction failed: \(error)")
+                Log.socialSync.error("cheer reaction failed: \(error)")
             }
         }
     }
@@ -520,7 +520,7 @@ extension SocialSyncService {
             }
             store.persistAll()
         } catch {
-            print("[SocialSync] pacts refresh failed: \(error)")
+            Log.socialSync.error("pacts refresh failed: \(error)")
         }
     }
 
@@ -550,7 +550,7 @@ extension SocialSyncService {
                 }
                 PushService.send(to: partner, kind: .pactInvite, preview: pact.title)
             } catch {
-                print("[SocialSync] pact propose failed: \(error)")
+                Log.socialSync.error("pact propose failed: \(error)")
             }
         }
     }
@@ -575,7 +575,7 @@ extension SocialSyncService {
                     }
                 }
             } catch {
-                print("[SocialSync] pact status sync failed: \(error)")
+                Log.socialSync.error("pact status sync failed: \(error)")
             }
         }
     }
@@ -588,7 +588,7 @@ extension SocialSyncService {
                     .eq("id", value: pactId.uuidString)
                     .execute()
             } catch {
-                print("[SocialSync] pact delete failed: \(error)")
+                Log.socialSync.error("pact delete failed: \(error)")
             }
         }
     }
@@ -616,7 +616,7 @@ extension SocialSyncService {
                         .execute()
                 }
             } catch {
-                print("[SocialSync] pact completion sync failed: \(error)")
+                Log.socialSync.error("pact completion sync failed: \(error)")
             }
         }
     }
@@ -770,7 +770,7 @@ extension SocialSyncService {
             } + store.circleContributions.filter { unsyncedIds.contains($0.circleId) }
             store.persistAll()
         } catch {
-            print("[SocialSync] circles refresh failed: \(error)")
+            Log.socialSync.error("circles refresh failed: \(error)")
         }
     }
 
@@ -784,7 +784,7 @@ extension SocialSyncService {
                     .eq("id", value: circleId.uuidString)
                     .execute()
             } catch {
-                print("[SocialSync] circle header sync failed: \(error)")
+                Log.socialSync.error("circle header sync failed: \(error)")
             }
         }
     }
@@ -842,7 +842,7 @@ extension SocialSyncService {
                 // this circle's row.
                 self.store?.clearCircleCreatePending(circle.id)
             } catch {
-                print("[SocialSync] circle create failed (will retry on next refresh): \(error)")
+                Log.socialSync.error("circle create failed (will retry on next refresh): \(error)")
             }
         }
     }
@@ -870,7 +870,7 @@ extension SocialSyncService {
                         .execute()
                 }
             } catch {
-                print("[SocialSync] circle completion sync failed: \(error)")
+                Log.socialSync.error("circle completion sync failed: \(error)")
             }
         }
     }
@@ -886,7 +886,7 @@ extension SocialSyncService {
                     position: position
                 ), onConflict: "id").execute()
             } catch {
-                print("[SocialSync] circle task upsert failed: \(error)")
+                Log.socialSync.error("circle task upsert failed: \(error)")
             }
         }
     }
@@ -899,7 +899,7 @@ extension SocialSyncService {
                     .eq("id", value: taskId.uuidString)
                     .execute()
             } catch {
-                print("[SocialSync] circle task delete failed: \(error)")
+                Log.socialSync.error("circle task delete failed: \(error)")
             }
         }
     }
@@ -926,7 +926,7 @@ extension SocialSyncService {
                     .eq("id", value: commentId.uuidString)
                     .execute()
             } catch {
-                print("[SocialSync] comment delete failed: \(error)")
+                Log.socialSync.error("comment delete failed: \(error)")
             }
         }
     }

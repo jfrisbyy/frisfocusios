@@ -170,7 +170,7 @@ final class ContactsMatchService {
                 !matchedContactIds.contains($0.id) && !$0.phones.isEmpty
             }
         } catch {
-            print("[ContactsMatch] match failed: \(error)")
+            Log.contactsMatch.error("match failed: \(error)")
             errorMessage = "Couldn't check your contacts. Please try again."
         }
     }
@@ -203,7 +203,7 @@ final class ContactsMatchService {
                 result.append(ContactCandidate(id: contact.identifier, name: name, emails: emails, phones: phones))
             }
         } catch {
-            print("[ContactsMatch] enumerate failed: \(error)")
+            Log.contactsMatch.error("enumerate failed: \(error)")
         }
         return result
     }

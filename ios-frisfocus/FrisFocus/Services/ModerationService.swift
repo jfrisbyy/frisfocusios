@@ -142,7 +142,7 @@ final class ModerationService {
                 .value
             blockedIds = Set(rows.map { $0.blockedId })
         } catch {
-            print("[Moderation] loadBlocks failed: \(error)")
+            Log.moderation.error("loadBlocks failed: \(error)")
         }
         // Mutes get their own attempt on purpose: a blocks fetch that
         // fails must not also leave a muted person loud, and a mutes
@@ -157,7 +157,7 @@ final class ModerationService {
             mutedIds = Set(rows.map { $0.mutedId })
             refreshMutedLocalIds()
         } catch {
-            print("[Moderation] loadMutes failed: \(error)")
+            Log.moderation.error("loadMutes failed: \(error)")
         }
     }
 
@@ -241,7 +241,7 @@ final class ModerationService {
                 .value
             return rows.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         } catch {
-            print("[Moderation] loadBlockedProfiles failed: \(error)")
+            Log.moderation.error("loadBlockedProfiles failed: \(error)")
             return []
         }
     }
@@ -260,7 +260,7 @@ final class ModerationService {
                 .value
             return rows.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         } catch {
-            print("[Moderation] loadMutedProfiles failed: \(error)")
+            Log.moderation.error("loadMutedProfiles failed: \(error)")
             return []
         }
     }
@@ -401,7 +401,7 @@ final class ModerationService {
     // MARK: Helpers
 
     private func fail(_ message: String, _ error: Error) {
-        print("[Moderation] \(message) \(error)")
+        Log.moderation.error("\(message) \(error)")
         errorMessage = message
         showError = true
     }

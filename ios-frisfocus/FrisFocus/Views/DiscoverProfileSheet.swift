@@ -257,7 +257,7 @@ struct DiscoverProfileSheet: View {
             bio = row.bio?.trimmingCharacters(in: .whitespacesAndNewlines)
             joinedDate = row.createdAt.flatMap(Self.parseTimestamp)
         } catch {
-            print("[Discover] profile detail failed: \(error)")
+            Log.discover.error("profile detail failed: \(error)")
         }
     }
 

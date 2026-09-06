@@ -273,7 +273,7 @@ final class SocialSyncService {
                 _ = localId(forRemote: row.id)
             }
         } catch {
-            print("[SocialSync] profile fetch failed: \(error)")
+            Log.socialSync.error("profile fetch failed: \(error)")
         }
         for id in remoteIds { _ = localId(forRemote: id) }
     }
@@ -298,7 +298,7 @@ final class SocialSyncService {
                 _ = localId(forRemote: row.id)
             }
         } catch {
-            print("[SocialSync] profile refresh failed: \(error)")
+            Log.socialSync.error("profile refresh failed: \(error)")
         }
         for id in remoteIds { _ = localId(forRemote: id) }
     }
@@ -337,7 +337,7 @@ final class SocialSyncService {
                 }
             }
         } catch {
-            print("[SocialSync] season card fetch failed: \(error)")
+            Log.socialSync.error("season card fetch failed: \(error)")
         }
     }
 
@@ -359,7 +359,7 @@ final class SocialSyncService {
                 if let tier = row.tier { acc[row.friendId] = tier }
             }
         } catch {
-            print("[SocialSync] outgoing tier read failed: \(error)")
+            Log.socialSync.error("outgoing tier read failed: \(error)")
             return [:]
         }
     }
@@ -380,7 +380,7 @@ final class SocialSyncService {
                 ), onConflict: "owner_id,friend_id")
                 .execute()
         } catch {
-            print("[SocialSync] share tier push failed: \(error)")
+            Log.socialSync.error("share tier push failed: \(error)")
         }
     }
 
@@ -475,7 +475,7 @@ final class SocialSyncService {
             store.friends = mapped
             store.persistAll()
         } catch {
-            print("[SocialSync] friends refresh failed: \(error)")
+            Log.socialSync.error("friends refresh failed: \(error)")
         }
     }
 

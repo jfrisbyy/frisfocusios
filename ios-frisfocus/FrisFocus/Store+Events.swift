@@ -375,7 +375,7 @@ extension Store {
             trigger: trigger
         )
         UNUserNotificationCenter.current().add(request) { error in
-            if let error { print("[Events] reminder schedule failed: \(error)") }
+            if let error { Log.events.error("reminder schedule failed: \(error)") }
         }
     }
 

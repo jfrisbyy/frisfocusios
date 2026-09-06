@@ -168,7 +168,7 @@ final class DiagnosticsService: NSObject {
         do {
             try await supabase.from("diagnostics_events").insert(rows).execute()
         } catch {
-            print("[Diagnostics] send failed: \(error)")
+            Log.diagnostics.error("send failed: \(error)")
         }
     }
 

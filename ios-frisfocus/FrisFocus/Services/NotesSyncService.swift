@@ -217,7 +217,7 @@ final class NotesSyncService {
             if await pullRemote() { return }
             try? await Task.sleep(for: .seconds(Double(attempt + 1)))
         }
-        print("[NotesSync] restore could not reach cloud after retries; uploads stay gated")
+        Log.notesSync.debug("restore could not reach cloud after retries; uploads stay gated")
     }
 
     /// Fetch the remote journal and merge latest-wins into the Store.
@@ -241,7 +241,7 @@ final class NotesSyncService {
                 .execute()
                 .value
 
-            print("[NotesSync] pull for user=\(myUserId): \(folderRows.count) folder(s), \(noteRows.count) note(s)")
+            Log.notesSync.sensitive("pull for user=\(myUserId): \(folderRows.count) folder(s), \(noteRows.count) note(s)")
             var changed = false
 
             for row in folderRows {
@@ -288,7 +288,7 @@ final class NotesSyncService {
             restoreConfirmed = true
             return true
         } catch {
-            print("[NotesSync] pull failed: \(error)")
+            Log.notesSync.error("pull failed: \(error)")
             return false
         }
     }
@@ -354,7 +354,7 @@ final class NotesSyncService {
                     guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return }
                     try data.write(to: local, options: .atomic)
                 } catch {
-                    print("[NotesSync] media download failed for \(filename): \(error)")
+                    Log.notesSync.error("media download failed for \(filename): \(error)")
                 }
             }
         }
@@ -379,7 +379,7 @@ final class NotesSyncService {
         // Hard gate: never upload until the cloud restore is confirmed,
         // so a fresh install / rebuild can't clobber the backup.
         guard restoreConfirmed else {
-            print("[NotesSync] flush skipped — cloud restore not yet confirmed")
+            Log.notesSync.debug("flush skipped — cloud restore not yet confirmed")
             return
         }
         isFlushing = true
@@ -401,7 +401,7 @@ final class NotesSyncService {
                 ), onConflict: "id").execute()
                 pendingFolderIds.remove(id)
             } catch {
-                print("[NotesSync] folder upsert failed: \(error)")
+                Log.notesSync.error("folder upsert failed: \(error)")
             }
         }
 
@@ -443,7 +443,7 @@ final class NotesSyncService {
                 ), onConflict: "id").execute()
                 pendingNoteIds.remove(id)
             } catch {
-                print("[NotesSync] note upsert failed: \(error)")
+                Log.notesSync.error("note upsert failed: \(error)")
             }
         }
 
@@ -460,7 +460,7 @@ final class NotesSyncService {
                 }
                 pendingNoteDeletes.removeValue(forKey: id)
             } catch {
-                print("[NotesSync] note delete failed: \(error)")
+                Log.notesSync.error("note delete failed: \(error)")
             }
         }
 
@@ -472,7 +472,7 @@ final class NotesSyncService {
                     .execute()
                 pendingFolderDeletes.remove(id)
             } catch {
-                print("[NotesSync] folder delete failed: \(error)")
+                Log.notesSync.error("folder delete failed: \(error)")
             }
         }
 
@@ -511,7 +511,7 @@ final class NotesSyncService {
                 // Already in the bucket from a previous attempt.
                 uploadedMedia.insert(filename)
             } catch {
-                print("[NotesSync] media upload failed for \(filename): \(error)")
+                Log.notesSync.error("media upload failed for \(filename): \(error)")
                 return false
             }
         }
