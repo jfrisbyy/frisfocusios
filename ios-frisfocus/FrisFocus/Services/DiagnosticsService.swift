@@ -53,7 +53,7 @@ private nonisolated struct DiagnosticsRow: Encodable, Sendable {
 /// Named rather than free-form so the funnel can't drift into a set of
 /// almost-identical strings that no query can group. Adding a step here
 /// is the only way to add one to the funnel.
-enum FunnelStep: String, CaseIterable, Sendable {
+nonisolated enum FunnelStep: String, CaseIterable, Sendable {
     // Shared entry
     case ageCheckShown = "age_check.shown"
     case ageCheckPassed = "age_check.passed"

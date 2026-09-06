@@ -37,7 +37,12 @@ import os
 /// The `@autoclosure` is what keeps the first reason above true: at
 /// `.debug`, the message is not even built unless something is
 /// collecting.
-struct AppLog: Sendable {
+/// `nonisolated` is load-bearing. This module builds with
+/// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so an unmarked type is
+/// main-actor isolated — and most of these call sites are inside
+/// `nonisolated` sync methods and background completion handlers, which
+/// could not reach a main-actor logger at all.
+nonisolated struct AppLog: Sendable {
     private let logger: Logger
 
     init(subsystem: String, category: String) {
@@ -65,7 +70,7 @@ struct AppLog: Sendable {
     }
 }
 
-enum Log {
+nonisolated enum Log {
     /// Everything ships under one subsystem so Console can filter the
     /// whole app in one predicate.
     private static let subsystem = "com.frisfocus.app"
