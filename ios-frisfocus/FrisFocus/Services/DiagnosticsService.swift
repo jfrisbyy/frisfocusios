@@ -238,7 +238,7 @@ extension DiagnosticsService: MXMetricManagerSubscriber {
                     kind: "disk_write",
                     name: "excessive_disk_write",
                     detail: [
-                        "written_kb": String(format: "%.0f", write.writesCaused.value),
+                        "written_kb": String(format: "%.0f", write.totalWritesCaused.value),
                         "frames": Self.topFrames(of: write.callStackTree),
                     ],
                     at: at
@@ -258,13 +258,17 @@ extension DiagnosticsService: MXMetricManagerSubscriber {
 
     /// The call stack as JSON, truncated hard.
     ///
+    /// `nonisolated` because the enclosing class is `@MainActor` and the
+    /// only caller is the MetricKit callback, which is not. It is a pure
+    /// function of its argument, so there is nothing to isolate.
+    ///
     /// A full MetricKit stack tree is tens of kilobytes and every row
     /// here is inserted over the same connection the app uses for real
     /// work. The top of the stack is what names the bug; the rest is
     /// weight. Symbolication happens in Xcode's Organizer against the
     /// same crash — this row exists to say *how often* and *where*, not
     /// to replace that.
-    private static func topFrames(of tree: MXCallStackTree) -> String {
+    nonisolated private static func topFrames(of tree: MXCallStackTree) -> String {
         let data = tree.jsonRepresentation()
         let limit = 4_000
         guard data.count > limit else {
