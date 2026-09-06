@@ -516,6 +516,37 @@ final class ColdStartViewModel {
         return Int(v.rounded())
     }
 
+    // MARK: - The day's target
+
+    /// How many cards a strong day realistically holds.
+    ///
+    /// The board a person builds here is a SEASON'S library, not a day's
+    /// plan — nothing on it is scheduled, and the tour teaches them to
+    /// pull "the day's few" onto today. Pricing a day as a fraction of
+    /// everything they might ever do therefore makes a full sun require
+    /// most of the season, every single day.
+    static let strongDayCardCount = 4
+
+    /// What a strong day is worth: the best few cards on the board.
+    ///
+    /// Deliberately the TOP cards rather than an average — a good day is
+    /// the day the hard things happened, and the sun should be able to
+    /// fill on one.
+    var suggestedDailyTarget: Int {
+        let values = finalBoard().map(\.value).sorted(by: >)
+        guard !values.isEmpty else { return 1 }
+        return max(1, values.prefix(Self.strongDayCardCount).reduce(0, +))
+    }
+
+    /// The person's own answer, when they adjusted it on the calibrate
+    /// beat. `nil` means they accepted the suggestion.
+    var chosenDailyTarget: Int?
+
+    /// The target actually committed with the season.
+    var resolvedDailyTarget: Int {
+        max(1, chosenDailyTarget ?? suggestedDailyTarget)
+    }
+
     /// Live sum of every placed card's value across all directions.
     var liveValueSum: Int {
         var total = 0

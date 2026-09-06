@@ -3345,6 +3345,12 @@ extension Store {
         guard let idx = tasks.firstIndex(where: { $0.id == taskId }) else { return }
         tasks[idx].pinSchedule = schedule
         tasks[idx].timeWindow = timeWindow
+        // Giving something a rhythm changes what a real day holds, so the
+        // sun's target has to follow. This path — the hold-menu "Pin to
+        // days…" and the mechanics tour's own rhythm lesson — never
+        // recalibrated, so the target the season was born with simply
+        // stood no matter how the plan changed.
+        recalibrateDailyGoalIfProvisional()
         persistAll()
     }
 
@@ -3367,6 +3373,7 @@ extension Store {
         case .none, .singleDate:
             tasks[idx].pinSchedule = .daysOfWeek([weekday])
         }
+        recalibrateDailyGoalIfProvisional()
         persistAll()
     }
 
@@ -3377,6 +3384,7 @@ extension Store {
         if case .daysOfWeek(var days) = tasks[idx].pinSchedule {
             days.remove(weekday)
             tasks[idx].pinSchedule = days.isEmpty ? .none : .daysOfWeek(days)
+            recalibrateDailyGoalIfProvisional()
             persistAll()
         }
     }
@@ -3405,22 +3413,65 @@ extension Store {
     }
 
     /// Keep the sun's target honest while the season is still the
-    /// provisional cold-start build: the daily goal tracks 60% of the
-    /// daily board's total value — exactly the formula used the day it
-    /// was created — so pruning or adding tasks can never leave the sun
-    /// mathematically un-fillable. Graduated seasons (edited through
-    /// the full season conversation) keep their deliberate goal.
+    /// provisional cold-start build, so pruning or adding tasks can never
+    /// leave the sun mathematically un-fillable. Graduated seasons (edited
+    /// through the full season conversation) keep their deliberate goal.
+    ///
+    /// This previously read 60% of only the `.daily`-scheduled tasks and
+    /// returned early when there were none — which is the state every
+    /// fresh season starts in, since the cold start pins nothing. So it
+    /// silently did nothing until the person happened to create or delete
+    /// a task, and if by then they had set a rhythm the target lurched
+    /// from "60% of the entire library" down to "60% of one task", with no
+    /// explanation. Worse, a rhythm set with weekday chips rather than
+    /// "every day" left `dailyTasks` empty forever, so the original
+    /// unreachable target simply stood.
     func recalibrateDailyGoalIfProvisional() {
         guard currentSeason.isProvisional else { return }
-        let dailyTasks = tasks.filter { $0.pinSchedule == .daily }
-        guard !dailyTasks.isEmpty else { return }
-        let valueSum = dailyTasks.reduce(0) {
-            $0 + max(1, $1.scoring.headlineValue(flatValue: $1.pointValue))
-        }
-        let goal = max(1, Int((0.60 * Double(valueSum)).rounded()))
+        let goal = Store.strongDayValue(from: tasks)
         guard goal != currentSeason.dailyGoal else { return }
         currentSeason.dailyGoal = goal
         currentSeason.weeklyGoal = goal * 7
+    }
+
+    /// How many tasks stand in for a strong day before any rhythm exists.
+    /// Matches `ColdStartViewModel.strongDayCardCount` so the target the
+    /// calibrate beat showed does not move the moment the app recomputes.
+    static let strongDayTaskCount = 4
+
+    /// What a strong day is worth, drawn from the plan the person keeps.
+    ///
+    /// Once anything has a rhythm, the busiest single weekday IS a real
+    /// day and is the honest measure. Before that, the best few tasks in
+    /// the library stand in. Either way the answer is "a day", never a
+    /// fraction of a season — the mistake that made the sun unreachable.
+    static func strongDayValue(from tasks: [FFTask]) -> Int {
+        func value(_ task: FFTask) -> Int {
+            max(1, task.scoring.headlineValue(flatValue: task.pointValue))
+        }
+
+        // 1 = Sunday … 7 = Saturday, matching Calendar's weekday numbering.
+        var byWeekday = [Int: Int]()
+        for task in tasks {
+            switch task.pinSchedule {
+            case .daily:
+                for day in 1...7 { byWeekday[day, default: 0] += value(task) }
+            case .daysOfWeek(let days):
+                for day in days { byWeekday[day, default: 0] += value(task) }
+            case .none, .today, .singleDate:
+                // One-offs and unscheduled library tasks describe no
+                // recurring day, so they cannot set a day's expectation.
+                continue
+            }
+        }
+
+        if let busiest = byWeekday.values.max(), busiest > 0 {
+            return max(1, busiest)
+        }
+
+        let values = tasks.map(value).sorted(by: >)
+        guard !values.isEmpty else { return 1 }
+        return max(1, values.prefix(strongDayTaskCount).reduce(0, +))
     }
 
     /// Permanently delete a To-do, removing any score it contributed.
@@ -4135,11 +4186,18 @@ extension Store {
             ))
         }
 
-        // Daily target = 60 % of the total value on the board. The sun
-        // ratio (today's earned points ÷ this target) then moves by
-        // visibly different amounts for different tasks.
-        let valueSum = board.reduce(0) { $0 + max(1, $1.value) }
-        let dailyGoal = max(1, Int((0.60 * Double(valueSum)).rounded()))
+        // Daily target = what a strong day is worth, carried from the
+        // calibrate beat.
+        //
+        // This used to be 60% of the total value of the WHOLE BOARD, which
+        // made the sun unreachable for anyone who engaged with onboarding:
+        // the board is a season's library, nothing on it is scheduled, and
+        // the tour explicitly teaches pulling "the day's few" onto today.
+        // Eighteen cards summing 72 produced a target of 43 — roughly
+        // eleven tasks a day, every day, to fill the sun once. The more
+        // enthusiastic the person had been, the further out of reach it
+        // moved.
+        let dailyGoal = max(1, result.dailyTarget)
 
         // The season's ending, exactly as chosen — a date is never
         // silently rounded to 30/60/90. Open-ended / milestone seasons

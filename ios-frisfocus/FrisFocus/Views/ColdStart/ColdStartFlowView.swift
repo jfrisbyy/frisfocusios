@@ -77,7 +77,8 @@ struct ColdStartFlowView: View {
                                 milestones: viewModel.cleanedMilestones,
                                 seasonName: viewModel.resolvedSeasonName,
                                 endMode: viewModel.seasonEndMode,
-                                endDate: viewModel.seasonEndMode == .date ? viewModel.seasonEndDate : nil
+                                endDate: viewModel.seasonEndMode == .date ? viewModel.seasonEndDate : nil,
+                                dailyTarget: viewModel.resolvedDailyTarget
                             )
                         )
                     }
@@ -183,6 +184,10 @@ struct ColdStartResult {
     let seasonName: String
     let endMode: SeasonEndMode
     let endDate: Date?
+    /// What a strong day is worth for this person — the sun's target.
+    /// Carried explicitly rather than derived from the board, because the
+    /// board is a season's library and a day holds only a few of it.
+    let dailyTarget: Int
 }
 
 #Preview {
