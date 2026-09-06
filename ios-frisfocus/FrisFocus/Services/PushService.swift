@@ -20,7 +20,11 @@ import Supabase
 
 /// The action that prompted a push. Raw values match the `send-push`
 /// function's `type` contract exactly.
-nonisolated enum PushKind: String, Sendable {
+///
+/// `CaseIterable` so the notification settings screen can prove, in debug
+/// builds, that every kind sits under one of its groups — a kind added
+/// here with no group would be one nobody could ever switch off.
+nonisolated enum PushKind: String, CaseIterable, Sendable {
     case proof
     case note
     case friendRequest = "friend_request"

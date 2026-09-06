@@ -3,9 +3,10 @@
 //  FrisFocus
 //
 //  The client half of push notifications. Owns the permission prompt,
-//  the APNs device-token upload into `device_tokens`, and the route a
-//  tapped notification resolves to (`pendingRoute`), which the app shell
-//  observes to open the exact screen the push is about.
+//  the APNs device-token upload into `device_tokens`, the account's
+//  per-kind push preferences (`notification_preferences`), and the route
+//  a tapped notification resolves to (`pendingRoute`), which the app
+//  shell observes to open the exact screen the push is about.
 //
 //  The `AppDelegate` feeds it the raw device token and notification taps;
 //  `ContentView` tells it who is signed in (so a token that arrives before
@@ -182,6 +183,116 @@ final class NotificationManager {
         if userId != nil, let token = pendingToken {
             storeToken(token)
         }
+        // Per-kind preferences follow the account. The cached copy lands
+        // first so the settings screen is right instantly and offline;
+        // the server read then reconciles anything changed elsewhere.
+        if let userId {
+            disabledPushKinds = Set(
+                UserDefaults.standard.stringArray(forKey: Self.disabledKindsKey(userId)) ?? []
+            )
+            Task { await refreshPushPreferences() }
+        } else {
+            disabledPushKinds = []
+        }
+    }
+
+    // MARK: Per-kind push preferences
+
+    /// The push kinds this account has switched off, held as
+    /// `PushKind.rawValue` strings — the exact wire values `send-push`
+    /// matches on.
+    ///
+    /// The *disabled* set, never the enabled one: no row means everything
+    /// is on, so a kind introduced in a later release reaches existing
+    /// accounts without a backfill. Raw strings rather than `PushKind`
+    /// values for the same reason from the other side — a kind this build
+    /// doesn't know about survives a read/write round-trip here instead of
+    /// being quietly switched back on.
+    private(set) var disabledPushKinds: Set<String> = []
+
+    /// Bumped on every local change, so a server read that was already in
+    /// flight can tell it has been overtaken and drop its stale answer.
+    @ObservationIgnored private var pushPrefsRevision = 0
+
+    /// Timestamps go up as ISO-8601 strings, like every other table this
+    /// app writes.
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    /// Cache key namespaced by account, so two sign-ins on one device
+    /// never inherit each other's preferences.
+    private static func disabledKindsKey(_ userId: String) -> String {
+        "notifications.disabledKinds.\(userId)"
+    }
+
+    /// Whether pushes of this kind may still reach the signed-in user.
+    func isPushEnabled(_ kind: PushKind) -> Bool {
+        !disabledPushKinds.contains(kind.rawValue)
+    }
+
+    /// Switch a group of kinds on or off together and write it through.
+    /// Local state and the cache move first so the toggle never lags and
+    /// survives a relaunch; the upsert is fire-and-forget, since a failed
+    /// save is worth a log line and nothing more.
+    func setPushKinds(_ kinds: [PushKind], enabled: Bool) {
+        let raws = Set(kinds.map(\.rawValue))
+        var next = disabledPushKinds
+        if enabled {
+            next.subtract(raws)
+        } else {
+            next.formUnion(raws)
+        }
+        guard next != disabledPushKinds else { return }
+        disabledPushKinds = next
+        pushPrefsRevision += 1
+        guard let userId = currentUserId else { return }
+        let disabled = next.sorted()
+        UserDefaults.standard.set(disabled, forKey: Self.disabledKindsKey(userId))
+        Task {
+            do {
+                try await supabase
+                    .from("notification_preferences")
+                    .upsert(
+                        NotificationPrefsUpsert(
+                            userId: userId,
+                            disabledKinds: disabled,
+                            updatedAt: Self.iso.string(from: Date())
+                        ),
+                        onConflict: "user_id"
+                    )
+                    .execute()
+            } catch {
+                print("[Notifications] Preference save failed: \(error)")
+            }
+        }
+    }
+
+    /// Re-read the account's preferences. Called on sign-in and again when
+    /// the settings screen opens, so a change made on another device is
+    /// reflected rather than silently overwritten by this one.
+    func refreshPushPreferences() async {
+        guard let userId = currentUserId else { return }
+        let revision = pushPrefsRevision
+        do {
+            let rows: [NotificationPrefsRow] = try await supabase
+                .from("notification_preferences")
+                .select("disabled_kinds")
+                .eq("user_id", value: userId)
+                .limit(1)
+                .execute()
+                .value
+            // A sign-out, an account switch, or a switch the person
+            // flipped while this was in flight all outrank the answer.
+            guard currentUserId == userId, pushPrefsRevision == revision else { return }
+            let kinds = Set(rows.first?.disabledKinds ?? [])
+            disabledPushKinds = kinds
+            UserDefaults.standard.set(kinds.sorted(), forKey: Self.disabledKindsKey(userId))
+        } catch {
+            print("[Notifications] Preference load failed: \(error)")
+        }
     }
 
     // MARK: Device token
@@ -256,6 +367,30 @@ final class NotificationManager {
 }
 
 // MARK: - Wire payload
+
+/// The account's per-kind preferences row. Only the disabled set is ever
+/// read or written — an absent row is the default "everything on".
+private nonisolated struct NotificationPrefsRow: Decodable, Sendable {
+    let disabledKinds: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case disabledKinds = "disabled_kinds"
+    }
+}
+
+/// Encodable payload for upserting the disabled set. `user_id` is the
+/// table's primary key, so this replaces the account's row in one call.
+private nonisolated struct NotificationPrefsUpsert: Encodable, Sendable {
+    let userId: String
+    let disabledKinds: [String]
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id"
+        case disabledKinds = "disabled_kinds"
+        case updatedAt = "updated_at"
+    }
+}
 
 /// Encodable payload for upserting this device's APNs token.
 nonisolated struct DeviceTokenUpsert: Encodable, Sendable {
