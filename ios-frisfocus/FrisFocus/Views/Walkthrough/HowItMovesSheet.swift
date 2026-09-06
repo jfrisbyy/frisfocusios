@@ -34,64 +34,142 @@ struct HowItMovesSheet: View {
                 Text("How FrisFocus moves")
                     .font(.serif(22, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
-                Text("The hidden gestures, all in one place.")
+                Text("The gestures, and the parts nobody stops to explain.")
                     .font(.serifItalic(13.5, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(0.55))
             }
             .padding(.bottom, 16)
 
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 10) {
-                    gestureRow(
-                        icon: "pin",
-                        title: "Pull tasks onto today",
-                        line: "Your tasks wait in the season — “Add to today” builds the day's plan."
-                    )
-                    gestureRow(
-                        icon: "checkmark.circle",
-                        title: "Tap a task's circle",
-                        line: "Checks it off — your sun rises a little."
-                    )
-                    gestureRow(
-                        icon: "hand.draw",
-                        title: "Swipe a plan row",
-                        line: "Right completes it; left takes it off today."
-                    )
-                    gestureRow(
-                        icon: "calendar",
-                        title: "Hold a card → Pin to days…",
-                        line: "Sets a rhythm — every day, or the weekdays you choose."
-                    )
-                    gestureRow(
-                        icon: "rectangle.3.group",
-                        title: "AGENDA above the plan",
-                        line: "Bands, flexible blocks, and day templates for weekdays."
-                    )
-                    gestureRow(
-                        icon: "camera",
-                        title: "Swipe in from the left edge",
-                        line: "Opens the camera from Home or Friends."
-                    )
-                    gestureRow(
-                        icon: "video",
-                        title: "Hold the shutter",
-                        line: "Records video — slide up while holding to zoom."
-                    )
-                    gestureRow(
-                        icon: "arrow.up.and.down",
-                        title: "Hold the right rail",
-                        line: "Scrubs the whole page like a scrollbar."
-                    )
-                    gestureRow(
-                        icon: "arrow.uturn.backward",
-                        title: "Shake your phone",
-                        line: "Undoes the last plan change."
-                    )
-                    gestureRow(
-                        icon: "chevron.down",
-                        title: "Swipe down on a story",
-                        line: "Closes the player, wherever you are in it."
-                    )
+                VStack(alignment: .leading, spacing: 18) {
+                    section("YOUR DAY") {
+                        gestureRow(
+                            icon: "pin",
+                            title: "Pull tasks onto today",
+                            line: "Your tasks wait in the season — \u{201C}Add to today\u{201D} builds the day's plan."
+                        )
+                        gestureRow(
+                            icon: "checkmark.circle",
+                            title: "Tap a task's circle",
+                            line: "Checks it off — your sun rises a little."
+                        )
+                        gestureRow(
+                            icon: "hand.draw",
+                            title: "Swipe a plan row",
+                            line: "Right completes it; left takes it off today."
+                        )
+                        gestureRow(
+                            icon: "calendar",
+                            title: "Hold a card \u{2192} Pin to days\u{2026}",
+                            line: "Sets a rhythm — every day, or the weekdays you choose."
+                        )
+                        gestureRow(
+                            icon: "rectangle.3.group",
+                            title: "AGENDA above the plan",
+                            line: "Bands, flexible blocks, and day templates for weekdays."
+                        )
+                        gestureRow(
+                            icon: "sun.max",
+                            title: "The sun is your day's shape",
+                            line: "It fills toward a strong day — not toward everything you could do."
+                        )
+                    }
+
+                    // The social half had no reference anywhere. Lessons
+                    // teach these one at a time as they become real; this
+                    // is where someone looks when they want the whole
+                    // picture at once, or arrived before a lesson did.
+                    section("YOUR PEOPLE") {
+                        gestureRow(
+                            icon: "dial.medium",
+                            title: "You set what each friend sees",
+                            line: "Quiet, Open, or Full — per person, and never your numbers."
+                        )
+                        gestureRow(
+                            icon: "circle.dashed",
+                            title: "Stories, proofs, and cheers",
+                            line: "A story goes to the people you pick; a proof goes to one; a cheer is the whole reply."
+                        )
+                        gestureRow(
+                            icon: "person.3",
+                            title: "Circles are rooms",
+                            line: "Everyone in one is doing the work alongside you. Nothing scrolls past."
+                        )
+                        gestureRow(
+                            icon: "sun.horizon",
+                            title: "Golden Hour",
+                            line: "A short window, everyone at once. Miss it and the wall stays blurred."
+                        )
+                        gestureRow(
+                            icon: "hands.clap",
+                            title: "Pacts",
+                            line: "Two people, one window, both sides visible to each other."
+                        )
+                        gestureRow(
+                            icon: "bell.slash",
+                            title: "Mute, hide, block",
+                            line: "Mute quiets someone without them knowing. Block ends it. Both live in the \u{201C}\u{2026}\u{201D} menu."
+                        )
+                    }
+
+                    section("HIDDEN GESTURES") {
+                        gestureRow(
+                            icon: "camera",
+                            title: "Swipe in from the left edge",
+                            line: "Opens the camera from Home or Friends."
+                        )
+                        gestureRow(
+                            icon: "video",
+                            title: "Hold the shutter",
+                            line: "Records video — slide up while holding to zoom."
+                        )
+                        gestureRow(
+                            icon: "arrow.up.and.down",
+                            title: "Hold the right rail",
+                            line: "Scrubs the whole page like a scrollbar."
+                        )
+                        gestureRow(
+                            icon: "arrow.uturn.backward",
+                            title: "Shake your phone",
+                            line: "Undoes the last plan change."
+                        )
+                        gestureRow(
+                            icon: "chevron.down",
+                            title: "Swipe down on a story",
+                            line: "Closes the player, wherever you are in it."
+                        )
+                    }
+
+                    // Real features with no lesson of their own. A line
+                    // each is enough to make them findable, which is the
+                    // whole job — the alternative was death by coachmark.
+                    section("ALSO IN HERE") {
+                        gestureRow(
+                            icon: "leaf",
+                            title: "Focus",
+                            line: "A timed block that grows a tree, alone or in a grove with friends."
+                        )
+                        gestureRow(
+                            icon: "flag",
+                            title: "Milestones",
+                            line: "The wins you named at setup, charted as destinations for the season."
+                        )
+                        gestureRow(
+                            icon: "book.closed",
+                            title: "The journal",
+                            line: "Notes, photos and voice memos, in folders and tags. Private, always."
+                        )
+                        gestureRow(
+                            icon: "chart.line.uptrend.xyaxis",
+                            title: "Your season",
+                            line: "Weeks and months of your own shape, once there is enough to show."
+                        )
+                        gestureRow(
+                            icon: "bolt",
+                            title: "Boosters and rhythms",
+                            line: "Weekly bonuses and habit trains, set up from a task's own editor."
+                        )
+                    }
                 }
                 .padding(.horizontal, 22)
                 .padding(.bottom, 12)
@@ -145,6 +223,21 @@ struct HowItMovesSheet: View {
         .presentationDragIndicator(.hidden)
         .presentationCornerRadius(30)
         .presentationBackground(Theme.warmWheat)
+    }
+
+    /// One titled group. The sheet used to be a flat list of gestures;
+    /// grouping is what lets it also carry the concepts and the long tail
+    /// without reading as a wall.
+    @ViewBuilder
+    private func section(
+        _ title: String,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            EyebrowText(text: title, opacity: 0.5)
+                .padding(.leading, 4)
+            content()
+        }
     }
 
     private func gestureRow(icon: String, title: String, line: String) -> some View {
