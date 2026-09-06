@@ -102,6 +102,16 @@ changing a grant.
 The client-facing entry-point RPCs are a different matter and *are*
 revoked — see `20260906000012_revoke_anon_rpc_execute.sql`.
 
+Two performance findings are also left open on purpose. **17 unused
+indexes**: this database has almost no traffic yet, so "unused" means
+"nothing has run that query", not "nothing ever will". Dropping indexes
+on that evidence before launch is how a query goes quadratic in week
+two. Re-read this after real beta traffic, not before. **24 overlapping
+permissive policies**: consolidating two permissive policies into one
+changes what the table allows, and there is no test here that would
+catch getting it wrong. It is a real cost at scale and the wrong thing
+to do blind — it wants a pass with a way to verify each merge.
+
 ## Before a beta release — items that need a human
 
 These cannot be done from the repository and several have long lead times.
