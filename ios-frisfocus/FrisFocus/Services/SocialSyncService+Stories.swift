@@ -120,6 +120,13 @@ private nonisolated struct StoryCommentInsert: Encodable, Sendable {
     }
 }
 
+/// The sweep function's reply. Only the shape matters — the count is
+/// logged by the function itself, and the client does nothing with it.
+private nonisolated struct StoriesSweepResponse: Decodable, Sendable {
+    let ok: Bool?
+    let swept: Int?
+}
+
 private nonisolated struct StoryViewInsert: Encodable, Sendable {
     let postId: String
     let viewerId: String
@@ -297,8 +304,43 @@ extension SocialSyncService {
 
             ensureMediaAssets(for: rows)
             store.persistAll()
+            // Now that the live window is known, ask the backend to
+            // destroy anything that fell out of it.
+            sweepExpiredStoriesIfNeeded()
         } catch {
             Log.socialSync.error("stories refresh failed: \(error)")
+        }
+    }
+
+    // MARK: - Expiry sweep
+
+    /// Whether this session has already asked the backend to destroy
+    /// expired story media. Once is enough — the sweep is idempotent and
+    /// expiry is measured in hours, not seconds.
+    private static var didSweepStoriesThisSession = false
+
+    /// Ask the backend to actually delete the media behind expired
+    /// stories.
+    ///
+    /// Every surface already hides a story once it is a day old, and a
+    /// lesson tells people in as many words that stories vanish — but
+    /// nothing deleted the bytes. The `stories` bucket grants reads on
+    /// friendship and circle membership, never on age, so an "expired"
+    /// photo stayed fetchable by anyone still friends with its author.
+    /// The promise was kept on screen and broken on disk.
+    ///
+    /// Fire-and-forget, once per session, mirroring the Golden Hour
+    /// sweep. The cutoff is computed server-side, so this cannot make
+    /// anything vanish early.
+    func sweepExpiredStoriesIfNeeded() {
+        guard myUserId != nil, !Self.didSweepStoriesThisSession else { return }
+        Self.didSweepStoriesThisSession = true
+        Task {
+            do {
+                let _: StoriesSweepResponse = try await supabase.functions.invoke("stories-sweep")
+            } catch {
+                Log.socialSync.error("stories sweep failed: \(error)")
+            }
         }
     }
 

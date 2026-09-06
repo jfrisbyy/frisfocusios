@@ -434,7 +434,12 @@ final class ProfileStore {
 
     /// The `<userId>/<file>` object path inside the avatars bucket that a
     /// stored public URL refers to — or nil if it is not one of ours.
-    static func avatarObjectPath(from urlString: String, myUserId: String) -> String? {
+    ///
+    /// `nonisolated` because this class is `@MainActor` (unlike `Store`,
+    /// which is not) and this is a pure function of its two arguments
+    /// with nothing to isolate. Without it the tests, which are
+    /// nonisolated, cannot call it at all.
+    nonisolated static func avatarObjectPath(from urlString: String, myUserId: String) -> String? {
         guard let url = URL(string: urlString) else { return nil }
         let parts = url.pathComponents.filter { $0 != "/" }
         // .../object/public/avatars/<userId>/<file>
