@@ -11,6 +11,13 @@
 //  the toggle is off, the request queue is empty, and the task
 //  rows just apply edits directly for whoever has permission.
 //
+//  Role and membership changes write through to Supabase whenever the
+//  circle is server-backed. `circle_members` is the table RLS reads, so
+//  a removal that only happened on the device would hide someone who
+//  still had full access to the circle — and the next sync would put
+//  them straight back on the roster. Sample-sandbox circles have no
+//  rows to write and keep the purely local behaviour.
+//
 
 import SwiftUI
 import PhotosUI
@@ -28,9 +35,15 @@ struct CircleSettingsSheet: View {
     @Environment(AuthManager.self) private var auth
     @Environment(ProfileStore.self) private var profileStore
     @Environment(GoldenHourService.self) private var goldenHour
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
 
     let circleId: UUID
+
+    /// The server side of circle governance. Its own instance, the way
+    /// every other circle surface keeps one — this sheet renders from the
+    /// local mirror and only reaches for the service to write.
+    @State private var circleGraph = CircleGraphService()
 
     /// Header photo flow.
     @State private var headerPhotoItem: PhotosPickerItem?
@@ -1126,16 +1139,16 @@ struct CircleSettingsSheet: View {
                             EmptyView()
                         case .admin:
                             Button("Demote to member") {
-                                store.demoteFromAdmin(userId: memberId, in: circle.id)
+                                setRole(.member, for: memberId)
                             }
                         case .member:
                             Button("Promote to admin") {
-                                store.promoteToAdmin(userId: memberId, in: circle.id)
+                                setRole(.admin, for: memberId)
                             }
                         }
                         if role != .owner {
                             Button("Transfer ownership", role: .destructive) {
-                                store.transferOwnership(to: memberId, in: circle.id)
+                                transferOwnership(to: memberId)
                             }
                         }
                     }
@@ -1144,7 +1157,7 @@ struct CircleSettingsSheet: View {
                         let canRemove = viewerIsOwner || role == .member
                         if canRemove {
                             Button("Remove from circle", role: .destructive) {
-                                store.removeMember(userId: memberId, from: circle.id)
+                                removeMember(memberId)
                             }
                         }
                     }
@@ -1184,6 +1197,90 @@ struct CircleSettingsSheet: View {
             .font(.sans(9, weight: .semibold))
             .tracking(1.6)
             .foregroundStyle(color)
+    }
+
+    // MARK: - Governance actions
+    //
+    // Each one applies the local change first — the roster is rendered
+    // from the Store, so the chip or the row moves under the thumb — and
+    // then writes to the server when the circle has a server side. The
+    // local write alone is not enough: `refreshCircles` rebuilds roles
+    // and membership from `circle_members`, so anything that never
+    // reached that table is undone on the next sync, and a removed
+    // member never actually lost access.
+
+    /// Promote a member to admin, or demote an admin back to member.
+    private func setRole(_ role: CircleRole, for memberId: UUID) {
+        switch role {
+        case .admin: store.promoteToAdmin(userId: memberId, in: circleId)
+        case .member: store.demoteFromAdmin(userId: memberId, in: circleId)
+        case .owner: return
+        }
+        guard let ids = remoteIds(for: memberId) else { return }
+        Task {
+            await circleGraph.setRole(
+                circleId: circleId,
+                userId: ids.theirs,
+                role: role,
+                myUserId: ids.mine
+            )
+            await settle()
+        }
+    }
+
+    /// Hand the circle to another member.
+    private func transferOwnership(to memberId: UUID) {
+        store.transferOwnership(to: memberId, in: circleId)
+        guard let ids = remoteIds(for: memberId) else { return }
+        Task {
+            await circleGraph.transferOwnership(
+                circleId: circleId,
+                toUserId: ids.theirs,
+                myUserId: ids.mine
+            )
+            await settle()
+        }
+    }
+
+    /// Drop a member from the circle — the one action here that is a
+    /// safety operation rather than a preference, so it has to reach the
+    /// server to mean anything.
+    private func removeMember(_ memberId: UUID) {
+        store.removeMember(userId: memberId, from: circleId)
+        guard let ids = remoteIds(for: memberId) else { return }
+        Task {
+            await circleGraph.removeMember(
+                circleId: circleId,
+                userId: ids.theirs,
+                myUserId: ids.mine
+            )
+            await settle()
+        }
+    }
+
+    /// The `profiles.id` pair a governance write needs — mine and theirs.
+    /// Both resolve exactly when the circle is server-backed and both
+    /// people are real accounts, which is when there is a row to write.
+    /// Sample-sandbox members have no remote id, so nil reads as "local
+    /// circle, local change only".
+    private func remoteIds(for memberId: UUID) -> (mine: String, theirs: String)? {
+        guard let mine = auth.user?.id, !mine.isEmpty,
+              let theirs = socialSync.remoteId(forLocal: memberId)
+        else { return nil }
+        return (mine, theirs)
+    }
+
+    /// Bring the local mirror back in line with the server after a write,
+    /// and show anything the service refused. The service reports through
+    /// `errorMessage`; this sheet has no error alert, so it borrows the
+    /// banner the rest of the screen already uses.
+    private func settle() async {
+        await socialSync.refreshCircles()
+        if let message = circleGraph.errorMessage {
+            circleGraph.errorMessage = nil
+            circleGraph.showError = false
+            showBanner(message)
+        }
     }
 
     // MARK: - Chrome
