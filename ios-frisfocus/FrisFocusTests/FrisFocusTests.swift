@@ -183,12 +183,22 @@ struct AgeGateTests {
         #expect(AgeGate.age(from: date(2013, 9, 7), now: now) < AgeGate.minimumAge)
     }
 
-    @Test("A leap-day birthday is not counted a year early")
+    @Test("A leap-day birthday lands on the 28th in a common year")
     func leapDayBirthday() {
-        // 2012-02-29 has no anniversary in 2025, a non-leap year. On the
-        // 28th they are still 12; naive day arithmetic tends to say 13.
-        #expect(AgeGate.age(from: date(2012, 2, 29), now: date(2025, 2, 28)) == 12)
+        // 2012-02-29 has no anniversary in 2025, a common year. The
+        // calendar treats the 28th as the anniversary — which is what we
+        // want: a February birthday must not slide into March, and a
+        // 13-year-old must not be told to come back tomorrow.
+        #expect(AgeGate.age(from: date(2012, 2, 29), now: date(2025, 2, 27)) == 12)
+        #expect(AgeGate.age(from: date(2012, 2, 29), now: date(2025, 2, 28)) == 13)
         #expect(AgeGate.age(from: date(2012, 2, 29), now: date(2025, 3, 1)) == 13)
+    }
+
+    @Test("A leap-day birthday still needs the real day in a leap year")
+    func leapDayBirthdayInLeapYear() {
+        // 2028 has a 29th, so the 28th is genuinely the day before.
+        #expect(AgeGate.age(from: date(2012, 2, 29), now: date(2028, 2, 28)) == 15)
+        #expect(AgeGate.age(from: date(2012, 2, 29), now: date(2028, 2, 29)) == 16)
     }
 }
 
