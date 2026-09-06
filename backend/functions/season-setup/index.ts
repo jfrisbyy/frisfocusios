@@ -18,6 +18,7 @@
 // the frozen rubric — no model call in the hot path.
 
 import { requireAuth, AuthError } from "../_shared/auth.ts";
+import { consumeQuota, quotaResponse } from "../_shared/rateLimit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -484,7 +485,15 @@ Deno.serve(async (req) => {
   }
 
   try {
-    await requireAuth(req);
+    const user = await requireAuth(req);
+
+    // Meter before any paid work: the model call is the expensive
+    // part, so a refusal has to happen ahead of it, not after.
+    const quota = await consumeQuota(user.userId, "season-setup", {
+      hourly: 80,
+      daily: 200,
+    });
+    if (!quota.allowed) return quotaResponse(quota, corsHeaders);
 
     const apiKey = Deno.env.get("OPENROUTER_API_KEY")?.trim();
     if (!apiKey) {
