@@ -1,5 +1,11 @@
 -- Crash, hang and onboarding-funnel telemetry.
 --
+-- NOTE: this file carries TWO recorded migrations — `diagnostics_events`
+-- and `diagnostics_events_write_only`. The grant fix was a follow-up once
+-- the first version turned out to sit on top of Supabase's default
+-- table-level SELECT grant; they are kept together because splitting them
+-- would leave a file in this directory that is wrong on its own.
+--
 -- Deliberately NOT keyed by account. Every row carries a random
 -- per-install id instead of a user id, so the table answers "how many
 -- people crash in the cold start" without becoming a per-person

@@ -70,6 +70,19 @@ so dependency versions are pinned for everyone.
 
 ## Database
 
+Two things drift silently and are worth checking before any release,
+because neither fails loudly:
+
+- **Every function in `backend/functions/` is actually deployed.** A
+  function can exist here and not exist on the server — the moderation
+  queue sat in this repo for hours while the report button wrote rows
+  nothing could read.
+- **Every migration in `backend/migrations/` is in the applied ledger.**
+  A change made through an ad-hoc statement takes effect but records
+  nothing, so the repo and the database disagree about what has run.
+  `storage_bucket_limits` was live but unrecorded for exactly that reason.
+
+
 Schema changes live in `backend/migrations/` and are applied to the Supabase
 project. Never change the schema only through the dashboard — an unversioned
 policy change is how a table ends up world-readable without anyone noticing.
