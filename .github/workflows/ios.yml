@@ -3,6 +3,14 @@ name: iOS
 on:
   push:
     branches: ["**"]
+    # macOS runners bill at 10x, so a README- or migration-note-only
+    # commit has no business starting one. Anything that can change what
+    # compiles or what the functions do is listed here.
+    paths:
+      - "ios-frisfocus/**"
+      - "backend/**"
+      - "scripts/**"
+      - ".github/workflows/ios.yml"
   pull_request:
   workflow_dispatch:
 
@@ -60,44 +68,6 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('ios-frisfocus/FrisFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
-      # The compile check is the point of this job: it is the only thing
-      # standing between an edit and a broken build, since the agents
-      # doing the work have no Swift toolchain.
-      - name: Build (compile check)
-        working-directory: ios-frisfocus
-        run: |
-          set -o pipefail
-          xcodebuild build \
-            -project FrisFocus.xcodeproj \
-            -scheme FrisFocus \
-            -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' \
-            -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tee "$RUNNER_TEMP/build.log"
-
-      # xcodebuild prints each error where it happens, thousands of lines
-      # up from the end — and the log APIs only hand back the tail, so a
-      # failure reads as "exit code 65" with no cause. Reprint just the
-      # diagnostics at the very bottom, where they can actually be read.
-      - name: Compiler errors
-        if: failure()
-        run: |
-          # Errors LAST, and warnings capped hard. The log APIs only
-          # return the tail of a job, so whatever prints last is what can
-          # actually be read back — putting errors first (the obvious
-          # order for a human scrolling) is exactly wrong here, and a
-          # wall of pre-existing warnings pushed them out of reach twice.
-          echo "::group::Warnings (first 10, informational)"
-          grep -E "warning: " "$RUNNER_TEMP/build.log" \
-            | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
-            | sort -u | head -10 || echo "(none)"
-          echo "::endgroup::"
-          echo "================ COMPILER ERRORS ================"
-          grep -E "error: " "$RUNNER_TEMP/build.log" \
-            | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
-            | sort -u | head -40 || echo "(none matched)"
-
       - name: Pick a simulator
         id: sim
         run: |
@@ -109,7 +79,11 @@ jobs:
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
           echo "Using simulator $udid"
 
-      - name: Test
+      # This is both the compile check and the test run. `xcodebuild
+      # test` builds the whole scheme anyway, so running a separate
+      # `xcodebuild build` first was paying for the entire compile twice
+      # on a runner that bills at 10x.
+      - name: Build & test
         working-directory: ios-frisfocus
         run: |
           set -o pipefail
@@ -120,13 +94,25 @@ jobs:
             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tee "$RUNNER_TEMP/test.log"
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
 
-      - name: Test failures
+      # One log now, so one place to read a failure from. Diagnostics
+      # print LAST because the log APIs only return the tail of a job —
+      # anything above the final screenful is unreachable.
+      - name: What went wrong
         if: failure()
         run: |
-          echo "### Failures"
-          grep -E "error: |✘|Test .* failed|failed after" "$RUNNER_TEMP/test.log" \
+          echo "::group::Warnings (first 10, informational)"
+          grep -E "warning: " "$RUNNER_TEMP/xcodebuild.log" \
+            | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
+            | sort -u | head -10 || echo "(none)"
+          echo "::endgroup::"
+          echo "================ FAILING TESTS ================"
+          grep -E "✘|Test .* failed|failed after" "$RUNNER_TEMP/xcodebuild.log" \
+            | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
+            | sort -u | head -20 || echo "(none)"
+          echo "================ COMPILER ERRORS ================"
+          grep -E "error: " "$RUNNER_TEMP/xcodebuild.log" \
             | sed 's|/Users/runner/work/frisfocusios/frisfocusios/||' \
             | sort -u | head -40 || echo "(none matched)"
 

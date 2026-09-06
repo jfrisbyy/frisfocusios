@@ -143,6 +143,31 @@ last. Do not read "1160 strings are already keys" as "the app is nearly
 localized" — the 392 and the 265 are where the real work is, and both
 need a translator, not a refactor.
 
+### CI is currently blocked on GitHub billing
+
+Runs stop before any step with:
+
+> The job was not started because recent account payments have failed or
+> your spending limit needs to be increased.
+
+Nothing in the repository can fix that — it needs Settings → Billing &
+plans on the account. Until it is lifted, pushes produce no signal at
+all, so treat any commit after `c9107be` as unverified rather than
+passing.
+
+macOS runners bill at **10x** the Linux rate, which is what makes this
+easy to hit. Two changes reduce the burn:
+
+- The workflow no longer runs a separate `xcodebuild build` before
+  `xcodebuild test`. `test` builds the whole scheme anyway, so that was
+  paying for the entire compile twice on the expensive runner.
+- A `paths` filter keeps README- and docs-only commits from starting a
+  macOS runner at all.
+
+`concurrency.cancel-in-progress` is deliberately **false**. Superseding
+runs looks frugal but repeatedly destroyed the only evidence of why a
+build failed, turning each diagnosis into two runs instead of one.
+
 ## Before a beta release — items that need a human
 
 These cannot be done from the repository and several have long lead times.
