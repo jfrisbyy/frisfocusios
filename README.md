@@ -102,6 +102,12 @@ changing a grant.
 The client-facing entry-point RPCs are a different matter and *are*
 revoked — see `20260906000012_revoke_anon_rpc_execute.sql`.
 
+The **iOS 18.0 deployment floor stays**. iOS 26 is current, so 18 is two
+major versions back and adoption is high; dropping to 17 would mean
+auditing every API in the app for a sliver of devices. The one iOS 26
+call (`glassEffect` in `SundialNavView`) is already behind an
+`#available` check with a working `.ultraThinMaterial` fallback.
+
 Two performance findings are also left open on purpose. **17 unused
 indexes**: this database has almost no traffic yet, so "unused" means
 "nothing has run that query", not "nothing ever will". Dropping indexes
@@ -114,14 +120,15 @@ to do blind — it wants a pass with a way to verify each merge.
 
 ### Localization: what is actually left
 
-The app ships one language and no string catalog. The infrastructure is
+`FrisFocus/Localizable.xcstrings` now exists (empty, source language
+`en`), so Xcode extracts `Text` literals into it on build and there is
+somewhere for translations to land. That is the pipeline, not the work. The infrastructure is
 smaller than it looks and the work is bigger, so it is worth separating
 the two.
 
 SwiftUI's `Text("…")` takes a `LocalizedStringKey`, so **1160 literals in
-`Views/` are already localization keys** — adding a String Catalog makes
-Xcode extract them at build time with no code change. That is the cheap
-half.
+`Views/` are already localization keys** and the catalog picks them up
+with no code change. That is the cheap half.
 
 The expensive half, measured rather than estimated:
 
