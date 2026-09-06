@@ -26,7 +26,7 @@ private nonisolated struct WidgetSnapshot: Codable, Equatable, Sendable {
 }
 
 private nonisolated enum SunWidgetStore {
-    static let appGroupId = "group.app.rork.c2il3hsv6vzgwqe989xoj"
+    static let appGroupId = "group.com.frisfocus.app"
     static let snapshotKey = "widgetSnapshot.v1"
 
     static let dayFormatter: DateFormatter = {

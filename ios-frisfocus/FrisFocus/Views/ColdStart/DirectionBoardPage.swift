@@ -393,6 +393,13 @@ struct DirectionBoardPage: View {
                 .font(.serifItalic(14, weight: .regular))
                 .foregroundStyle(Theme.textCream.opacity(0.8))
                 .fixedSize(horizontal: false, vertical: true)
+            // The band is also the price. Say so — otherwise the screen
+            // asks about frequency and quietly records cost.
+            Text("Where a card sits is what it's worth — the bad-day ones are priced small on purpose, so they can hold your sun up when nothing else does.")
+                .font(.serifItalic(14, weight: .regular))
+                .foregroundStyle(Theme.textCream.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 5)
         }
         .padding(.top, 2)
     }

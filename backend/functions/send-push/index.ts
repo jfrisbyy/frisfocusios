@@ -29,7 +29,7 @@ const corsHeaders = {
 
 // The app's bundle id doubles as the APNs topic. Overridable via env so a
 // renamed/white-labelled build can point pushes at the right topic.
-const DEFAULT_BUNDLE_ID = "app.rork.c2il3hsv6vzgwqe989xoj";
+const DEFAULT_BUNDLE_ID = "com.frisfocus.app";
 const APNS_PROD_HOST = "api.push.apple.com";
 const APNS_SANDBOX_HOST = "api.sandbox.push.apple.com";
 

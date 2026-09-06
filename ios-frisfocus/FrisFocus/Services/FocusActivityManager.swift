@@ -22,7 +22,7 @@ final class FocusActivityManager {
     static let shared = FocusActivityManager()
     private init() {}
 
-    private let log = Logger(subsystem: "app.rork.FrisFocus", category: "FocusActivity")
+    private let log = Logger(subsystem: "com.frisfocus.app", category: "FocusActivity")
     private var activity: Activity<FocusActivityAttributes>?
 
     /// Starts a Live Activity for the given focus session if Live

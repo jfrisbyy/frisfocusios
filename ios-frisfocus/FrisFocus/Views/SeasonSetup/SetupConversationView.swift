@@ -19,6 +19,12 @@ import UIKit
 struct SetupConversationView: View {
     @Bindable var viewModel: SeasonSetupViewModel
     let onClose: () -> Void
+    /// The way out when the conversation can't run at all. This door needs
+    /// a connection and a server round-trip; the quick path needs neither,
+    /// so a failure hands the person back to the fork where that door is
+    /// waiting. Nil when the flow was opened as a sheet — there's no fork
+    /// behind it, and the starter board stays the fallback there.
+    var onBuildInAMinute: (() -> Void)? = nil
 
     @State private var speech = SpeechCaptureService()
     @State private var useKeyboard: Bool = false
@@ -338,6 +344,15 @@ struct SetupConversationView: View {
                 .font(.sans(12.5, weight: .regular))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.alertRed)
+
+            if onBuildInAMinute != nil {
+                Text("This door needs a connection. You can build your season in about a minute instead, and talk it through any time later.")
+                    .font(.serifItalic(13, weight: .regular))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             HStack(spacing: 10) {
                 Button {
                     viewModel.retry()
@@ -352,19 +367,39 @@ struct SetupConversationView: View {
                 }
                 .buttonStyle(.plain)
 
-                Button {
-                    viewModel.skipToStarter()
-                } label: {
-                    Text("Start from a simple board")
-                        .font(.sans(13, weight: .regular))
-                        .foregroundStyle(Theme.textPrimary.opacity(0.65))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule().strokeBorder(Theme.textPrimary.opacity(0.25), lineWidth: 0.5)
-                        )
+                // Offered instead of the generic starter board when there's
+                // a fork to go back to: the one-minute build is the same
+                // season, made by hand, and it doesn't need the network.
+                if let onBuildInAMinute {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onBuildInAMinute()
+                    } label: {
+                        Text("Build it in about a minute")
+                            .font(.sans(13, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule().strokeBorder(Theme.textPrimary.opacity(0.25), lineWidth: 0.5)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        viewModel.skipToStarter()
+                    } label: {
+                        Text("Start from a simple board")
+                            .font(.sans(13, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule().strokeBorder(Theme.textPrimary.opacity(0.25), lineWidth: 0.5)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 24)

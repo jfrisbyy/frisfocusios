@@ -47,7 +47,8 @@ struct SeasonSetupFlowView: View {
             case .conversation:
                 SetupConversationView(
                     viewModel: viewModel,
-                    onClose: { if let onExit { onExit() } else { dismiss() } }
+                    onClose: { if let onExit { onExit() } else { dismiss() } },
+                    onBuildInAMinute: quickPathEscape
                 )
                 .transition(stageTransition)
 
@@ -88,6 +89,20 @@ struct SeasonSetupFlowView: View {
             if startInResume, SeasonSetupResumeStore.hasSaved {
                 viewModel.resume()
             }
+        }
+    }
+
+    /// The escape offered when the conversation can't run: save whatever
+    /// was said and go back out through the existing exit, which lands on
+    /// the fork and its one-minute door. Only exists when the flow is
+    /// hosted inline — a sheet has no fork behind it to fall back to.
+    /// Saving means "talk it through any time later" is literally true:
+    /// the fork then offers to pick the conversation back up.
+    private var quickPathEscape: (() -> Void)? {
+        guard let onExit else { return nil }
+        return {
+            viewModel.saveProgress()
+            onExit()
         }
     }
 

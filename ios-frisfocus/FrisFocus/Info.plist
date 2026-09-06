@@ -13,7 +13,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>app.rork.c2il3hsv6vzgwqe989xoj</string>
+			<string>com.frisfocus.app</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>frisfocus</string>
