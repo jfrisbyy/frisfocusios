@@ -7,8 +7,15 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # Deliberately NOT cancel-in-progress. Superseding runs looks like the
+  # frugal choice, but it repeatedly destroyed the only evidence of why a
+  # build failed: pushing a fix cancelled the run that would have named
+  # the error, so each diagnosis cost two cycles instead of one. Letting
+  # runs finish costs runner minutes; cancelling them cost the ability to
+  # attribute a failure to a commit at all. The group still serialises
+  # per-ref so runs queue rather than pile up.
   group: ios-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
