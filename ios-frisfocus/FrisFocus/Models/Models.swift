@@ -795,6 +795,12 @@ extension Season {
     /// The effective end mode — legacy seasons (nil `endMode`) read as
     /// `.date`, preserving their original fixed-length behavior.
     var resolvedEndMode: SeasonEndMode { endMode ?? .date }
+
+    /// The targets a season falls back to when nothing carries forward
+    /// and nothing has been chosen yet. Named rather than repeated as
+    /// literals so "the starting target" is one fact in one place.
+    static let defaultDailyGoal = 50
+    static let defaultWeeklyGoal = 350
 }
 
 // MARK: - Tasks / To-dos / Log / Notes

@@ -15,8 +15,7 @@ struct ScoringSettingsView: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    @State private var newSeasonName: String = ""
-    @State private var confirmNewSeason: Bool = false
+    @State private var showImportPicker: Bool = false
     @State private var showSeasonSetup: Bool = false
     @State private var resumeSetup: Bool = false
     @State private var savedSetup: SetupConversationSnapshot? = SeasonSetupResumeStore.load()
@@ -117,18 +116,22 @@ struct ScoringSettingsView: View {
                 }
 
                 Section {
-                    TextField("New season name", text: $newSeasonName)
-                        .font(.sans(16, weight: .regular))
                     Button {
-                        confirmNewSeason = true
+                        showImportPicker = true
                     } label: {
-                        Label("Start from this season's setup", systemImage: "arrow.uturn.forward")
+                        Label("Start a new season", systemImage: "arrow.uturn.forward")
                             .foregroundStyle(Theme.alertGreen)
+                    }
+                    Button {
+                        showSeasonSetup = true
+                    } label: {
+                        Label("Build one in conversation", systemImage: "bubble.left.and.text.bubble.right")
+                            .foregroundStyle(Theme.textPrimary)
                     }
                 } header: {
                     Text("New season")
                 } footer: {
-                    Text("Carries your categories and daily/weekly targets forward into a fresh season instead of rebuilding from scratch. Your task library stays. Milestones reset.")
+                    Text("Choose exactly what carries forward — tasks, boosters, negatives, routines, unfinished milestones, your categories, targets and schedule. Anything you leave behind stays with the season that finished.")
                 }
             }
             .scrollContentBackground(.hidden)
@@ -147,20 +150,12 @@ struct ScoringSettingsView: View {
             }) {
                 SeasonSetupFlowView(startInResume: resumeSetup)
             }
-            .confirmationDialog(
-                "Start a new season from this one's setup?",
-                isPresented: $confirmNewSeason,
-                titleVisibility: .visible
-            ) {
-                Button("Start new season") {
-                    store.startNewSeasonFromCurrent(
-                        name: newSeasonName.isEmpty ? nil : newSeasonName
-                    )
+            .sheet(isPresented: $showImportPicker) {
+                SeasonImportPickerView { plan, name in
+                    store.startNewSeason(importing: plan, name: name)
                     dismiss()
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Your categories and targets carry forward. The day count restarts and milestones reset.")
+                .environment(store)
             }
         }
     }

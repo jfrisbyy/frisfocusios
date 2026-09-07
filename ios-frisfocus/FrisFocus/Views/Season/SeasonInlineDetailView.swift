@@ -52,6 +52,7 @@ struct SeasonInlineDetailView: View {
     @State private var showMilestones: Bool = false
     @State private var showSettings: Bool = false
     @State private var showSeasonSetup: Bool = false
+    @State private var showImportPicker: Bool = false
     @State private var showNextSeasonDialog: Bool = false
     @State private var showEndSeasonConfirm: Bool = false
     /// The archived-seasons list sheet and, once a card is tapped, the
@@ -135,6 +136,12 @@ struct SeasonInlineDetailView: View {
         .fullScreenCover(isPresented: $showSeasonSetup) {
             SeasonSetupFlowView()
         }
+        .sheet(isPresented: $showImportPicker) {
+            SeasonImportPickerView { plan, name in
+                store.startNewSeason(importing: plan, name: name)
+            }
+            .environment(store)
+        }
         .confirmationDialog(
             "Next season",
             isPresented: $showNextSeasonDialog,
@@ -143,8 +150,8 @@ struct SeasonInlineDetailView: View {
             Button("Start guided setup") {
                 showSeasonSetup = true
             }
-            Button("Carry this season's setup forward") {
-                store.startNewSeasonFromCurrent(name: nil)
+            Button("Choose what carries forward") {
+                showImportPicker = true
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -156,9 +163,12 @@ struct SeasonInlineDetailView: View {
             Button("End season & start setup", role: .destructive) {
                 showSeasonSetup = true
             }
+            Button("End season, keep what I choose") {
+                showImportPicker = true
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your score resets to zero and your current tasks and to-dos clear out. This season is saved to your history, then you'll shape the next one.")
+            Text("Your score resets to zero. Starting fresh clears your tasks and to-dos; choosing what to keep carries the ones you pick. Either way this season is saved to your history.")
         }
     }
 

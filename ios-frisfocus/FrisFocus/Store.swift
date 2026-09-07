@@ -3851,8 +3851,8 @@ extension Store {
             lengthDays: 60,
             startDate: Calendar.current.startOfDay(for: Date()),
             vibe: .warmForest,
-            dailyGoal: 50,
-            weeklyGoal: 350,
+            dailyGoal: Season.defaultDailyGoal,
+            weeklyGoal: Season.defaultWeeklyGoal,
             categories: [],
             milestones: []
         )
