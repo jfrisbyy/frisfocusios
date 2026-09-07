@@ -584,11 +584,36 @@ struct RubricReviewView: View {
             ForEach(draft.milestones) { milestone in
                 ruleRow(
                     name: milestone.name,
-                    detail: "one-time",
+                    // A staged destination has rungs, and the review
+                    // screen is the only place the whole season is
+                    // visible — showing "one-time" for a milestone that
+                    // quietly carries three steps means the person meets
+                    // them for the first time after locking in.
+                    detail: milestone.steps.isEmpty
+                        ? "one-time"
+                        : "one-time · \(milestone.steps.count) step\(milestone.steps.count == 1 ? "" : "s")",
                     value: "+\(milestone.value)",
                     valueColor: Theme.sunShadow
                 ) {
                     editingMilestone = milestone
+                }
+                ForEach(milestone.steps) { step in
+                    HStack(spacing: 8) {
+                        Text("↳")
+                            .font(.sans(11, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.35))
+                        Text(step.name)
+                            .font(.sans(12.5, weight: .regular))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                        Spacer()
+                        if step.value > 0 {
+                            Text("+\(step.value)")
+                                .font(.sans(12, weight: .regular))
+                                .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                        }
+                    }
+                    .padding(.leading, 18)
+                    .padding(.vertical, 2)
                 }
             }
             emptyLine("A task repeats and is scored often; a milestone is one-time and worth a lot.")

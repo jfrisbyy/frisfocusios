@@ -122,11 +122,26 @@ final class SeasonSetupViewModel {
         pendingPausedDays = snapshot.pausedDays > 0 ? snapshot.pausedDays : nil
         stage = .conversation
 
-        // If the saved conversation had already reached its rubric, the
-        // person was somewhere on the review or naming screens when they
-        // left. Rebuild the season from the assistant's own last turn —
+        // The saved board comes back first, because it is the one that
+        // carries the person's own corrections. Falling straight to the
+        // assistant's last turn would quietly reinstate the AI's
+        // original numbers over everything they had fixed.
+        if let savedDraft = snapshot.draft {
+            draft = savedDraft
+            suggestedName = snapshot.suggestedName
+            suggestedLengthDays = snapshot.suggestedLengthDays ?? 90
+            suggestedOpenEnded = snapshot.suggestedOpenEnded ?? false
+            suggestedEndDate = snapshot.suggestedEndDate
+            conversationDone = true
+            arcProgress = 1.0
+            stage = snapshot.stage == "naming" ? .naming : .review
+            return
+        }
+
+        // No saved board, but the conversation had already reached its
+        // rubric: rebuild it from the assistant's own last turn —
         // `content` is the canonical JSON the server returned — and put
-        // them back in front of it rather than in front of a finished
+        // them in front of it rather than in front of a finished
         // conversation with no way forward.
         guard let last = history.last(where: { $0.role == "assistant" }),
               let data = last.content.data(using: .utf8),
@@ -174,6 +189,12 @@ final class SeasonSetupViewModel {
         // holding nothing, and the next visit hid the Begin button behind
         // a destructive "Start fresh?" confirmation to protect it.
         guard userTurns > 0 else { return }
+        let stageName: String
+        switch stage {
+        case .review: stageName = "review"
+        case .naming: stageName = "naming"
+        default: stageName = "conversation"
+        }
         let snapshot = SetupConversationSnapshot(
             history: history,
             currentMessage: currentMessage,
@@ -183,7 +204,13 @@ final class SeasonSetupViewModel {
             teaching: teaching,
             arcProgress: arcProgress,
             userTurns: userTurns,
-            savedAt: Date()
+            savedAt: Date(),
+            draft: draft,
+            stage: stageName,
+            suggestedName: suggestedName,
+            suggestedLengthDays: suggestedLengthDays,
+            suggestedEndDate: suggestedEndDate,
+            suggestedOpenEnded: suggestedOpenEnded
         )
         SeasonSetupResumeStore.save(snapshot)
     }
@@ -268,6 +295,11 @@ final class SeasonSetupViewModel {
         guard var current = draft else { return }
         transform(&current)
         draft = current
+        // Every correction on the review screen is work, and it used to
+        // live only in memory: five minutes of fixing values, an OS
+        // memory kill, and the resume handed back the AI's ORIGINAL
+        // numbers with nothing saying the edits had existed.
+        saveProgress()
     }
 
     var draftBinding: RubricDraft {

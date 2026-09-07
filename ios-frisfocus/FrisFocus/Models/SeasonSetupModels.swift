@@ -184,6 +184,15 @@ nonisolated struct SetupConversationSnapshot: Codable, Sendable {
     var arcProgress: Double
     var userTurns: Int
     var savedAt: Date
+    /// The board as it stands, including every review-screen edit.
+    /// Optional so snapshots written before this decode cleanly.
+    var draft: RubricDraft? = nil
+    /// Which screen they were on: "conversation", "review", "naming".
+    var stage: String? = nil
+    var suggestedName: String? = nil
+    var suggestedLengthDays: Int? = nil
+    var suggestedEndDate: Date? = nil
+    var suggestedOpenEnded: Bool? = nil
 
     /// How long ago this was put down, phrased for the resume card, or
     /// nil when it was minutes ago and saying so would be noise.
@@ -225,13 +234,13 @@ nonisolated struct SetupConversationSnapshot: Codable, Sendable {
 
 // MARK: - Editable draft rubric (review screen)
 
-struct DraftCategory: Identifiable, Equatable {
+nonisolated struct DraftCategory: Identifiable, Equatable, Codable, Sendable {
     var id: UUID = UUID()
     var name: String
     var colorHex: String
 }
 
-struct DraftTask: Identifiable, Equatable {
+nonisolated struct DraftTask: Identifiable, Equatable, Codable, Sendable {
     var id: UUID = UUID()
     var name: String
     var categoryId: UUID
@@ -281,7 +290,7 @@ struct DraftTask: Identifiable, Equatable {
     }
 }
 
-struct DraftNegative: Identifiable, Equatable {
+nonisolated struct DraftNegative: Identifiable, Equatable, Codable, Sendable {
     var id: UUID = UUID()
     var name: String
     var shape: NegativeType = .perInstance
@@ -290,7 +299,7 @@ struct DraftNegative: Identifiable, Equatable {
     var freeCount: Int = 2
 }
 
-struct DraftBooster: Identifiable, Equatable {
+nonisolated struct DraftBooster: Identifiable, Equatable, Codable, Sendable {
     var id: UUID = UUID()
     var name: String
     var referenceName: String
@@ -302,7 +311,7 @@ struct DraftBooster: Identifiable, Equatable {
     var isManual: Bool = false
 }
 
-struct DraftWeeklyPenalty: Identifiable, Equatable {
+nonisolated struct DraftWeeklyPenalty: Identifiable, Equatable, Codable, Sendable {
     var id: UUID = UUID()
     var name: String
     var referenceName: String
@@ -311,13 +320,13 @@ struct DraftWeeklyPenalty: Identifiable, Equatable {
     var value: Int = 10
 }
 
-struct DraftMilestoneStep: Identifiable, Equatable {
+nonisolated struct DraftMilestoneStep: Identifiable, Equatable, Codable, Sendable {
     var id: UUID = UUID()
     var name: String
     var value: Int = 0
 }
 
-struct DraftMilestone: Identifiable, Equatable {
+nonisolated struct DraftMilestone: Identifiable, Equatable, Codable, Sendable {
     var id: UUID = UUID()
     var name: String
     var value: Int = 60
@@ -326,7 +335,15 @@ struct DraftMilestone: Identifiable, Equatable {
 
 /// The whole editable board. Mutated freely on the review screen, then
 /// frozen once via `Store.startSeason(from:...)`.
-struct RubricDraft: Equatable {
+/// The whole editable board.
+///
+/// `Codable` so review-screen edits can survive a force-quit. They used
+/// to live only in memory: someone could spend five minutes correcting
+/// values, get killed by the OS, resume — and find the AI's ORIGINAL
+/// numbers back, with nothing saying their corrections had ever
+/// existed. The conversation was recoverable; the work done on top of
+/// it was not.
+nonisolated struct RubricDraft: Equatable, Codable, Sendable {
     var dailyTarget: Int = 30
     var weeklyTarget: Int = 180
     var categories: [DraftCategory] = []
