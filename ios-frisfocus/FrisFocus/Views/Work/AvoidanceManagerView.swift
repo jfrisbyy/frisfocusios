@@ -292,6 +292,11 @@ private struct AvoidanceItemCard: View {
             return "\u{2212}\(item.pointsPerOccurrence) pts each time"
         case .frequencyThreshold:
             return "Free up to \(item.freeCount)/\(item.window.displayName) \u{00B7} \u{2212}\(item.pointsPerOccurrence) after"
+        case .tiered:
+            guard let first = item.tiers.first, let worst = item.tiers.last else {
+                return "\u{2212}\(item.pointsPerOccurrence) pts each time"
+            }
+            return "\u{2212}\(abs(first.points)) for one \u{00B7} \u{2212}\(abs(worst.points)) at \(worst.threshold)+ in a day"
         }
     }
 
@@ -418,6 +423,11 @@ private struct AvoidanceItemFormView: View {
     @State private var negativeType: NegativeType
     @State private var window: NegativeWindow
     @State private var freeCount: Int
+    /// The second step of a tiered negative. Two steps covers every
+    /// paired-row negative people actually keep by hand ("Alcohol" and
+    /// "Alcohol 2+"); the model holds as many as anyone wants.
+    @State private var escalateAt: Int
+    @State private var escalatedPoints: Int
 
     init(editing: AvoidanceItem?) {
         self.editing = editing
@@ -429,6 +439,9 @@ private struct AvoidanceItemFormView: View {
         _window = State(initialValue: editing?.window ?? .weekly)
         let existingFree = editing?.freeCount ?? 0
         _freeCount = State(initialValue: existingFree > 0 ? existingFree : 2)
+        let escalation = (editing?.tiers.count ?? 0) > 1 ? editing?.tiers.last : nil
+        _escalateAt = State(initialValue: escalation?.threshold ?? 2)
+        _escalatedPoints = State(initialValue: escalation.map { abs($0.points) } ?? 15)
     }
 
     var body: some View {
@@ -486,8 +499,34 @@ private struct AvoidanceItemFormView: View {
                         }
                     }
 
+                    if negativeType == .tiered {
+                        Stepper(value: $escalateAt, in: 2...10) {
+                            HStack {
+                                Text("Gets worse at")
+                                Spacer()
+                                Text("\(escalateAt)\u{00D7} a day")
+                                    .font(.serif(17, weight: .medium))
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                        }
+                        Stepper(value: $escalatedPoints, in: 1...80) {
+                            HStack {
+                                Text("Then it costs")
+                                Spacer()
+                                Text("\u{2212}\(escalatedPoints) pts")
+                                    .font(.serif(17, weight: .medium))
+                                    .foregroundStyle(Theme.alertRed)
+                            }
+                        }
+                    }
+
                     if negativeType == .frequencyThreshold {
                         Text(freqPreview)
+                            .font(.serifItalic(13))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                    }
+                    if negativeType == .tiered {
+                        Text(tieredPreview)
                             .font(.serifItalic(13))
                             .foregroundStyle(Theme.textPrimary.opacity(0.7))
                     }
@@ -548,7 +587,11 @@ private struct AvoidanceItemFormView: View {
     }
 
     private var costRowLabel: String {
-        negativeType == .frequencyThreshold ? "Past the limit" : "Per occurrence"
+        switch negativeType {
+        case .frequencyThreshold: return "Past the limit"
+        case .tiered: return "One in a day"
+        case .perInstance: return "Per occurrence"
+        }
     }
 
     private var costFooter: String {
@@ -557,11 +600,30 @@ private struct AvoidanceItemFormView: View {
             return "How many points each logged occurrence quietly deducts from your weekly total."
         case .frequencyThreshold:
             return "The free ones stay neutral \u{2014} they never cost points. Each occurrence past the limit deducts this from your \(window.displayName)ly total."
+        case .tiered:
+            return "One in a day costs the smaller amount. Reaching the next step replaces it with the bigger one \u{2014} it doesn't stack on top."
         }
     }
 
     private var freqPreview: String {
         "First \(freeCount) this \(window.displayName) are free \u{00B7} each one after is \u{2212}\(pointsPerOccurrence) pts."
+    }
+
+    private var tieredPreview: String {
+        let worse = max(escalatedPoints, pointsPerOccurrence)
+        return "One in a day is \u{2212}\(pointsPerOccurrence). At \(escalateAt) the day becomes \u{2212}\(worse) altogether \u{2014} not \u{2212}\(pointsPerOccurrence + worse)."
+    }
+
+    /// The tier list this editor describes, or empty for other shapes.
+    private var builtTiers: [NegativeTier] {
+        guard negativeType == .tiered else { return [] }
+        return [
+            NegativeTier(threshold: 1, points: pointsPerOccurrence),
+            // Never let the second step cost LESS than the first — a
+            // negative that gets cheaper the more you do it is not a
+            // thing anyone means.
+            NegativeTier(threshold: escalateAt, points: max(escalatedPoints, pointsPerOccurrence)),
+        ]
     }
 
     private func save() {
@@ -577,6 +639,7 @@ private struct AvoidanceItemFormView: View {
             updated.negativeType = negativeType
             updated.window = window
             updated.freeCount = freeCount
+            updated.tiers = builtTiers
             store.updateAvoidanceItem(updated)
         } else {
             store.addAvoidanceItem(
@@ -586,7 +649,8 @@ private struct AvoidanceItemFormView: View {
                 category: category,
                 negativeType: negativeType,
                 window: window,
-                freeCount: freeCount
+                freeCount: freeCount,
+                tiers: builtTiers
             )
         }
         dismiss()

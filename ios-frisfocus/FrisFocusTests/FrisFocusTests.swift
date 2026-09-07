@@ -507,3 +507,115 @@ struct MediaContainerTests {
         #expect(MediaContainer.quickTime.isVideo)
     }
 }
+
+// MARK: - Tiered negatives
+
+/// "One drink is minus three, two or more is minus fifteen" means
+/// fifteen ALTOGETHER, not eighteen. Kept by hand this is two paired
+/// rows, which is a trap: two independent items with no mutual
+/// exclusion charge both on the same night. These pin the arithmetic
+/// that replaced the pair.
+@Suite("Tiered negative totals")
+struct TieredNegativeTests {
+
+    /// Alcohol: −3 for one in a day, −15 once you reach two.
+    private var alcohol: AvoidanceItem {
+        AvoidanceItem(
+            name: "Alcohol",
+            pointsPerOccurrence: 3,
+            negativeType: .tiered,
+            tiers: [
+                NegativeTier(threshold: 1, points: 3),
+                NegativeTier(threshold: 2, points: 15),
+            ]
+        )
+    }
+
+    @Test("Nothing costs nothing")
+    func noOccurrences() {
+        #expect(alcohol.tieredTotal(for: 0) == 0)
+    }
+
+    @Test("The day's total is the highest tier reached, not the sum")
+    func totalsAreNotCumulative() {
+        #expect(alcohol.tieredTotal(for: 1) == 3)
+        // The trap: two paired rows would charge 3 + 15 = 18 here.
+        #expect(alcohol.tieredTotal(for: 2) == 15)
+    }
+
+    @Test("Staying inside a tier costs nothing more")
+    func withinTier() {
+        #expect(alcohol.tieredTotal(for: 3) == 15)
+        #expect(alcohol.tieredTotal(for: 9) == 15)
+    }
+
+    @Test("Each occurrence charges only the step up")
+    func marginalCharges() {
+        // What `avoidanceDeduction` computes: total(n) − total(n−1).
+        let marginal = (1...4).map { alcohol.tieredTotal(for: $0) - alcohol.tieredTotal(for: $0 - 1) }
+        #expect(marginal == [3, 12, 0, 0])
+        // And the running total always equals the tier, never the sum.
+        #expect(marginal.prefix(2).reduce(0, +) == 15)
+    }
+
+    @Test("A gap before the first tier is free")
+    func firstTierAboveOne() {
+        let item = AvoidanceItem(
+            name: "Takeout",
+            pointsPerOccurrence: 0,
+            negativeType: .tiered,
+            tiers: [NegativeTier(threshold: 3, points: 10)]
+        )
+        #expect(item.tieredTotal(for: 1) == 0)
+        #expect(item.tieredTotal(for: 2) == 0)
+        #expect(item.tieredTotal(for: 3) == 10)
+    }
+
+    @Test("Tiers are held in ascending order however they arrive")
+    func tiersSort() {
+        let item = AvoidanceItem(
+            name: "Folding",
+            pointsPerOccurrence: 8,
+            negativeType: .tiered,
+            tiers: [
+                NegativeTier(threshold: 2, points: 20),
+                NegativeTier(threshold: 1, points: 8),
+            ]
+        )
+        #expect(item.tiers.map(\.threshold) == [1, 2])
+        #expect(item.tieredTotal(for: 1) == 8)
+        #expect(item.tieredTotal(for: 2) == 20)
+    }
+
+    @Test("An empty tier list never charges")
+    func noTiers() {
+        let item = AvoidanceItem(name: "Unset", pointsPerOccurrence: 5, negativeType: .tiered)
+        #expect(item.tieredTotal(for: 4) == 0)
+    }
+
+    @Test("A descending tier list can never refund")
+    func neverNegative() {
+        // max(0, after − before) in avoidanceDeduction guards this; the
+        // totals themselves take the largest matching tier, so a badly
+        // ordered list still reads as its worst step.
+        let item = AvoidanceItem(
+            name: "Odd",
+            pointsPerOccurrence: 10,
+            negativeType: .tiered,
+            tiers: [
+                NegativeTier(threshold: 1, points: 10),
+                NegativeTier(threshold: 2, points: 4),
+            ]
+        )
+        #expect(item.tieredTotal(for: 2) == 10)
+        #expect(item.tieredTotal(for: 2) - item.tieredTotal(for: 1) == 0)
+    }
+
+    @Test("The other shapes keep no tiers")
+    func otherShapesUnaffected() {
+        let perInstance = AvoidanceItem(name: "Skip", pointsPerOccurrence: 4)
+        #expect(perInstance.negativeType == .perInstance)
+        #expect(perInstance.tiers.isEmpty)
+        #expect(perInstance.usesFreeAllowance == false)
+    }
+}

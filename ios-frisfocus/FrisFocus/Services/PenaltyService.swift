@@ -130,7 +130,8 @@ extension Store {
         category: Category? = nil,
         negativeType: NegativeType = .perInstance,
         window: NegativeWindow = .weekly,
-        freeCount: Int = 0
+        freeCount: Int = 0,
+        tiers: [NegativeTier] = []
     ) -> AvoidanceItem {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -142,7 +143,8 @@ extension Store {
             category: category,
             negativeType: negativeType,
             window: window,
-            freeCount: max(0, freeCount)
+            freeCount: max(0, freeCount),
+            tiers: tiers
         )
         avoidanceItems.append(item)
         persistAll()
@@ -244,6 +246,14 @@ extension Store {
                 : currentWeekInterval(reference: reference)
         case .perInstance:
             return currentWeekInterval(reference: reference)
+        case .tiered:
+            // A tiered negative escalates within a DAY — "two or more"
+            // means two or more tonight, not two or more this week — so
+            // its counter resets every morning.
+            let cal = Calendar.current
+            let start = cal.startOfDay(for: reference)
+            let end = cal.date(byAdding: .day, value: 1, to: start) ?? reference
+            return DateInterval(start: start, end: end)
         }
     }
 
@@ -263,6 +273,8 @@ extension Store {
     /// Free occurrences still available before deductions begin this
     /// window. Always 0 for per-instance items (no free allowance).
     func avoidanceFreeRemaining(for item: AvoidanceItem, reference: Date = Date()) -> Int {
+        // A tiered negative has no free allowance — the first one
+        // already costs, it just costs less than the second.
         guard item.negativeType == .frequencyThreshold else { return 0 }
         let used = avoidanceCountInWindow(for: item, reference: reference)
         return max(0, item.freeCount - used)
@@ -272,7 +284,7 @@ extension Store {
     /// points. Equals the full count for per-instance negatives.
     func avoidanceChargedCount(for item: AvoidanceItem, reference: Date = Date()) -> Int {
         switch item.negativeType {
-        case .perInstance:
+        case .perInstance, .tiered:
             return avoidanceCountInWindow(for: item, reference: reference)
         case .frequencyThreshold:
             return max(0, avoidanceCountInWindow(for: item, reference: reference) - item.freeCount)
@@ -289,7 +301,9 @@ extension Store {
     /// Points the next occurrence logged at `date` would cost given the
     /// shape and the count already inside the window. per-instance always
     /// charges the value; frequency-threshold charges 0 until the free
-    /// allowance is spent, then the full value for each one beyond it.
+    /// allowance is spent, then the full value for each one beyond it;
+    /// tiered charges only the DIFFERENCE between the tier this
+    /// occurrence reaches and the one already paid for.
     func avoidanceDeduction(for item: AvoidanceItem, at date: Date = Date()) -> Int {
         let value = abs(item.pointsPerOccurrence)
         switch item.negativeType {
@@ -303,6 +317,24 @@ extension Store {
             // This occurrence is at position priorCount + 1 (1-indexed):
             // free while that position is within the allowance.
             return (priorCount + 1) <= max(0, item.freeCount) ? 0 : value
+        case .tiered:
+            // "One drink is minus three, two or more is minus fifteen"
+            // means fifteen ALTOGETHER, not eighteen. So each occurrence
+            // charges the step up: the day's new total minus what has
+            // already been paid today. Reaching a tier costs the jump;
+            // a third drink inside the same tier costs nothing more.
+            //
+            // Expressing it as a per-occurrence delta rather than by
+            // rewriting the day's earlier entries means undo stays exact
+            // and the log keeps reading as a list of real events.
+            let interval = avoidanceWindowInterval(for: item, reference: date)
+            let priorCount = avoidanceOccurrences.filter {
+                $0.itemId == item.id && interval.contains($0.date)
+            }.count
+            let before = item.tieredTotal(for: priorCount)
+            let after = item.tieredTotal(for: priorCount + 1)
+            // A tier list that somehow descends can't refund points.
+            return max(0, after - before)
         }
     }
 }

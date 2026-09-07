@@ -369,11 +369,20 @@ struct HabitTrain: Codable, Identifiable, Equatable {
 enum NegativeType: String, Codable, Equatable, CaseIterable {
     case perInstance
     case frequencyThreshold
+    /// - `.tiered` — one slip is one thing, several in a day is another.
+    ///   The day's total is set by the highest tier it reaches, so a
+    ///   second drink doesn't add to the first, it REPLACES the charge
+    ///   with a bigger one. This is the shape people actually keep by
+    ///   hand as two paired rows ("Alcohol" and "Alcohol 2+"), which is
+    ///   a trap when modelled literally: two independent items with no
+    ///   mutual exclusion charge both on the same night.
+    case tiered
 
     var displayName: String {
         switch self {
         case .perInstance:        return "Every time"
         case .frequencyThreshold: return "In excess"
+        case .tiered:             return "Gets worse"
         }
     }
 
@@ -383,8 +392,23 @@ enum NegativeType: String, Codable, Equatable, CaseIterable {
             return "Bad every time \u{2014} each one costs points."
         case .frequencyThreshold:
             return "Fine in moderation \u{2014} free up to a limit, then it counts."
+        case .tiered:
+            return "One is one thing \u{2014} several in a day costs much more."
         }
     }
+}
+
+/// One step of a `.tiered` negative: at `threshold` occurrences in a
+/// day, the day's TOTAL charge becomes `points`.
+///
+/// Totals, not increments, because that is how people describe it —
+/// "one drink is minus three, two or more is minus fifteen" means
+/// fifteen altogether, not eighteen. The per-occurrence charge is the
+/// difference between the tier you just reached and the one you were
+/// on, which keeps the running total honest and keeps undo exact.
+struct NegativeTier: Codable, Equatable, Hashable {
+    var threshold: Int
+    var points: Int
 }
 
 /// The window over which a frequency-threshold negative's free allowance
@@ -432,14 +456,28 @@ struct AvoidanceItem: Codable, Identifiable, Equatable {
     /// How many occurrences are free inside the window before deductions
     /// begin. Ignored by `.perInstance`.
     var freeCount: Int = 0
+    /// The steps of a `.tiered` negative, lowest threshold first. Empty
+    /// for every other shape.
+    var tiers: [NegativeTier] = []
     var createdAt: Date = Date()
+
+    /// The day's total charge once `count` occurrences have happened —
+    /// the highest tier the count has reached, or nothing below the
+    /// first one.
+    func tieredTotal(for count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        return tiers
+            .filter { $0.threshold <= count }
+            .map { abs($0.points) }
+            .max() ?? 0
+    }
 
     // Backward-compatible decoding so avoidance items persisted before
     // `negativeType` / `window` / `freeCount` existed still hydrate.
     // Missing keys fall through to the property defaults.
     private enum CodingKeys: String, CodingKey {
         case id, name, pointsPerOccurrence, seasonId, note, category,
-             negativeType, window, freeCount, createdAt
+             negativeType, window, freeCount, tiers, createdAt
     }
 
     init(
@@ -452,6 +490,7 @@ struct AvoidanceItem: Codable, Identifiable, Equatable {
         negativeType: NegativeType = .perInstance,
         window: NegativeWindow = .weekly,
         freeCount: Int = 0,
+        tiers: [NegativeTier] = [],
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -463,6 +502,7 @@ struct AvoidanceItem: Codable, Identifiable, Equatable {
         self.negativeType = negativeType
         self.window = window
         self.freeCount = freeCount
+        self.tiers = tiers.sorted { $0.threshold < $1.threshold }
         self.createdAt = createdAt
     }
 
@@ -474,9 +514,15 @@ struct AvoidanceItem: Codable, Identifiable, Equatable {
         self.seasonId = try c.decodeIfPresent(UUID.self, forKey: .seasonId)
         self.note = try c.decodeIfPresent(String.self, forKey: .note)
         self.category = try c.decodeIfPresent(Category.self, forKey: .category)
-        self.negativeType = try c.decodeIfPresent(NegativeType.self, forKey: .negativeType) ?? .perInstance
+        // Read the shape through its raw string: a value written by a
+        // newer build degrades to the flat every-time shape instead of
+        // throwing away the whole item.
+        let rawType = (try? c.decodeIfPresent(String.self, forKey: .negativeType)) ?? nil
+        self.negativeType = rawType.flatMap(NegativeType.init(rawValue:)) ?? .perInstance
         self.window = try c.decodeIfPresent(NegativeWindow.self, forKey: .window) ?? .weekly
         self.freeCount = try c.decodeIfPresent(Int.self, forKey: .freeCount) ?? 0
+        self.tiers = ((try? c.decodeIfPresent([NegativeTier].self, forKey: .tiers)) ?? nil ?? [])
+            .sorted { $0.threshold < $1.threshold }
         self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 
@@ -491,6 +537,7 @@ struct AvoidanceItem: Codable, Identifiable, Equatable {
         try c.encode(negativeType, forKey: .negativeType)
         try c.encode(window, forKey: .window)
         try c.encode(freeCount, forKey: .freeCount)
+        try c.encode(tiers, forKey: .tiers)
         try c.encode(createdAt, forKey: .createdAt)
     }
 }
