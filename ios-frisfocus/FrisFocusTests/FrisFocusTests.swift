@@ -699,8 +699,8 @@ struct WeeklyRuleShapeTests {
 @Suite("Area slots")
 struct CategorySlotTests {
 
-    private func slot(_ name: String, taken: Set<Category> = []) -> Category {
-        Category.bestSlot(for: name, avoiding: taken)
+    private func slot(_ name: String, taken: Set<FrisFocus.Category> = []) -> FrisFocus.Category {
+        FrisFocus.Category.bestSlot(for: name, avoiding: taken)
     }
 
     @Test("An area lands in the slot its own name means")
@@ -724,9 +724,9 @@ struct CategorySlotTests {
 
     @Test("Two areas never take the same slot")
     func slotsAreNotShared() {
-        var taken: Set<Category> = []
+        var taken: Set<FrisFocus.Category> = []
         for name in ["Fitness", "Basketball", "Faith", "Work"] {
-            let assigned = Category.bestSlot(for: name, avoiding: taken)
+            let assigned = FrisFocus.Category.bestSlot(for: name, avoiding: taken)
             #expect(!taken.contains(assigned))
             taken.insert(assigned)
         }
@@ -735,7 +735,7 @@ struct CategorySlotTests {
 
     @Test("A name nothing matches still gets a slot")
     func unmatchedStillLands() {
-        let taken: Set<Category> = [.spiritual, .fitness]
+        let taken: Set<FrisFocus.Category> = [.spiritual, .fitness]
         let assigned = slot("Zzzz", taken: taken)
         #expect(!taken.contains(assigned))
     }
@@ -745,7 +745,7 @@ struct CategorySlotTests {
         // The commit path caps at eight areas, so this is unreachable
         // there — but a function that can return nothing has to be
         // proved not to.
-        _ = Category.bestSlot(for: "anything", avoiding: Set(Category.allCases))
+        _ = FrisFocus.Category.bestSlot(for: "anything", avoiding: Set(FrisFocus.Category.allCases))
     }
 }
 
