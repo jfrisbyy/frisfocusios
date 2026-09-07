@@ -331,6 +331,10 @@ struct SetupRuleEditSheet: View {
     let name: String
     let reference: String
     let threshold: Int
+    /// Whether `threshold` counts days in the week or a weekly total of
+    /// the task's own units. The editor is unusable for a `.sum` rule
+    /// without knowing this.
+    let metric: BoosterMetric
     let value: Int
     let valueLabel: String
     let taskNames: [String]
@@ -357,12 +361,30 @@ struct SetupRuleEditSheet: View {
                             Text(taskName).tag(taskName)
                         }
                     }
-                    Stepper(value: $editedThreshold, in: 1...7) {
+                    // A day count lives in 1...7; a weekly TOTAL does
+                    // not. This stepper was pinned to 1...7 and labelled
+                    // "Times per week", so a rule the conversation built
+                    // as "150,000 steps" could not be seen, let alone
+                    // edited — the first tap would have silently rewritten
+                    // it to 7.
+                    if metric == .sum {
                         HStack {
-                            Text("Times per week")
+                            Text("Weekly total")
                             Spacer()
-                            Text("\(editedThreshold)×")
+                            TextField("0", value: $editedThreshold, format: .number)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
                                 .font(.serif(16, weight: .medium))
+                                .frame(maxWidth: 120)
+                        }
+                    } else {
+                        Stepper(value: $editedThreshold, in: 1...7) {
+                            HStack {
+                                Text("Days per week")
+                                Spacer()
+                                Text("\(editedThreshold)×")
+                                    .font(.serif(16, weight: .medium))
+                            }
                         }
                     }
                     Stepper(value: $editedValue, in: 1...50) {

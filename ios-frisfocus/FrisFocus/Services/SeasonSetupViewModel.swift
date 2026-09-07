@@ -364,8 +364,17 @@ final class SeasonSetupViewModel {
                 // this same turn.
                 saveProgress()
             } else {
-                // Glide up a step per exchange; never quite crest early.
-                arcProgress = min(0.92, 0.06 + Double(userTurns + 1) * 0.085)
+                // Glide up per exchange, easing toward the crest instead
+                // of marching into it. The old step was a flat 0.085 with
+                // a 0.92 clamp, which pinned the orb from the tenth user
+                // turn onward — so a season deep enough to need twenty
+                // turns spent more than half its length behind a progress
+                // indicator that had visibly stopped moving, exactly when
+                // the person most needed to believe it was going
+                // somewhere. Asymptotic approach never stalls and never
+                // promises an ending it can't keep.
+                let turns = Double(userTurns + 1)
+                arcProgress = 0.06 + (0.92 - 0.06) * (1 - pow(0.86, turns))
                 // Quietly keep progress after every successful exchange.
                 saveProgress()
             }

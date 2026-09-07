@@ -125,6 +125,7 @@ struct RubricReviewView: View {
                 name: booster.name,
                 reference: booster.referenceName,
                 threshold: booster.threshold,
+                metric: booster.metric,
                 value: booster.value,
                 valueLabel: "Bonus points",
                 taskNames: draft.tasks.map(\.name),
@@ -161,6 +162,7 @@ struct RubricReviewView: View {
                 name: penalty.name,
                 reference: penalty.referenceName,
                 threshold: penalty.threshold,
+                metric: penalty.metric,
                 value: penalty.value,
                 valueLabel: "Deduction",
                 taskNames: draft.tasks.map(\.name),
@@ -527,7 +529,9 @@ struct RubricReviewView: View {
             ForEach(draft.boosters) { booster in
                 ruleRow(
                     name: booster.name,
-                    detail: "\(booster.threshold)× · \(booster.referenceName)",
+                    detail: booster.metric == .sum
+                        ? "\(booster.threshold) total · \(booster.referenceName)"
+                        : "\(booster.threshold)× · \(booster.referenceName)",
                     value: "+\(booster.value)",
                     valueColor: Theme.alertGreen
                 ) {
@@ -551,7 +555,9 @@ struct RubricReviewView: View {
             ForEach(draft.weeklyPenalties) { penalty in
                 ruleRow(
                     name: penalty.name,
-                    detail: "fewer than \(penalty.threshold)× · \(penalty.referenceName)",
+                    detail: penalty.metric == .sum
+                        ? "under \(penalty.threshold) total · \(penalty.referenceName)"
+                        : "fewer than \(penalty.threshold)× · \(penalty.referenceName)",
                     value: "−\(penalty.value)",
                     valueColor: Theme.alertAmber
                 ) {

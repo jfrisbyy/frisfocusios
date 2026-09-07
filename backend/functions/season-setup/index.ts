@@ -29,7 +29,24 @@ const corsHeaders = {
 const MODEL = "~anthropic/claude-opus-latest";
 const MAX_MESSAGES = 80;
 const MAX_TOTAL_CHARS = 200_000;
-const MAX_OUTPUT_TOKENS = 6_000;
+/**
+ * The ceiling on the single completion that carries the whole season.
+ *
+ * This was 6,000, and that number — not the prompt, not the model — was
+ * the real cap on how deep a season could get. A reference-scale rubric
+ * (58 tasks, 30 boosters, 9 floors, 21 milestones) pretty-printed in the
+ * style of this prompt's own exemplars runs about 21,000 characters,
+ * which is 5,300-6,600 tokens BEFORE the closing message shares the same
+ * budget. So the deepest seasons were the ones most likely to be cut off
+ * mid-JSON — and truncation here is unrecoverable: `parseModelJSON`
+ * slices brace-to-brace and fails, the single retry re-runs the same
+ * over-cap generation, and the person loses a fifteen-minute
+ * conversation to "the AI returned an unreadable answer".
+ *
+ * Raising the density guidance without raising this would have made that
+ * strictly more likely. Depth had to be paid for here first.
+ */
+const MAX_OUTPUT_TOKENS = 16_000;
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -194,6 +211,7 @@ Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outsid
 }
 
 RULES for the rubric JSON:
+- Emit the rubric as COMPACT JSON — no indentation, no line breaks inside it, no spaces after colons or commas. The example above is spaced only so you can read it. A deep season is a large object and the whole reply must fit in one response; whitespace is the cheapest thing to give up and the closing message shares the same budget.
 - 2–8 categories; every category needs at least one task; each category color_hint is one of the hex values above.
 - scoring_type is exactly one of: "binary" (use "value"), "tiered" (use "unit" + "tiers" array of {threshold, points}), "increment" (use "unit", "base_threshold", "base_points", "unit_size", "points_per_unit").
 - EVERY daily task also carries "est_minutes": your best-guess realistic minutes it takes to actually do (gym session ≈ 60, a 2-minute habit ≈ 2, a work block ≈ 90). This is used only for invisible internal calibration — never mentioned to the user.
@@ -337,7 +355,11 @@ function validateRubric(r: WireRubric): WireRubric {
       color_hint: /^#[0-9A-Fa-f]{6}$/.test(c.color_hint ?? "") ? c.color_hint : "#7F77DD",
       tasks: c.tasks
         .filter((t) => t && typeof t.name === "string" && t.name.trim().length > 0)
-        .slice(0, 20)
+        // Was 20, undocumented, and silently truncating. A single live
+        // domain in a full season runs to 13 or 14 items; leaving a
+        // little room above that costs nothing and turns a silent loss
+        // into an impossible one.
+        .slice(0, 30)
         .map((t) => {
           const shape = ["binary", "tiered", "increment"].includes(t.scoring_type) ? t.scoring_type : "binary";
           const task: WireTask = { name: t.name.trim().slice(0, 60), scoring_type: shape };
