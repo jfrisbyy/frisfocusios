@@ -458,7 +458,10 @@ nonisolated struct RubricDraft: Equatable, Codable, Sendable {
 
         negatives = (wire.negatives ?? []).map { wireNegative in
             let tiers = (wireNegative.tiers ?? [])
-                .map { NegativeTier(threshold: max(1, $0.threshold), points: max(1, $0.points)) }
+                // A task tier's threshold is a measurement (7.5 hours of
+                // sleep); a negative's is a COUNT of occurrences in a
+                // day, and the two share one wire type.
+                .map { NegativeTier(threshold: max(1, Int($0.threshold.rounded())), points: max(1, $0.points)) }
                 .sorted { $0.threshold < $1.threshold }
             let shape: NegativeType = {
                 switch wireNegative.negativeType {
