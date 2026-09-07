@@ -283,6 +283,97 @@ nonisolated struct DraftTask: Identifiable, Equatable, Codable, Sendable {
     /// Optional, so a draft saved before this decodes unchanged.
     var estimatedMinutes: Int? = nil
 
+    // MARK: Day shape
+    //
+    // Which days this sits on the board, and where in the day it sits.
+    // Both are DERIVED from what the season already says — a booster
+    // reading "three gym days" is a statement that the gym happens three
+    // days a week — and then corrected by hand on the shaping screen.
+    // Neither is ever interviewed for.
+
+    /// Weekdays (1 = Sunday … 7 = Saturday) this is on the board.
+    /// Empty means every day.
+    var days: Set<Int> = []
+    /// Where in the day it sits. `.anytime` is the tray, not a band.
+    var partOfDay: PartOfDay = .anytime
+
+    /// True when this is on the board every day.
+    var isEveryDay: Bool { days.isEmpty || days.count >= 7 }
+
+    /// How often this happens, for a one-line readout.
+    var cadenceText: String {
+        if isEveryDay { return "every day" }
+        if days.count == 1, let only = days.first { return DraftTask.weekdayName(only) }
+        return "\(days.count) days a week"
+    }
+
+    /// Full weekday name for a 1...7 index.
+    static func weekdayName(_ weekday: Int) -> String {
+        let symbols = Calendar.current.weekdaySymbols
+        let index = weekday - 1
+        return symbols.indices.contains(index) ? symbols[index] : ""
+    }
+
+    // Synthesized `Decodable` throws on a missing key for anything that
+    // isn't Optional, so a draft saved before the day shape existed
+    // would fail to decode and take the whole resumed conversation with
+    // it. Every new non-optional field has to be read defensively.
+    enum CodingKeys: String, CodingKey {
+        case id, name, categoryId, shape, value, unit, tiers
+        case baseThreshold, basePoints, unitSize, pointsPerUnit
+        case estimatedMinutes, days, partOfDay
+    }
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        categoryId: UUID,
+        shape: ScoringType = .flat,
+        value: Int = 3,
+        unit: String = "",
+        tiers: [ScoreTier] = [],
+        baseThreshold: Double = 1,
+        basePoints: Int = 3,
+        unitSize: Double = 1,
+        pointsPerUnit: Int = 1,
+        estimatedMinutes: Int? = nil,
+        days: Set<Int> = [],
+        partOfDay: PartOfDay = .anytime
+    ) {
+        self.id = id
+        self.name = name
+        self.categoryId = categoryId
+        self.shape = shape
+        self.value = value
+        self.unit = unit
+        self.tiers = tiers
+        self.baseThreshold = baseThreshold
+        self.basePoints = basePoints
+        self.unitSize = unitSize
+        self.pointsPerUnit = pointsPerUnit
+        self.estimatedMinutes = estimatedMinutes
+        self.days = days
+        self.partOfDay = partOfDay
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.name = try c.decode(String.self, forKey: .name)
+        self.categoryId = try c.decode(UUID.self, forKey: .categoryId)
+        self.shape = try c.decodeIfPresent(ScoringType.self, forKey: .shape) ?? .flat
+        self.value = try c.decodeIfPresent(Int.self, forKey: .value) ?? 3
+        self.unit = try c.decodeIfPresent(String.self, forKey: .unit) ?? ""
+        self.tiers = try c.decodeIfPresent([ScoreTier].self, forKey: .tiers) ?? []
+        self.baseThreshold = try c.decodeIfPresent(Double.self, forKey: .baseThreshold) ?? 1
+        self.basePoints = try c.decodeIfPresent(Int.self, forKey: .basePoints) ?? 3
+        self.unitSize = try c.decodeIfPresent(Double.self, forKey: .unitSize) ?? 1
+        self.pointsPerUnit = try c.decodeIfPresent(Int.self, forKey: .pointsPerUnit) ?? 1
+        self.estimatedMinutes = try c.decodeIfPresent(Int.self, forKey: .estimatedMinutes)
+        self.days = try c.decodeIfPresent(Set<Int>.self, forKey: .days) ?? []
+        self.partOfDay = try c.decodeIfPresent(PartOfDay.self, forKey: .partOfDay) ?? .anytime
+    }
+
     /// Headline points for the row readout (top tier / base / flat value).
     var headlineValue: Int {
         switch shape {
@@ -366,6 +457,80 @@ nonisolated struct DraftNegative: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
+/// A block of time committed before anything is chosen to fill it — the
+/// job, a class, the standing Tuesday call. The season scores showing up
+/// to the block; what happens inside is recorded, not re-scored.
+///
+/// This is the one thing the conversation cannot derive. Everything else
+/// on the shaping screen is read back out of the rubric; when someone's
+/// day actually sits at a set time, only they know it.
+nonisolated struct DraftBucket: Identifiable, Equatable, Codable, Sendable {
+    var id: UUID = UUID()
+    var title: String
+    /// The draft category this belongs to, matched to a slot at commit.
+    var categoryId: UUID
+    var value: Int = 5
+    /// Minutes from midnight. Nil means "no clock, just a band".
+    var startMinutes: Int? = nil
+    var endMinutes: Int? = nil
+    var partOfDay: PartOfDay = .morning
+    /// Weekdays it runs. Empty means every day.
+    var days: Set<Int> = []
+    /// Things that fit the block, offered when honoring it.
+    var candidates: [String] = []
+
+    var isEveryDay: Bool { days.isEmpty || days.count >= 7 }
+
+    /// "7:00–8:00 AM", or nil when the block has no clock.
+    var timeText: String? {
+        guard let startMinutes else { return nil }
+        return TimeWindow(
+            startMinutes: startMinutes,
+            endMinutes: max(endMinutes ?? startMinutes + 60, startMinutes)
+        ).displayText
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, categoryId, value, startMinutes, endMinutes
+        case partOfDay, days, candidates
+    }
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        categoryId: UUID,
+        value: Int = 5,
+        startMinutes: Int? = nil,
+        endMinutes: Int? = nil,
+        partOfDay: PartOfDay = .morning,
+        days: Set<Int> = [],
+        candidates: [String] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.categoryId = categoryId
+        self.value = value
+        self.startMinutes = startMinutes
+        self.endMinutes = endMinutes
+        self.partOfDay = partOfDay
+        self.days = days
+        self.candidates = candidates
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.title = try c.decode(String.self, forKey: .title)
+        self.categoryId = try c.decode(UUID.self, forKey: .categoryId)
+        self.value = try c.decodeIfPresent(Int.self, forKey: .value) ?? 5
+        self.startMinutes = try c.decodeIfPresent(Int.self, forKey: .startMinutes)
+        self.endMinutes = try c.decodeIfPresent(Int.self, forKey: .endMinutes)
+        self.partOfDay = try c.decodeIfPresent(PartOfDay.self, forKey: .partOfDay) ?? .morning
+        self.days = try c.decodeIfPresent(Set<Int>.self, forKey: .days) ?? []
+        self.candidates = try c.decodeIfPresent([String].self, forKey: .candidates) ?? []
+    }
+}
+
 nonisolated struct DraftBooster: Identifiable, Equatable, Codable, Sendable {
     var id: UUID = UUID()
     var name: String
@@ -419,9 +584,32 @@ nonisolated struct RubricDraft: Equatable, Codable, Sendable {
     var boosters: [DraftBooster] = []
     var weeklyPenalties: [DraftWeeklyPenalty] = []
     var milestones: [DraftMilestone] = []
+    /// Blocks of committed time. Empty until someone names one.
+    var buckets: [DraftBucket] = []
 
     func tasks(in category: DraftCategory) -> [DraftTask] {
         tasks.filter { $0.categoryId == category.id }
+    }
+
+    // A draft saved before buckets existed has no key for them, and
+    // synthesized `Decodable` throws on that rather than falling back to
+    // the default — which would lose the whole resumed conversation.
+    enum CodingKeys: String, CodingKey {
+        case dailyTarget, weeklyTarget, categories, tasks, negatives
+        case boosters, weeklyPenalties, milestones, buckets
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.dailyTarget = try c.decodeIfPresent(Int.self, forKey: .dailyTarget) ?? 30
+        self.weeklyTarget = try c.decodeIfPresent(Int.self, forKey: .weeklyTarget) ?? 180
+        self.categories = try c.decodeIfPresent([DraftCategory].self, forKey: .categories) ?? []
+        self.tasks = try c.decodeIfPresent([DraftTask].self, forKey: .tasks) ?? []
+        self.negatives = try c.decodeIfPresent([DraftNegative].self, forKey: .negatives) ?? []
+        self.boosters = try c.decodeIfPresent([DraftBooster].self, forKey: .boosters) ?? []
+        self.weeklyPenalties = try c.decodeIfPresent([DraftWeeklyPenalty].self, forKey: .weeklyPenalties) ?? []
+        self.milestones = try c.decodeIfPresent([DraftMilestone].self, forKey: .milestones) ?? []
+        self.buckets = try c.decodeIfPresent([DraftBucket].self, forKey: .buckets) ?? []
     }
 
     // MARK: From the wire
@@ -536,6 +724,12 @@ nonisolated struct RubricDraft: Equatable, Codable, Sendable {
                 }
             )
         }
+
+        // The week the season already describes. Every signal this reads
+        // was confirmed out loud during the conversation; the commit
+        // path used to discard all of it and pin the whole board to
+        // every day.
+        deriveDayShape()
     }
 
     // MARK: Starter (skip fallback)
@@ -574,6 +768,9 @@ nonisolated struct RubricDraft: Equatable, Codable, Sendable {
         ]
         draft.dailyTarget = 12
         draft.weeklyTarget = 72
+        // The starter board gets the same treatment as a conversation's:
+        // "Move four days" means four days here too.
+        draft.deriveDayShape()
         return draft
     }
 }

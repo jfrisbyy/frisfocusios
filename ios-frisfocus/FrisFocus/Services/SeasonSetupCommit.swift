@@ -168,15 +168,13 @@ extension Store {
                 // board built from a fifteen-minute interview arrived
                 // with nothing for the agenda to lay a day out with.
                 estimatedMinutes: draftTask.estimatedMinutes,
-                // The board the conversation just built IS the daily
-                // board, and every task used to be created unpinned —
-                // so the season opened, the person tapped "See today",
-                // and found an empty plan after fifteen minutes of
-                // being interviewed about their own life. Nothing in
-                // the flow mentions pinning, and the setup prompt is
-                // explicitly forbidden from raising it, so there was
-                // no path from a finished season to a usable day.
-                pinSchedule: .daily,
+                // The week the season describes. Unpinned left the plan
+                // empty the morning after a fifteen-minute interview;
+                // pinning everything to every day replaced that with a
+                // wall. Both were guesses standing in for the frequency
+                // the rubric had been stating all along — a booster
+                // reading "three gym days" is three days a week.
+                pinSchedule: draftTask.isEveryDay ? .daily : .daysOfWeek(draftTask.days),
                 scoring: scoring
             )
             // Weekly floor referencing this task → attached penalty rule.
@@ -197,6 +195,10 @@ extension Store {
                 }
             task.penalty = floors.first
             task.extraPenalties = Array(floors.dropFirst())
+            // Where in the day it sits. `.anytime` is the tray, which is
+            // the honest answer for most of a board — the agenda bands
+            // hold what someone actually placed.
+            task.partOfDay = draftTask.partOfDay
             taskIdByName[draftTask.name.lowercased()] = task.id
             newTasks.append(task)
         }
@@ -239,6 +241,33 @@ extension Store {
                 threshold: booster.isManual ? 1 : max(1, booster.threshold),
                 period: .week,
                 bonusPoints: max(1, booster.value)
+            )
+        }
+
+        // Blocks of committed time. These are the one part of the day
+        // shape the conversation cannot derive — it is forbidden from
+        // asking when anything happens — so they exist only because
+        // someone named them on the shaping screen.
+        let newBuckets: [Bucket] = draft.buckets.compactMap { draftBucket in
+            guard let slot = slotByDraftId[draftBucket.categoryId] ?? seasonCategories.first?.category else {
+                return nil
+            }
+            let window: TimeWindow? = draftBucket.startMinutes.map { start in
+                TimeWindow(
+                    startMinutes: start,
+                    endMinutes: max(draftBucket.endMinutes ?? start + 60, start)
+                )
+            }
+            return Bucket(
+                title: draftBucket.title,
+                category: slot,
+                pointValue: max(1, draftBucket.value),
+                timeWindow: window,
+                // A block with a real clock is placed by it; one without
+                // floats in the band it was given.
+                partOfDay: window == nil ? draftBucket.partOfDay : .anytime,
+                pinSchedule: draftBucket.isEveryDay ? .daily : .daysOfWeek(draftBucket.days),
+                candidateTitles: draftBucket.candidates
             )
         }
 
@@ -287,6 +316,7 @@ extension Store {
         todos = []
         avoidanceItems = newNegatives
         boosters = newBoosters
+        buckets = newBuckets
         persistAll()
         // Cancel any milestone reminders left pending from the finished
         // season and schedule only the new season's milestone nudges, so
@@ -418,15 +448,13 @@ extension Store {
                 // board built from a fifteen-minute interview arrived
                 // with nothing for the agenda to lay a day out with.
                 estimatedMinutes: draftTask.estimatedMinutes,
-                // The board the conversation just built IS the daily
-                // board, and every task used to be created unpinned —
-                // so the season opened, the person tapped "See today",
-                // and found an empty plan after fifteen minutes of
-                // being interviewed about their own life. Nothing in
-                // the flow mentions pinning, and the setup prompt is
-                // explicitly forbidden from raising it, so there was
-                // no path from a finished season to a usable day.
-                pinSchedule: .daily,
+                // The week the season describes. Unpinned left the plan
+                // empty the morning after a fifteen-minute interview;
+                // pinning everything to every day replaced that with a
+                // wall. Both were guesses standing in for the frequency
+                // the rubric had been stating all along — a booster
+                // reading "three gym days" is three days a week.
+                pinSchedule: draftTask.isEveryDay ? .daily : .daysOfWeek(draftTask.days),
                 scoring: scoring
             )
             // Every floor referencing this task, not just the first.
@@ -446,6 +474,10 @@ extension Store {
                 }
             task.penalty = floors.first
             task.extraPenalties = Array(floors.dropFirst())
+            // Where in the day it sits. `.anytime` is the tray, which is
+            // the honest answer for most of a board — the agenda bands
+            // hold what someone actually placed.
+            task.partOfDay = draftTask.partOfDay
             taskIdByName[draftTask.name.lowercased()] = task.id
             newTasks.append(task)
         }
@@ -515,6 +547,30 @@ extension Store {
         let requested = max(1, draft.dailyTarget)
         let dailyGoal = everythingInADay > 0 ? min(requested, everythingInADay) : requested
 
+        // Blocks of committed time — the one part of the day shape the
+        // conversation cannot derive, so they exist only because someone
+        // named them on the shaping screen.
+        let newBuckets: [Bucket] = draft.buckets.compactMap { draftBucket in
+            guard let slot = slotByDraftId[draftBucket.categoryId] ?? seasonCategories.first?.category else {
+                return nil
+            }
+            let window: TimeWindow? = draftBucket.startMinutes.map { start in
+                TimeWindow(
+                    startMinutes: start,
+                    endMinutes: max(draftBucket.endMinutes ?? start + 60, start)
+                )
+            }
+            return Bucket(
+                title: draftBucket.title,
+                category: slot,
+                pointValue: max(1, draftBucket.value),
+                timeWindow: window,
+                partOfDay: window == nil ? draftBucket.partOfDay : .anytime,
+                pinSchedule: draftBucket.isEveryDay ? .daily : .daysOfWeek(draftBucket.days),
+                candidateTitles: draftBucket.candidates
+            )
+        }
+
         var season = currentSeason
         season.name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? season.name : name
         season.lengthDays = max(1, lengthDays)
@@ -533,6 +589,7 @@ extension Store {
         tasks = newTasks
         avoidanceItems = newNegatives
         boosters = newBoosters
+        buckets = newBuckets
         persistAll()
         MilestoneNudgeService.refresh(for: season)
         republishSeasonCardNow()

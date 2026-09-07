@@ -797,3 +797,185 @@ struct DraftDecodingTests {
         #expect(back.value == 15)
     }
 }
+
+// MARK: - Deriving a week from the season
+//
+// The bug: the commit path decided when everything happened by ignoring
+// the question. Unpinned gave an empty plan the morning after a
+// fifteen-minute interview; pinned-to-every-day gave a fifty-eight row
+// wall. The season had been stating its own frequency the whole time —
+// a booster reading "three gym days" IS three days a week — and both
+// guesses talked over it.
+
+@Suite("Day shape")
+struct DayShapeTests {
+
+    private let categoryId = UUID()
+
+    private func task(_ name: String, value: Int = 5, minutes: Int? = nil) -> DraftTask {
+        DraftTask(
+            name: name,
+            categoryId: categoryId,
+            shape: .flat,
+            value: value,
+            estimatedMinutes: minutes
+        )
+    }
+
+    private func booster(_ reference: String, metric: BoosterMetric, threshold: Int) -> DraftBooster {
+        DraftBooster(
+            name: "b",
+            referenceName: reference,
+            metric: metric,
+            threshold: threshold,
+            value: 10
+        )
+    }
+
+    private func floor(_ reference: String, metric: BoosterMetric, threshold: Int) -> DraftWeeklyPenalty {
+        DraftWeeklyPenalty(
+            name: "f",
+            referenceName: reference,
+            metric: metric,
+            threshold: threshold,
+            value: 10
+        )
+    }
+
+    // MARK: Spreading
+
+    @Test("A count becomes that many days, spread across the week")
+    func weekdaysSpread() {
+        #expect(RubricDraft.weekdays(count: 3).count == 3)
+        #expect(RubricDraft.weekdays(count: 5).count == 5)
+        // Empty is the every-day sentinel, so seven and above collapse.
+        #expect(RubricDraft.weekdays(count: 7).isEmpty)
+        #expect(RubricDraft.weekdays(count: 9).isEmpty)
+        #expect(RubricDraft.weekdays(count: 0).isEmpty)
+    }
+
+    @Test("Three days are spread, not clustered")
+    func threeDaysAreNotConsecutive() {
+        // Nobody who says "three gym days" means Monday, Tuesday,
+        // Wednesday — a clustered guess is one someone has to undo.
+        let days = RubricDraft.weekdays(count: 3).sorted()
+        #expect(days == [2, 4, 6])
+        for (a, b) in zip(days, days.dropFirst()) {
+            #expect(b - a > 1)
+        }
+    }
+
+    // MARK: What the season states
+
+    @Test("A day-count booster sets the frequency")
+    func boosterStatesFrequency() {
+        let gym = task("Gym session", value: 8, minutes: 60)
+        let days = RubricDraft.derivedDays(
+            for: gym,
+            boosters: [booster("Gym session", metric: .days, threshold: 3)],
+            floors: []
+        )
+        #expect(days.count == 3)
+    }
+
+    @Test("A weekly total has to be reachable every day")
+    func sumBoosterIsEveryDay() {
+        let steps = task("Steps", value: 4, minutes: 30)
+        let days = RubricDraft.derivedDays(
+            for: steps,
+            boosters: [booster("Steps", metric: .sum, threshold: 150_000)],
+            floors: []
+        )
+        #expect(days.isEmpty)
+    }
+
+    @Test("A floor is a lower bound, and the higher signal wins")
+    func floorRaisesFrequency() {
+        let run = task("A proper run", value: 5, minutes: 40)
+        // Booster says two, floor says four — four is the binding one.
+        let days = RubricDraft.derivedDays(
+            for: run,
+            boosters: [booster("A proper run", metric: .days, threshold: 2)],
+            floors: [floor("A proper run", metric: .days, threshold: 4)]
+        )
+        #expect(days.count == 4)
+    }
+
+    @Test("The worst-day layer is reachable on the worst day")
+    func floorItemsAreEveryDay() {
+        // A one-point item only means anything if it's there on the day
+        // everything goes wrong.
+        #expect(RubricDraft.derivedDays(for: task("Take the stairs", value: 1, minutes: 3),
+                                        boosters: [], floors: []).isEmpty)
+        #expect(RubricDraft.derivedDays(for: task("Walk the dog", value: 2, minutes: 20),
+                                        boosters: [], floors: []).isEmpty)
+    }
+
+    @Test("With nothing stated, length stands in for frequency")
+    func durationFallback() {
+        // The only guess in the derivation, and it only runs when the
+        // rubric is silent.
+        #expect(RubricDraft.derivedDays(for: task("Long block", value: 6, minutes: 120),
+                                        boosters: [], floors: []).count == 3)
+        #expect(RubricDraft.derivedDays(for: task("Medium", value: 5, minutes: 60),
+                                        boosters: [], floors: []).count == 4)
+        #expect(RubricDraft.derivedDays(for: task("Short", value: 4, minutes: 30),
+                                        boosters: [], floors: []).count == 5)
+        #expect(RubricDraft.derivedDays(for: task("Tiny", value: 4, minutes: 5),
+                                        boosters: [], floors: []).isEmpty)
+    }
+
+    @Test("A stated frequency beats the duration guess")
+    func statedBeatsGuessed() {
+        // A two-hour thing would fall to three days on length alone.
+        let long = task("Studio session", value: 8, minutes: 120)
+        let days = RubricDraft.derivedDays(
+            for: long,
+            boosters: [booster("Studio session", metric: .days, threshold: 6)],
+            floors: []
+        )
+        #expect(days.count == 6)
+    }
+
+    // MARK: Bands
+
+    @Test("Bands are only assigned where the shape is obvious")
+    func bandsAreShy() {
+        // A tiny anchor at the top of a day, and the one heavy effort
+        // after it. Everything else stays in the tray rather than being
+        // placed somewhere the app guessed.
+        #expect(RubricDraft.derivedBand(for: task("Make the bed", value: 1, minutes: 3)) == .morning)
+        #expect(RubricDraft.derivedBand(for: task("Gym session", value: 8, minutes: 60)) == .evening)
+        #expect(RubricDraft.derivedBand(for: task("Read 10 pages", value: 3, minutes: 20)) == .anytime)
+        // No estimate at all is not a reason to place something.
+        #expect(RubricDraft.derivedBand(for: task("Unknown", value: 1)) == .anytime)
+    }
+
+    // MARK: End to end
+
+    @Test("Deriving a draft leaves the season's own numbers intact")
+    func derivingWholeDraft() {
+        var draft = RubricDraft.starter()
+        draft.deriveDayShape()
+        // "Move four days" is a booster on the starter board.
+        let move = draft.tasks.first { $0.name == "Move for 30 minutes" }
+        #expect(move?.days.count == 4)
+        #expect(move?.isEveryDay == false)
+        #expect(move?.cadenceText == "4 days a week")
+        // A two-point anchor stays available every day.
+        let meal = draft.tasks.first { $0.name == "Real meal, not grabbed" }
+        #expect(meal?.isEveryDay == true)
+        #expect(meal?.cadenceText == "every day")
+    }
+
+    @Test("Every task is placed somewhere, and nothing is lost")
+    func derivingLosesNothing() {
+        let before = RubricDraft.starter()
+        var after = before
+        after.deriveDayShape()
+        #expect(after.tasks.count == before.tasks.count)
+        #expect(after.boosters.count == before.boosters.count)
+        #expect(after.negatives.count == before.negatives.count)
+        #expect(after.dailyTarget == before.dailyTarget)
+    }
+}

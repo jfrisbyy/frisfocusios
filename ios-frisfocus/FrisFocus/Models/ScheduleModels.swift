@@ -28,7 +28,11 @@ import Foundation
 /// `TimeWindow`: a task with a window is a hard anchor placed at its
 /// real time; a task with only a `partOfDay` floats in that band as
 /// "~morning"; a task with neither lives in the Anytime tray.
-enum PartOfDay: String, Codable, CaseIterable, Identifiable, Hashable {
+/// `nonisolated` because the season-setup draft carries one, and the
+/// draft is encoded off the main actor so review-screen edits survive a
+/// force-quit. A main-actor conformance reached from there is a warning
+/// today and an error in the Swift 6 language mode.
+nonisolated enum PartOfDay: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
     case morning
     case afternoon
     case evening
