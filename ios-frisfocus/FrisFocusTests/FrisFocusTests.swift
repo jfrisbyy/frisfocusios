@@ -722,6 +722,16 @@ struct CategorySlotTests {
         #expect(slot("keeping the place from falling apart") == .apartment)
     }
 
+    @Test("A keyword buried inside a longer word is not a match")
+    func noSubstringMatches() {
+        // The trap this suite was written for: raw `contains` filed
+        // "falling apart" under Creative, because it holds "art".
+        #expect(slot("falling apart") != .creative)
+        #expect(slot("for a reason") != .people)      // "son"
+        #expect(slot("a grunt of effort") != .fitness) // "run"
+        #expect(slot("total recall") != .people)       // "call"
+    }
+
     @Test("Two areas never take the same slot")
     func slotsAreNotShared() {
         var taken: Set<FrisFocus.Category> = []

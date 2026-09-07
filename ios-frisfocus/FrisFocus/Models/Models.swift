@@ -81,7 +81,8 @@ extension Category {
         case .creative:  return ["creativ", "write", "writing", "music", "art", "draw", "paint",
                                  "design", "film", "video", "photo", "piano", "beat", "make", "craft"]
         case .apartment: return ["apartment", "home", "house", "flat", "clean", "chore", "upkeep",
-                                 "space", "tidy", "laundry", "admin", "errand", "life"]
+                                 "space", "tidy", "laundry", "admin", "errand", "life",
+                                 "place", "dish", "room", "kitchen", "garden", "car"]
         case .learning:  return ["learn", "study", "school", "class", "course", "exam", "language",
                                  "read", "french", "spanish", "certif", "skill", "practice", "revision"]
         case .people:    return ["people", "friend", "family", "relationship", "social", "connect",
@@ -107,15 +108,26 @@ extension Category {
     /// never collide; when nothing matches, or the best match is taken,
     /// the first free slot is used exactly as before.
     static func bestSlot(for name: String, avoiding taken: Set<Category>) -> Category {
-        let needle = name.lowercased()
         let free = Category.allCases.filter { !taken.contains($0) }
         guard !free.isEmpty else { return .health }
+
+        // Match WORDS, not raw substrings. A plain `contains` filed
+        // "keeping the place from falling apart" under Creative, because
+        // "falling apart" contains "art" — and it would have done the
+        // same to any area whose name happens to hold "run" inside
+        // "grunt" or "son" inside "reason". Keywords are stems, so a
+        // word that STARTS with one is a match ("training" for "train",
+        // "languages" for "language") and a word that merely contains
+        // one is not.
+        let words = name.lowercased().split { !$0.isLetter }.map(String.init)
+        guard !words.isEmpty else { return free[0] }
 
         // Longest keyword wins, so "reading group" prefers `.learning`
         // over a stray short match elsewhere.
         var best: (slot: Category, score: Int)? = nil
         for slot in free {
-            for keyword in slot.slotKeywords where needle.contains(keyword) {
+            for keyword in slot.slotKeywords {
+                guard words.contains(where: { $0.hasPrefix(keyword) }) else { continue }
                 if best == nil || keyword.count > best!.score {
                     best = (slot, keyword.count)
                 }
