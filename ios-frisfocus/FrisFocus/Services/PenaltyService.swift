@@ -102,8 +102,15 @@ extension Store {
             }
 
             let hasEntry = logEntries.contains(where: matches)
-            // Mid-week, a neglect floor may only let go, never bite.
-            let mayCharge = pass == .weekClose || rule.condition == .moreThan
+            // Each pass owns exactly one condition. Mid-week a neglect
+            // floor may only let go, never bite; at week close only the
+            // neglect floor is judged, because an over-limit rule was
+            // already charged live inside that week and re-deciding it
+            // against a legacy entry the rule-id marker cannot claim
+            // would charge the same week twice.
+            let mayCharge = pass == .weekClose
+                ? rule.condition == .lessThan
+                : rule.condition == .moreThan
             if breached && !hasEntry && mayCharge {
                 logEntries.append(
                     LogEntry(
