@@ -101,6 +101,9 @@ nonisolated struct SetupWireTask: Codable, Sendable {
     let basePoints: Int?
     let unitSize: Double?
     let pointsPerUnit: Int?
+    /// Realistic minutes to actually do it — the model's estimate, used
+    /// to lay out a day.
+    let estMinutes: Int?
 
     enum CodingKeys: String, CodingKey {
         case name, value, unit, tiers
@@ -109,6 +112,7 @@ nonisolated struct SetupWireTask: Codable, Sendable {
         case basePoints = "base_points"
         case unitSize = "unit_size"
         case pointsPerUnit = "points_per_unit"
+        case estMinutes = "est_minutes"
     }
 }
 
@@ -275,6 +279,9 @@ nonisolated struct DraftTask: Identifiable, Equatable, Codable, Sendable {
     var basePoints: Int = 3
     var unitSize: Double = 1
     var pointsPerUnit: Int = 1
+    /// Roughly how long this takes, when the conversation estimated it.
+    /// Optional, so a draft saved before this decodes unchanged.
+    var estimatedMinutes: Int? = nil
 
     /// Headline points for the row readout (top tier / base / flat value).
     var headlineValue: Int {
@@ -432,6 +439,7 @@ nonisolated struct RubricDraft: Equatable, Codable, Sendable {
             categories.append(category)
             for wireTask in wireCategory.tasks {
                 var task = DraftTask(name: wireTask.name, categoryId: category.id)
+                task.estimatedMinutes = wireTask.estMinutes.map { max(1, $0) }
                 switch wireTask.scoringType {
                 case "tiered":
                     task.shape = .tiered

@@ -163,6 +163,11 @@ extension Store {
                 title: draftTask.name,
                 category: slot,
                 pointValue: max(1, draftTask.value),
+                // The conversation estimates how long everything takes
+                // and the estimate was thrown away at the door, so a
+                // board built from a fifteen-minute interview arrived
+                // with nothing for the agenda to lay a day out with.
+                estimatedMinutes: draftTask.estimatedMinutes,
                 // The board the conversation just built IS the daily
                 // board, and every task used to be created unpinned —
                 // so the season opened, the person tapped "See today",
@@ -408,6 +413,11 @@ extension Store {
                 title: draftTask.name,
                 category: slot,
                 pointValue: max(1, draftTask.value),
+                // The conversation estimates how long everything takes
+                // and the estimate was thrown away at the door, so a
+                // board built from a fifteen-minute interview arrived
+                // with nothing for the agenda to lay a day out with.
+                estimatedMinutes: draftTask.estimatedMinutes,
                 // The board the conversation just built IS the daily
                 // board, and every task used to be created unpinned —
                 // so the season opened, the person tapped "See today",

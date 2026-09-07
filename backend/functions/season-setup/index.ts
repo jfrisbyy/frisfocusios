@@ -436,8 +436,16 @@ function validateRubric(r: WireRubric): WireRubric {
               habitual: t.already_habitual === true,
             });
           }
-          // est_minutes is a server-only calibration signal — not part of the
-          // returned task, so the wire shape matches the app's decode contract.
+          // `est_minutes` used to be dropped here as a server-only
+          // signal, so a fifty-eight task board arrived with no idea how
+          // long anything takes and the agenda had nothing to lay a day
+          // out with. The app decodes it optionally, so echoing it is
+          // additive; `already_habitual` stays server-side, because a
+          // task labelled "you already do this" is a judgement the
+          // person never asked for.
+          if (typeof t.est_minutes === "number" && Number.isFinite(t.est_minutes)) {
+            task.est_minutes = clamp(t.est_minutes, 1, 600);
+          }
           return task;
         }),
     }))
