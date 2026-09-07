@@ -482,15 +482,22 @@ final class NotesSyncService {
     /// Upload any not-yet-synced media for a note. Returns false when
     /// an upload failed (the note stays queued and retries later).
     private func uploadMedia(for note: Note, userId: String) async -> Bool {
-        var pairs: [(filename: String, contentType: String)] = []
+        // `assumed` is nil for voice memos: their `audio/mp4` label is
+        // already correct, and an `M4A ` brand would sniff as video.
+        var pairs: [(filename: String, contentType: String, assumed: MediaContainer?)] = []
         for memo in note.voiceMemos {
-            pairs.append((memo.filename, "audio/mp4"))
+            pairs.append((memo.filename, "audio/mp4", nil))
         }
         for photo in note.photos {
-            pairs.append((photo.filename, photo.kind == .video ? "video/mp4" : "image/jpeg"))
+            let isVideo = photo.kind == .video
+            pairs.append((
+                photo.filename,
+                isVideo ? "video/mp4" : "image/jpeg",
+                isVideo ? .mp4 : .jpeg
+            ))
         }
 
-        for (filename, contentType) in pairs where !uploadedMedia.contains(filename) {
+        for (filename, declaredType, assumed) in pairs where !uploadedMedia.contains(filename) {
             let local = Self.documentsDirectory.appendingPathComponent(filename)
             guard let data = try? Data(contentsOf: local) else {
                 // File missing locally (e.g. cleaned up) — skip rather
@@ -498,6 +505,24 @@ final class NotesSyncService {
                 uploadedMedia.insert(filename)
                 continue
             }
+
+            // A clip the server will never accept can't be retried into
+            // success. Leaving it in the queue meant one oversized video
+            // stalled EVERY note's text sync forever, because this loop
+            // returns false on failure and the note stays queued.
+            guard data.count <= VideoTranscoder.maxUploadBytes else {
+                Log.notesSync.error("media too large to upload, skipping: \(filename)")
+                uploadedMedia.insert(filename)
+                continue
+            }
+
+            // Declare the real container. The kind flag says what the
+            // user made, not what the bytes became — a clip that failed
+            // transcode is still QuickTime and was being sent as MP4.
+            let contentType = assumed.map {
+                MediaContainer.forUpload(data, assuming: $0).contentType
+            } ?? declaredType
+
             do {
                 try await StorageUploadClient.upload(
                     data: data,
@@ -509,6 +534,11 @@ final class NotesSyncService {
                 uploadedMedia.insert(filename)
             } catch StorageUploadError.badResponse(let status) where status == 409 {
                 // Already in the bucket from a previous attempt.
+                uploadedMedia.insert(filename)
+            } catch StorageUploadError.badResponse(let status) where status == 413 {
+                // The server refused it on size. Same reasoning as the
+                // ceiling check above: retrying can't shrink the file.
+                Log.notesSync.error("media rejected as too large: \(filename)")
                 uploadedMedia.insert(filename)
             } catch {
                 Log.notesSync.error("media upload failed for \(filename): \(error)")

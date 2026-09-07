@@ -101,7 +101,7 @@ struct ProofThreadView: View {
                 mode: .generalPost,
                 liveProofRecipientName: friend.displayName,
                 onSendLiveProof: { data, isVideo, duration, caption in
-                    await message.sendProof(
+                    return await message.sendProof(
                         to: friend.id,
                         data: data,
                         mediaKind: isVideo ? .video : .photo,

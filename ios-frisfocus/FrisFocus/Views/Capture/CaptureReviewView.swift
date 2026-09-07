@@ -397,7 +397,10 @@ struct CaptureReviewView: View {
     /// local store) and hides the audience chooser. `liveProofRecipientName`
     /// labels the fixed destination chip.
     var liveProofRecipientName: String? = nil
-    var onSendLiveProof: ((_ data: Data, _ isVideo: Bool, _ duration: Double?, _ caption: String?) async -> Void)? = nil
+    /// Returns whether the proof actually went. It used to return Void,
+    /// so the caller announced "Proof sent to X" unconditionally —
+    /// including when the send had been refused.
+    var onSendLiveProof: ((_ data: Data, _ isVideo: Bool, _ duration: Double?, _ caption: String?) async -> Bool)? = nil
     /// When resuming a saved draft, this carries the restored filter,
     /// captions, stickers, and drawing back onto the canvas. Non-nil also
     /// marks the session as draft-backed (posting or discarding clears
@@ -467,6 +470,11 @@ struct CaptureReviewView: View {
     @State private var audience: ShareAudience = .initial
     @State private var showAudiencePanel: Bool = false
     @State private var sentToast: String? = nil
+    /// Something went wrong on the way out. The view had ONLY a success
+    /// toast, so every failure below — unresolvable video bytes, a
+    /// refused send — returned in silence and the person was left
+    /// looking at an editor that had apparently done nothing.
+    @State private var postFailure: String? = nil
 
     // Attach flow — the composed proof kept around after posting so it
     // can land on a milestone's journey or a note (where it outlives
@@ -676,12 +684,16 @@ struct CaptureReviewView: View {
             if let sentToast {
                 sentToastView(sentToast)
             }
+            if let postFailure {
+                postFailureView(postFailure)
+            }
         }
         .animation(.easeInOut(duration: 0.18), value: isEditing)
         .animation(.easeInOut(duration: 0.18), value: activeBlockId)
         .animation(.easeInOut(duration: 0.18), value: isDraggingBlock)
         .animation(.easeInOut(duration: 0.2), value: isDrawing)
         .animation(.easeInOut(duration: 0.2), value: sentToast)
+        .animation(.easeInOut(duration: 0.2), value: postFailure)
     }
 
     /// Builds the downscaled display / chip bases off the main thread,
@@ -1776,6 +1788,45 @@ struct CaptureReviewView: View {
         .allowsHitTesting(attachChipVisible)
     }
 
+    /// The counterpart to `sentToastView` for the paths that DIDN'T
+    /// work. Deliberately not self-clearing: a success can fade because
+    /// the sheet is closing behind it, but a failure has to survive
+    /// until the person reads it, so it waits for a tap.
+    private func postFailureView(_ text: String) -> some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 9) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.alertRed)
+                Text(text)
+                    .font(.sans(14, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 13)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(hex: 0x1E1C1B).opacity(0.97))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Theme.alertRed.opacity(0.35), lineWidth: 0.8)
+            )
+            .shadow(color: Color.black.opacity(0.4), radius: 14, y: 6)
+            .padding(.horizontal, 28)
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { postFailure = nil }
+        .transition(.scale(scale: 0.94).combined(with: .opacity))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(text)
+        .accessibilityHint("Double-tap to dismiss")
+    }
+
     /// The quiet post-confirmation invitation — pin the proof somewhere
     /// it outlives the 24h story. Skippable; the editor auto-closes if
     /// it's ignored.
@@ -2149,10 +2200,14 @@ struct CaptureReviewView: View {
         // Snapchat-style outbound compression: capped-quality H.264 in an
         // .mp4 container, optimized for network streaming.
         if let compressed = await VideoTranscoder.compressForUpload(sourceURL: sourceURL),
-           let data = try? Data(contentsOf: compressed) {
+           let data = try? Data(contentsOf: compressed), !data.isEmpty {
             return data
         }
-        return try? Data(contentsOf: sourceURL)
+        // Transcode declined or failed — fall back to the raw recording.
+        // An empty file is NOT a fallback: returning zero bytes here got
+        // uploaded as the person's proof.
+        guard let raw = try? Data(contentsOf: sourceURL), !raw.isEmpty else { return nil }
+        return raw
     }
 
     /// For photos we flatten the filtered image + caption + drawing layers
@@ -2242,16 +2297,38 @@ struct CaptureReviewView: View {
                 duration = dur
             }
 
+            // A video that produced no bytes must never reach a post.
+            // `store.postMedia(imageData: nil, type: .video, ...)` used
+            // to succeed cheerfully, creating a caption-only story with
+            // no video in it, skipping the proof library, and showing
+            // the success toast anyway — the proof was simply gone.
+            if mediaType == .video, mediaData?.isEmpty != false {
+                postFailure = "That clip couldn't be prepared. Nothing was posted — try again."
+                isPosting = false
+                return
+            }
+
             // Live Proofs: send to exactly one real account and skip the
             // local store entirely. Requires real media bytes.
             if let onSendLiveProof {
-                guard let mediaData else { isPosting = false; return }
-                await onSendLiveProof(
+                guard let mediaData else {
+                    postFailure = "That proof couldn't be prepared. Nothing was sent."
+                    isPosting = false
+                    return
+                }
+                let sent = await onSendLiveProof(
                     mediaData,
                     mediaType == .video,
                     duration,
                     captionToSend.isEmpty ? nil : captionToSend
                 )
+                guard sent else {
+                    // Do NOT clear the draft and do NOT dismiss: the
+                    // proof still exists and the person can try again.
+                    postFailure = "That proof didn't send. It's still here — try again."
+                    isPosting = false
+                    return
+                }
                 withAnimation(.easeOut(duration: 0.2)) {
                     sentToast = "Proof sent to \(liveProofRecipientName ?? "your friend")"
                 }

@@ -597,6 +597,14 @@ final class MessageGraphService {
     /// Capture a proof: upload the media privately, then write the row.
     /// The media lands under a stable per-pair folder so storage RLS lets
     /// only the two participants read it.
+    ///
+    /// Returns whether the proof was handed off to the thread. `false`
+    /// means it was refused outright and left no trace anywhere, so the
+    /// sender is the only one who can retry it; `true` means a pill
+    /// exists in the thread — confirmed, or failed with tap-to-retry,
+    /// which owns the retry from that point on. The capture sheet used
+    /// to announce "Proof sent" for the refusal case too.
+    @discardableResult
     func sendProof(
         to recipientId: String,
         data: Data,
@@ -605,7 +613,7 @@ final class MessageGraphService {
         caption: String?,
         myUserId: String,
         preUploadedPath: String? = nil
-    ) async {
+    ) async -> Bool {
         isWorking = true
         defer { isWorking = false }
 
@@ -615,14 +623,19 @@ final class MessageGraphService {
         guard data.count <= VideoTranscoder.maxUploadBytes else {
             isWorking = false
             fail("That clip is too large to send. Try a shorter one.", StorageUploadError.badResponse(status: 413))
-            return
+            return false
         }
 
         // A retry whose first attempt already landed the bytes reuses
         // that storage object — no re-upload, no orphaned first copy.
-        let path = preUploadedPath ?? Self.mediaPath(myUserId: myUserId, recipientId: recipientId, kind: mediaKind)
+        // Declare what the bytes really are. The capture pipeline falls
+        // back to the raw QuickTime recording whenever transcoding
+        // fails, and those clips were stored as `.mp4` under
+        // `video/mp4` regardless of what was actually sent.
+        let container = MediaContainer.forUpload(data, assuming: mediaKind == .video ? .mp4 : .jpeg)
+        let path = preUploadedPath ?? Self.mediaPath(myUserId: myUserId, recipientId: recipientId, container: container)
         var uploadCompleted = preUploadedPath != nil
-        let contentType = mediaKind == .video ? "video/mp4" : "image/jpeg"
+        let contentType = container.contentType
         let trimmedCaption = caption?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Optimistic pill: "You sent a proof" appears in the thread the
@@ -680,6 +693,7 @@ final class MessageGraphService {
                 .value
             confirmOptimistic(tempId: temp.id, with: created)
             PushService.send(to: recipientId, kind: .proof, preview: trimmedCaption, messageId: created.id.uuidString)
+            return true
         } catch {
             Log.messageGraph.error("Proof send failed: \(error)")
             uploadProgress = nil
@@ -691,16 +705,20 @@ final class MessageGraphService {
                 caption: trimmedCaption,
                 uploadedPath: uploadCompleted ? path : nil
             ), myUserId: myUserId)
+            // The pill is in the thread with "Tap to retry" and mirrored
+            // to disk, so the send is recoverable there. Reporting a
+            // failure here too would put a second retry button on the
+            // same proof and invite a duplicate send.
+            return true
         }
     }
 
     /// A stable, per-pair storage path: `{idA}/{idB}/{uuid}.{ext}` with
     /// the ids sorted so both participants resolve the same folder.
-    private static func mediaPath(myUserId: String, recipientId: String, kind: ProofMediaKind) -> String {
+    private static func mediaPath(myUserId: String, recipientId: String, container: MediaContainer) -> String {
         let a = min(myUserId, recipientId)
         let b = max(myUserId, recipientId)
-        let ext = kind == .video ? "mp4" : "jpg"
-        return "\(a)/\(b)/\(UUID().uuidString).\(ext)"
+        return "\(a)/\(b)/\(UUID().uuidString).\(container.fileExtension)"
     }
 
     private func appendIfNew(_ row: DirectMessageRow) {

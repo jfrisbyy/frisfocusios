@@ -210,8 +210,8 @@ struct ProofsInboxView: View {
                 mode: .generalPost,
                 liveProofRecipientName: friend.displayName,
                 onSendLiveProof: { data, isVideo, duration, caption in
-                    guard let myId else { return }
-                    await message.sendProof(
+                    guard let myId else { return false }
+                    return await message.sendProof(
                         to: friend.id,
                         data: data,
                         mediaKind: isVideo ? .video : .photo,

@@ -12,6 +12,29 @@
 import Foundation
 import Supabase
 
+// MARK: - Upload refusals
+
+/// Why a story couldn't be sent. These are thrown rather than silently
+/// tolerated because the alternative — inserting the `story_posts` row
+/// with a null `media_path` — publishes a caption-only post the person
+/// never composed and can't tell apart from a successful one.
+nonisolated enum StoryUploadError: LocalizedError {
+    /// The post references an asset whose local file is missing, empty,
+    /// or unreadable.
+    case mediaUnavailable
+    /// The clip is over the upload ceiling even after transcoding.
+    case mediaTooLarge
+
+    var errorDescription: String? {
+        switch self {
+        case .mediaUnavailable:
+            return String(localized: "That photo or clip couldn't be read from this device.")
+        case .mediaTooLarge:
+            return String(localized: "That clip is too large to post. Try a shorter one.")
+        }
+    }
+}
+
 // MARK: - Wire rows
 
 nonisolated struct StoryPostRow: Codable, Sendable {
@@ -523,17 +546,35 @@ extension SocialSyncService {
         do {
             var mediaPath: String?
             var mediaKind: String?
-            if let asset, let local = asset.resolvedLocalURL,
-               let data = try? Data(contentsOf: local) {
-                let ext = asset.type == .photo ? "jpg" : "mov"
-                let contentType = asset.type == .photo ? "image/jpeg" : "video/quicktime"
-                let path = "\(myUserId)/\(post.id.uuidString.lowercased()).\(ext)"
+            if let asset {
+                // A story WITH an attached asset must not post without
+                // it. This used to be one long `if let` chain, so an
+                // unreadable local file just fell through to a
+                // caption-only row on the server — the person's video
+                // was gone and the post looked like it had worked.
+                guard let local = asset.resolvedLocalURL,
+                      let data = try? Data(contentsOf: local), !data.isEmpty else {
+                    throw StoryUploadError.mediaUnavailable
+                }
+                guard data.count <= VideoTranscoder.maxUploadBytes else {
+                    throw StoryUploadError.mediaTooLarge
+                }
+                // Declare what the bytes actually are. The extension and
+                // content type were pinned to QuickTime for every video,
+                // but the capture pipeline transcodes to MP4 before it
+                // gets here — so every story clip was being stored under
+                // a container it wasn't in.
+                let container = MediaContainer.forUpload(
+                    data,
+                    assuming: asset.type == .photo ? .jpeg : .quickTime
+                )
+                let path = "\(myUserId)/\(post.id.uuidString.lowercased()).\(container.fileExtension)"
                 do {
                     try await StorageUploadClient.upload(
                         data: data,
                         bucket: "stories",
                         path: path,
-                        contentType: contentType,
+                        contentType: container.contentType,
                         onProgress: { _ in }
                     )
                 } catch StorageUploadError.badResponse(let status) where status == 409 {

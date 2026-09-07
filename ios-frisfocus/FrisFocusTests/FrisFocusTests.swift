@@ -414,3 +414,96 @@ struct AvatarObjectPathTests {
             from: url("avatars/user-abc"), myUserId: me) == nil)
     }
 }
+
+// MARK: - Media container sniffing
+
+/// Every upload site used to derive its content type from the caller's
+/// intent, so a clip that fell back to the raw QuickTime recording was
+/// stored as `.mp4` under `video/mp4`. These cases pin the magic-byte
+/// reading that replaced that guess.
+@Suite("Media container sniffing")
+struct MediaContainerTests {
+
+    /// Build a synthetic header: a 4-byte box length, a box type, and
+    /// (for `ftyp`) a major brand — then pad past the 12-byte minimum.
+    private func header(box: String, brand: String? = nil) -> Data {
+        var bytes: [UInt8] = [0x00, 0x00, 0x00, 0x20]
+        bytes += Array(box.utf8)
+        if let brand { bytes += Array(brand.utf8) } else { bytes += [0, 0, 0, 0] }
+        bytes += Array(repeating: 0, count: 16)
+        return Data(bytes)
+    }
+
+    @Test("An MP4 brand reads as MP4")
+    func mp4Brand() {
+        #expect(MediaContainer.sniff(header(box: "ftyp", brand: "isom")) == .mp4)
+        #expect(MediaContainer.sniff(header(box: "ftyp", brand: "mp42")) == .mp4)
+    }
+
+    @Test("The QuickTime brand is not mistaken for MP4")
+    func quickTimeBrand() {
+        // AVCaptureMovieFileOutput writes `ftyp` with a `qt  ` brand —
+        // the exact case that was being uploaded as `video/mp4`.
+        #expect(MediaContainer.sniff(header(box: "ftyp", brand: "qt  ")) == .quickTime)
+    }
+
+    @Test("A brandless QuickTime atom still reads as QuickTime")
+    func classicQuickTime() {
+        #expect(MediaContainer.sniff(header(box: "moov")) == .quickTime)
+        #expect(MediaContainer.sniff(header(box: "mdat")) == .quickTime)
+    }
+
+    @Test("JPEG and PNG are recognized")
+    func stillImages() {
+        var jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0])
+        jpeg.append(Data(repeating: 0, count: 12))
+        #expect(MediaContainer.sniff(jpeg) == .jpeg)
+
+        var png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        png.append(Data(repeating: 0, count: 8))
+        #expect(MediaContainer.sniff(png) == .png)
+    }
+
+    @Test("Too-short and unrecognized data sniff to nothing")
+    func unknownData() {
+        #expect(MediaContainer.sniff(Data([0x01, 0x02, 0x03])) == nil)
+        #expect(MediaContainer.sniff(Data()) == nil)
+        #expect(MediaContainer.sniff(Data(repeating: 0x5A, count: 64)) == nil)
+    }
+
+    @Test("A slice keeps its parent's indices without crashing")
+    func slicedData() {
+        // `Data` slices keep the parent's index range, so reading
+        // `data[4]` on a slice starting at 100 traps. The sniffer must
+        // survive being handed one.
+        let padded = Data(repeating: 0xAB, count: 100) + header(box: "ftyp", brand: "qt  ")
+        #expect(MediaContainer.sniff(padded.dropFirst(100)) == .quickTime)
+    }
+
+    @Test("An unreadable blob keeps the caller's assumption")
+    func fallsBackToAssumption() {
+        let junk = Data(repeating: 0x5A, count: 64)
+        #expect(MediaContainer.forUpload(junk, assuming: .mp4) == .mp4)
+        #expect(MediaContainer.forUpload(junk, assuming: .jpeg) == .jpeg)
+    }
+
+    @Test("A sniff never flips a video upload into an image, or back")
+    func neverCrossesMediaClass() {
+        // If a photo's bytes somehow sniff as video, something upstream
+        // is broken; honouring the sniff would only hide it.
+        var jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0])
+        jpeg.append(Data(repeating: 0, count: 12))
+        #expect(MediaContainer.forUpload(jpeg, assuming: .mp4) == .mp4)
+        #expect(MediaContainer.forUpload(header(box: "ftyp", brand: "qt  "), assuming: .jpeg) == .jpeg)
+    }
+
+    @Test("The declared type and extension always agree")
+    func typesAndExtensionsAgree() {
+        #expect(MediaContainer.mp4.contentType == "video/mp4")
+        #expect(MediaContainer.mp4.fileExtension == "mp4")
+        #expect(MediaContainer.quickTime.contentType == "video/quicktime")
+        #expect(MediaContainer.quickTime.fileExtension == "mov")
+        #expect(MediaContainer.jpeg.isVideo == false)
+        #expect(MediaContainer.quickTime.isVideo)
+    }
+}

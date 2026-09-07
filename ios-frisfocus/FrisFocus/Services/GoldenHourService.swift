@@ -556,9 +556,13 @@ final class GoldenHourService {
         isWorking = true
         defer { isWorking = false }
 
-        let ext = mediaKind == .video ? "mp4" : "jpg"
-        let contentType = mediaKind == .video ? "video/mp4" : "image/jpeg"
-        let path = "\(circleId.uuidString.lowercased())/\(moment.day)/\(myUserId)-\(UUID().uuidString).\(ext)"
+        // Declare what the bytes really are: the capture pipeline falls
+        // back to the raw QuickTime recording whenever transcoding
+        // fails, and those clips were being stored as `.mp4` under
+        // `video/mp4` regardless.
+        let container = MediaContainer.forUpload(data, assuming: mediaKind == .video ? .mp4 : .jpeg)
+        let contentType = container.contentType
+        let path = "\(circleId.uuidString.lowercased())/\(moment.day)/\(myUserId)-\(UUID().uuidString).\(container.fileExtension)"
         let secondsToSpare = max(0, Int(moment.captureClosesAt.timeIntervalSince(now)))
 
         do {

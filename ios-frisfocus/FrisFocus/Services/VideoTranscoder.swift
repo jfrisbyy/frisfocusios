@@ -45,14 +45,28 @@ nonisolated enum VideoTranscoder {
             try await session.export(to: outputURL, as: .mp4)
         } catch {
             Log.videoTranscoder.error("Export failed: \(error)")
+            try? FileManager.default.removeItem(at: outputURL)
             return nil
         }
 
-        // Sanity check: only hand back the compressed file when it's a
-        // real win (or at least not larger than the original).
         let originalSize = fileSize(at: sourceURL)
         let compressedSize = fileSize(at: outputURL)
-        if compressedSize > 0, originalSize > 0, compressedSize > originalSize {
+
+        // An export that threw nothing but wrote nothing is still a
+        // failure. This used to slip through: the "is it smaller?"
+        // check below required `compressedSize > 0`, so a zero-byte or
+        // missing output skipped it entirely and was handed back as a
+        // success — the caller then uploaded an empty file as the
+        // person's proof.
+        guard compressedSize > 0 else {
+            Log.videoTranscoder.error("Export produced no bytes")
+            try? FileManager.default.removeItem(at: outputURL)
+            return nil
+        }
+
+        // Only hand back the compressed file when it's a real win (or at
+        // least not larger than the original).
+        if originalSize > 0, compressedSize > originalSize {
             try? FileManager.default.removeItem(at: outputURL)
             return nil
         }

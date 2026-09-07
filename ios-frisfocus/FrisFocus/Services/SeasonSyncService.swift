@@ -389,7 +389,7 @@ final class SeasonSyncService {
 
             // Media already in the bucket needs no re-upload; fetch
             // anything this device doesn't have yet.
-            for (filename, _) in milestoneMediaFilenames() {
+            for (filename, _, _) in milestoneMediaFilenames() {
                 uploadedMedia.insert(filename)
             }
             if appliedSeason {
@@ -820,17 +820,20 @@ final class SeasonSyncService {
     }
 
     /// Every journey media filename referenced by the current season.
-    private func milestoneMediaFilenames() -> [(filename: String, contentType: String)] {
+    /// `assumed` is nil for voice memos: their `audio/mp4` label is
+    /// already right, and an `M4A ` brand would sniff as video.
+    private func milestoneMediaFilenames() -> [(filename: String, contentType: String, assumed: MediaContainer?)] {
         guard let store else { return [] }
         return store.currentSeason.milestones.flatMap { milestone in
             milestone.attachments.map { attachment in
                 let contentType: String
+                let assumed: MediaContainer?
                 switch attachment.kind {
-                case .photo: contentType = "image/jpeg"
-                case .voiceMemo: contentType = "audio/mp4"
-                case .video: contentType = "video/mp4"
+                case .photo: contentType = "image/jpeg"; assumed = .jpeg
+                case .voiceMemo: contentType = "audio/mp4"; assumed = nil
+                case .video: contentType = "video/mp4"; assumed = .mp4
                 }
-                return (attachment.filename, contentType)
+                return (attachment.filename, contentType, assumed)
             }
         }
     }
@@ -838,7 +841,7 @@ final class SeasonSyncService {
     /// Upload any not-yet-synced milestone media. Returns false when an
     /// upload failed (the season slice stays queued and retries later).
     private func uploadMilestoneMedia(userId: String) async -> Bool {
-        for (filename, contentType) in milestoneMediaFilenames() where !uploadedMedia.contains(filename) {
+        for (filename, declaredType, assumed) in milestoneMediaFilenames() where !uploadedMedia.contains(filename) {
             let local = Self.documentsDirectory.appendingPathComponent(filename)
             guard let data = try? Data(contentsOf: local) else {
                 // File missing locally (e.g. cleaned up) — skip rather
@@ -846,6 +849,23 @@ final class SeasonSyncService {
                 uploadedMedia.insert(filename)
                 continue
             }
+
+            // A file the server will never accept can't be retried into
+            // success. Leaving it queued meant one oversized attachment
+            // stalled the ENTIRE season slice forever, since a failure
+            // here returns false and the slice stays queued.
+            guard data.count <= VideoTranscoder.maxUploadBytes else {
+                Log.seasonSync.error("media too large to upload, skipping: \(filename)")
+                uploadedMedia.insert(filename)
+                continue
+            }
+
+            // Declare the real container rather than the attachment's
+            // intent — a clip that failed transcode is still QuickTime.
+            let contentType = assumed.map {
+                MediaContainer.forUpload(data, assuming: $0).contentType
+            } ?? declaredType
+
             do {
                 try await StorageUploadClient.upload(
                     data: data,
@@ -857,6 +877,11 @@ final class SeasonSyncService {
                 uploadedMedia.insert(filename)
             } catch StorageUploadError.badResponse(let status) where status == 409 {
                 // Already in the bucket from a previous attempt.
+                uploadedMedia.insert(filename)
+            } catch StorageUploadError.badResponse(let status) where status == 413 {
+                // Refused on size by the server — same reasoning as the
+                // ceiling check above.
+                Log.seasonSync.error("media rejected as too large: \(filename)")
                 uploadedMedia.insert(filename)
             } catch {
                 Log.seasonSync.error("media upload failed for \(filename): \(error)")
@@ -870,7 +895,7 @@ final class SeasonSyncService {
     /// installs, second devices). Fire-and-forget per file.
     private func downloadMissingMedia() {
         guard let myUserId else { return }
-        for (filename, _) in milestoneMediaFilenames() {
+        for (filename, _, _) in milestoneMediaFilenames() {
             let local = Self.documentsDirectory.appendingPathComponent(filename)
             guard !FileManager.default.fileExists(atPath: local.path),
                   !activeDownloads.contains(filename) else { continue }

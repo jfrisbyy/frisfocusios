@@ -305,7 +305,7 @@ struct FriendDetailView: View {
                     mode: .generalPost,
                     liveProofRecipientName: remote.displayName,
                     onSendLiveProof: { data, isVideo, duration, caption in
-                        await messageGraph.sendProof(
+                        return await messageGraph.sendProof(
                             to: remote.id,
                             data: data,
                             mediaKind: isVideo ? .video : .photo,

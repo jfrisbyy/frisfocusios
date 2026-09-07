@@ -92,7 +92,10 @@ struct CaptureView: View {
     /// chooser is hidden) instead of writing to the local store.
     /// `liveProofRecipientName` labels the fixed destination chip.
     var liveProofRecipientName: String? = nil
-    var onSendLiveProof: ((_ data: Data, _ isVideo: Bool, _ duration: Double?, _ caption: String?) async -> Void)? = nil
+    /// Returns whether the proof reached the thread. It used to return
+    /// `Void`, so the review sheet announced "Proof sent" unconditionally
+    /// — including for a send the service had refused outright.
+    var onSendLiveProof: ((_ data: Data, _ isVideo: Bool, _ duration: Double?, _ caption: String?) async -> Bool)? = nil
 
     /// The app-wide shared camera — pre-warmed by hosts the moment the
     /// open-camera gesture begins, so the viewfinder is live (not
@@ -553,16 +556,27 @@ struct CaptureView: View {
                         return
                     }
 
-                    // Past the lock: the remaining travel drives zoom.
-                    camera.setZoom(recordZoomBase + (rise - lockTravel) / 110)
+                    // Once locked the finger is gone, so any drag that
+                    // arrives is a NEW touch starting at zero travel —
+                    // including the tap that stops the recording. Feeding
+                    // that to the zoom would yank it to
+                    // `recordZoomBase - lockTravel/110` on every stop.
+                    // Zoom during a locked recording is the pinch
+                    // gesture's job, which starts from the live value.
                     return
                 }
                 guard pressTimerTask == nil, camera.isReady else { return }
                 pressTimerTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(220))
-                    if !Task.isCancelled {
-                        startRecording()
-                    }
+                    guard !Task.isCancelled else { return }
+                    // Clear the slot from inside the task as well. It
+                    // used to be cleared only in onEnded, so any gesture
+                    // sequence that never delivered one (a system
+                    // interruption, a cancelled touch) left the slot
+                    // occupied and hold-to-record dead for the rest of
+                    // the session.
+                    pressTimerTask = nil
+                    startRecording()
                 }
             }
             .onEnded { _ in
@@ -592,6 +606,8 @@ struct CaptureView: View {
     private func lockRecording() {
         guard isRecording, !isLocked else { return }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+        // Hand the current zoom to pinch, which takes over from here.
+        pinchBase = camera.currentZoom
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             isLocked = true
             lockProgress = 1
