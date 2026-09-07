@@ -188,11 +188,51 @@ private struct CategoriesEditorView: View {
             } footer: {
                 Text("Tap a category to rename or recolor it for this season.")
             }
+
+            // A season could hold eight areas and there was no way to
+            // reach the unused ones. The setup conversation decided the
+            // whole set once, and if a part of life started mattering in
+            // week three there was nowhere to put it — the only route to
+            // an eighth area was starting a whole new season.
+            if !unusedCategories.isEmpty {
+                Section {
+                    ForEach(unusedCategories, id: \.self) { category in
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            store.addSeasonCategory(category)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "plus.circle")
+                                    .font(.system(size: 15, weight: .regular))
+                                    .foregroundStyle(Color(hex: category.hexColor))
+                                Text(category.displayName)
+                                    .font(.sans(15, weight: .regular))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.white)
+                    }
+                } header: {
+                    Text("Add an area")
+                } footer: {
+                    Text("Areas you're not using this season. Adding one lets you file tasks under it — you can rename it to anything.")
+                }
+            }
         }
         .scrollContentBackground(.hidden)
         .background(Theme.warmWheat)
         .navigationTitle("Categories")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private extension CategoriesEditorView {
+    /// The slots this season isn't using yet, in their natural order.
+    var unusedCategories: [Category] {
+        let inUse = Set(store.currentSeason.categories.map(\.category))
+        return Category.allCases.filter { !inUse.contains($0) }
     }
 }
 
@@ -248,6 +288,27 @@ private struct CategoryEditView: View {
                 .foregroundStyle(Theme.textPrimary.opacity(0.7))
             } header: {
                 Text("Color")
+            }
+
+            Section {
+                let usage = store.seasonCategoryUsage(category)
+                if usage == 0 {
+                    Button(role: .destructive) {
+                        if store.removeSeasonCategory(category) {
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            dismiss()
+                        }
+                    } label: {
+                        Label("Remove from this season", systemImage: "minus.circle")
+                    }
+                } else {
+                    // Refused rather than hidden: "why can't I remove
+                    // this" is a better question to answer than to leave
+                    // someone hunting for a control that isn't there.
+                    Text("\(usage) thing\(usage == 1 ? "" : "s") still live here. Move or delete them first.")
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                }
             }
         }
         .scrollContentBackground(.hidden)

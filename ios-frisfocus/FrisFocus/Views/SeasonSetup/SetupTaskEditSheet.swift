@@ -454,8 +454,18 @@ struct SetupMilestoneEditSheet: View {
 
     @State private var name: String = ""
     @State private var value: Int = 60
+    @State private var steps: [DraftMilestoneStep] = []
+    @State private var newStepName: String = ""
 
     private var isNew: Bool { milestone.name.isEmpty }
+
+    /// What the whole destination is worth once its rungs are counted.
+    /// Shown because a staged milestone's headline number is only part
+    /// of the story, and someone reading "+50" next to three priced
+    /// steps should not have to add them up themselves.
+    private var totalWithSteps: Int {
+        value + steps.reduce(0) { $0 + max(0, $1.value) }
+    }
 
     var body: some View {
         NavigationStack {
@@ -474,6 +484,51 @@ struct SetupMilestoneEditSheet: View {
                     }
                 } footer: {
                     Text("One-time and worth a lot — the season's bigger wins, not a repeating task.")
+                }
+
+                // Staging a big destination is instructed in setup and
+                // the season stores it, but until now there was nowhere
+                // to change one: a rung the conversation got wrong was
+                // permanent, and a goal you wanted to break down after
+                // the fact could not be.
+                Section {
+                    ForEach($steps) { $step in
+                        HStack(spacing: 10) {
+                            TextField("Step", text: $step.name)
+                                .font(.sans(15, weight: .regular))
+                            Spacer(minLength: 8)
+                            Stepper(value: $step.value, in: 0...100, step: 5) {
+                                Text(step.value == 0 ? "—" : "+\(step.value)")
+                                    .font(.serif(15, weight: .medium))
+                                    .foregroundStyle(step.value == 0
+                                        ? Theme.textPrimary.opacity(0.4)
+                                        : Theme.sunShadow)
+                            }
+                            .labelsHidden()
+                        }
+                    }
+                    .onDelete { steps.remove(atOffsets: $0) }
+
+                    HStack(spacing: 10) {
+                        TextField("Add a step", text: $newStepName)
+                            .font(.sans(15, weight: .regular))
+                            .onSubmit(addStep)
+                        Button(action: addStep) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 18, weight: .regular))
+                                .foregroundStyle(Theme.sunShadow)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(newStepName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                } header: {
+                    Text("Steps")
+                } footer: {
+                    if steps.isEmpty {
+                        Text("Optional. A long way off is easier to walk in stages — first 10-miler, first 20-miler, race day.")
+                    } else {
+                        Text("A step worth nothing still marks progress; one worth points pays the day it's checked off. This destination is worth \(totalWithSteps) in total.")
+                    }
                 }
 
                 if !isNew {
@@ -501,6 +556,13 @@ struct SetupMilestoneEditSheet: View {
                         var updated = milestone
                         updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
                         updated.value = max(1, value)
+                        updated.steps = steps
+                            .map { step in
+                                var copy = step
+                                copy.name = step.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                                return copy
+                            }
+                            .filter { !$0.name.isEmpty }
                         onSave(updated)
                         dismiss()
                     }
@@ -512,6 +574,14 @@ struct SetupMilestoneEditSheet: View {
         .onAppear {
             name = milestone.name
             value = milestone.value
+            steps = milestone.steps
         }
+    }
+
+    private func addStep() {
+        let trimmed = newStepName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        steps.append(DraftMilestoneStep(name: trimmed))
+        newStepName = ""
     }
 }

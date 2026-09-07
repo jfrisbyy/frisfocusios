@@ -121,6 +121,47 @@ extension Store {
         upsertSeasonCategory(category) { $0.customColorHex = value }
     }
 
+    /// Bring an unused area into this season.
+    ///
+    /// The setup conversation decides the area set once, and until now
+    /// that was final: a part of life that started mattering in week
+    /// three had nowhere to go, and the only route to another area was
+    /// starting a whole new season.
+    ///
+    /// It joins as `.quiet` — a season's primaries were chosen when it
+    /// began, and an area added later hasn't earned that standing yet.
+    func addSeasonCategory(_ category: Category) {
+        guard !currentSeason.categories.contains(where: { $0.category == category }) else { return }
+        currentSeason.categories.append(SeasonCategory(category: category, tier: .quiet))
+        persistAll()
+        republishSeasonCardNow()
+    }
+
+    /// Drop an area from this season.
+    ///
+    /// Refuses while anything still lives there. Removing an area whose
+    /// tasks remain would leave them filed under something the season no
+    /// longer has, which is how a task becomes unreachable without ever
+    /// being deleted. Returns whether it went.
+    @discardableResult
+    func removeSeasonCategory(_ category: Category) -> Bool {
+        guard !tasks.contains(where: { $0.category == category }),
+              !avoidanceItems.contains(where: { $0.category == category }),
+              currentSeason.categories.count > 1
+        else { return false }
+        currentSeason.categories.removeAll { $0.category == category }
+        persistAll()
+        republishSeasonCardNow()
+        return true
+    }
+
+    /// How many things are filed under an area — what makes removing it
+    /// safe or not.
+    func seasonCategoryUsage(_ category: Category) -> Int {
+        tasks.filter { $0.category == category }.count
+            + avoidanceItems.filter { $0.category == category }.count
+    }
+
     private func upsertSeasonCategory(_ category: Category, _ mutate: (inout SeasonCategory) -> Void) {
         if let idx = currentSeason.categories.firstIndex(where: { $0.category == category }) {
             mutate(&currentSeason.categories[idx])
