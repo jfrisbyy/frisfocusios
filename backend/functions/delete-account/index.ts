@@ -11,8 +11,9 @@
 //     comments / views
 //   • personal data: journal notes + folders, season history, cadence
 //     routines, contact-matching keys, device push tokens
+//   • the proof library: their permanent capture archive, rows + media
 //   • storage: avatars, story media, journal media, proof media,
-//     golden-hour media
+//     golden-hour media, proof-library media
 //
 // Reports the user filed are removed; reports OTHERS filed about them
 // are kept (anonymised — reported_user_id cleared) so moderation
@@ -257,11 +258,19 @@ Deno.serve(async (req) => {
     await step("engine state", async () => {
       await admin.from("test_engine_state").delete().like("id", `%${uid}%`);
     });
+    // The proof library cascades when the profile row goes at step 9,
+    // but every other table is deleted explicitly for the same reason:
+    // a wrapped step reports its own failure instead of stranding the
+    // rest behind one silent constraint error.
+    await step("proof library", async () => {
+      await admin.from("proof_library").delete().eq("user_id", uid);
+    });
 
     // ── 8. Storage: every bucket that can hold their bytes ───────────
     await clearFolder(admin, "avatars", uid);
     await clearFolder(admin, "stories", uid);
     await clearFolder(admin, "note-media", uid);
+    await clearFolder(admin, "proof-library", uid);
     if (proofPaths.length > 0) await removePaths(admin, "proofs", proofPaths);
     if (goldenPaths.length > 0) await removePaths(admin, "golden-hour", goldenPaths);
 

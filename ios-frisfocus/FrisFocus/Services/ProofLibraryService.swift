@@ -3,18 +3,51 @@
 //  FrisFocus
 //
 //  Writing composed proof cards into the permanent on-device library.
-//  Every posted story / circle clip and every "Just save" lands here
-//  with its own copy of the bytes, so the archive outlives story
-//  expiry, post deletion, and pin removal. Private sends to friends
-//  are never recorded.
+//  EVERY proof a person makes lands here with its own copy of the
+//  bytes — posted to a story, dropped in a circle, sent privately to a
+//  friend, or just kept — so the archive outlives story expiry, post
+//  deletion, and pin removal, and nobody has to decide at the moment of
+//  capture whether this one will matter later. `sharedTo` records where
+//  it went, which is what lets the library tell "just for me" apart
+//  from "this went out".
+//
+//  Proofs RECEIVED from friends are still never recorded: the library
+//  is what you made, not what you were sent.
 //
 
 import Foundation
+
+/// Everything known about a proof at the moment it is archived, beyond
+/// the bytes themselves. Passed as one value because these travel
+/// together and every one of them is optional — a proof captured from
+/// nowhere in particular is still a proof worth keeping.
+struct ProofLibraryContext {
+    var caption: String? = nil
+    var links: ProofLibraryLinks = ProofLibraryLinks()
+    /// Where the proof went. Empty means it was only kept.
+    var sharedTo: [ProofShareDestination] = []
+    /// Human-readable names for the links, for display.
+    var labels: [String] = []
+
+    static let none = ProofLibraryContext()
+}
 
 extension Store {
     /// All archived proofs, newest first. Drives the Proof Library grid.
     var proofLibraryNewestFirst: [ProofLibraryItem] {
         proofLibrary.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// Every archived proof tied to one task / to-do / milestone / note,
+    /// newest first. Drives the proof strip on the thing itself.
+    func proofLibraryItems(for links: ProofLibraryLinks) -> [ProofLibraryItem] {
+        guard !links.isEmpty else { return [] }
+        return proofLibraryNewestFirst.filter { item in
+            (links.taskId != nil && item.taskId == links.taskId)
+                || (links.todoId != nil && item.todoId == links.todoId)
+                || (links.milestoneId != nil && item.milestoneId == links.milestoneId)
+                || (links.noteId != nil && item.noteId == links.noteId)
+        }
     }
 
     /// Archive a composed proof from raw bytes (the posting paths hold
@@ -24,24 +57,33 @@ extension Store {
         imageData: Data?,
         type: MediaType,
         duration: Double?,
-        source: ProofLibrarySource
+        source: ProofLibrarySource,
+        context: ProofLibraryContext = .none
     ) -> UUID? {
         guard let imageData else { return nil }
         let media: ComposedProofMedia = type == .video
             ? .video(imageData, duration: duration ?? 0)
             : .photo(imageData)
-        return recordProofToLibrary(media, source: source)
+        return recordProofToLibrary(media, source: source, context: context)
     }
 
     /// Archive a composed proof. Writes the library's own copy of the
     /// bytes into Documents; a failed write records nothing so the grid
     /// never shows a broken tile.
     @discardableResult
-    func recordProofToLibrary(_ media: ComposedProofMedia, source: ProofLibrarySource) -> UUID? {
+    func recordProofToLibrary(
+        _ media: ComposedProofMedia,
+        source: ProofLibrarySource,
+        context: ProofLibraryContext = .none
+    ) -> UUID? {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let item: ProofLibraryItem
         switch media {
         case .photo(let data):
+            guard !data.isEmpty else {
+                Log.proofLibrary.error("refusing to archive an empty photo")
+                return nil
+            }
             let filename = "proof-lib-\(UUID().uuidString.lowercased()).jpg"
             do {
                 try data.write(to: docs.appendingPathComponent(filename), options: .atomic)
@@ -49,16 +91,40 @@ extension Store {
                 Log.proofLibrary.error("photo write failed: \(error)")
                 return nil
             }
-            item = ProofLibraryItem(kind: .photo, filename: filename, source: source)
+            item = ProofLibraryItem(
+                kind: .photo,
+                filename: filename,
+                source: source,
+                pinnedLabels: context.labels,
+                caption: context.caption,
+                links: context.links,
+                sharedTo: context.sharedTo
+            )
         case .video(let data, let duration):
-            let filename = "proof-lib-\(UUID().uuidString.lowercased()).mp4"
+            guard !data.isEmpty else {
+                Log.proofLibrary.error("refusing to archive an empty clip")
+                return nil
+            }
+            // The extension has to match what the bytes actually are, or
+            // AVPlayer refuses the file and the tile plays nothing.
+            let container = MediaContainer.forUpload(data, assuming: .mp4)
+            let filename = "proof-lib-\(UUID().uuidString.lowercased()).\(container.fileExtension)"
             do {
                 try data.write(to: docs.appendingPathComponent(filename), options: .atomic)
             } catch {
                 Log.proofLibrary.error("video write failed: \(error)")
                 return nil
             }
-            item = ProofLibraryItem(kind: .video, filename: filename, duration: duration, source: source)
+            item = ProofLibraryItem(
+                kind: .video,
+                filename: filename,
+                duration: duration,
+                source: source,
+                pinnedLabels: context.labels,
+                caption: context.caption,
+                links: context.links,
+                sharedTo: context.sharedTo
+            )
         }
         proofLibrary.append(item)
         // Archive entries write through immediately — a proof save must
@@ -66,6 +132,36 @@ extension Store {
         persistAll()
         flushPendingSaves()
         return item.id
+    }
+
+    /// Attach a link to an already-archived proof — the attach flow
+    /// picks its destination AFTER the proof is saved, so the ids arrive
+    /// later than the bytes do.
+    func linkProofLibraryItem(_ itemId: UUID?, to target: ProofAttachTarget) {
+        guard let itemId, let idx = proofLibrary.firstIndex(where: { $0.id == itemId }) else { return }
+        switch target {
+        case .task(let id): proofLibrary[idx].taskId = id
+        case .todo(let id): proofLibrary[idx].todoId = id
+        case .milestone(let id): proofLibrary[idx].milestoneId = id
+        case .note(let id): proofLibrary[idx].noteId = id
+        case .cameraRoll: return
+        }
+        if let label = proofTargetLabel(target), !proofLibrary[idx].pinnedLabels.contains(label) {
+            proofLibrary[idx].pinnedLabels.append(label)
+        }
+        persistAll()
+        flushPendingSaves()
+    }
+
+    /// Record that an archived proof also went somewhere.
+    func markProofLibraryShared(_ itemId: UUID?, to destinations: [ProofShareDestination]) {
+        guard let itemId, let idx = proofLibrary.firstIndex(where: { $0.id == itemId }),
+              !destinations.isEmpty else { return }
+        for destination in destinations where !proofLibrary[idx].sharedTo.contains(destination) {
+            proofLibrary[idx].sharedTo.append(destination)
+        }
+        persistAll()
+        flushPendingSaves()
     }
 
     /// Note where an archived proof was pinned (task / to-do / note /
