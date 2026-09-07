@@ -18,13 +18,6 @@ import Foundation
 extension Store {
     // MARK: - Task-attached weekly limit
 
-    /// Apply or revoke the weekly-limit penalty for `task` based on the
-    /// current week's completion count. Called from both
-    /// `completeTask` and `uncompleteTask` so a single toggle can move
-    /// the rule into or out of penalty range.
-    ///
-    /// Idempotent: at most one `.penalty` log entry tagged with this
-    /// task lives in the current week interval at any time.
     /// Which pass is running.
     ///
     /// A `.lessThan` floor asks "did a whole week pass without this?" —
@@ -41,6 +34,13 @@ extension Store {
         case weekClose
     }
 
+    /// Apply or revoke `task`'s weekly-limit penalties against the
+    /// current week. Called from both `completeTask` and
+    /// `uncompleteTask` so a single toggle can move a rule into or out
+    /// of penalty range.
+    ///
+    /// Idempotent: at most one `.penalty` log entry per RULE lives in
+    /// the week interval at any time.
     func evaluatePenaltyForTask(_ task: FFTask) {
         evaluatePenaltyForTask(task, within: currentWeekInterval(), pass: .live, chargeDate: Date())
     }
@@ -54,9 +54,12 @@ extension Store {
         let rules = task.allPenalties
         guard !rules.isEmpty else {
             // Every rule was removed — sweep any lingering penalty entry
-            // from the current week so disabling immediately restores
-            // the deducted points.
-            removeTaskPenaltyEntries(taskId: task.id)
+            // from THIS week so disabling immediately restores the
+            // deducted points. Scoped deliberately: a rule id is now a
+            // definitive marker regardless of date, so an unscoped sweep
+            // would reach back and quietly rewrite the score of every
+            // week already closed.
+            removeTaskPenaltyEntries(taskId: task.id, restrictTo: interval)
             return
         }
 
