@@ -42,7 +42,13 @@ extension Store {
         endDate: Date?
     ) -> Season {
         let seasonId = UUID()
-        let slots: [Category] = [.spiritual, .fitness, .health, .work, .creative, .apartment]
+        // Every slot the model may be given. This list used to hold six
+        // while the conversation was told it could build up to eight
+        // areas and the server kept eight, so a seventh or eighth
+        // category — and every task inside it — was dropped here with
+        // no error and nothing on screen. `Category.allCases` keeps the
+        // two in step by construction from now on.
+        let slots: [Category] = Category.allCases
         let cal = Calendar.current
         let startOfToday = cal.startOfDay(for: Date())
 
@@ -108,7 +114,11 @@ extension Store {
         var newTasks: [FFTask] = []
         var taskIdByName: [String: UUID] = [:]
         for draftTask in draft.tasks {
-            guard let slot = slotByDraftId[draftTask.categoryId] else { continue }
+            // A task whose category found no slot is re-homed rather than
+            // deleted. There should be none now that the slots match what
+            // the flow promises, but silently dropping someone's work is
+            // never the right answer to a mismatch nobody predicted.
+            guard let slot = slotByDraftId[draftTask.categoryId] ?? seasonCategories.last?.category else { continue }
             let scoring: ScoringConfig
             switch draftTask.shape {
             case .flat:
@@ -144,7 +154,8 @@ extension Store {
                     enabled: true,
                     timesThreshold: floor.threshold,
                     condition: .lessThan,
-                    penaltyPoints: floor.value
+                    penaltyPoints: floor.value,
+                    metric: floor.metric
                 )
             }
             taskIdByName[draftTask.name.lowercased()] = task.id
@@ -163,20 +174,19 @@ extension Store {
             )
         }
 
-        // Boosters — reference the named task when it resolves, else the
-        // first category as a whole-area consistency reward.
-        let fallbackCategory = seasonCategories.first?.category ?? .health
-        let newBoosters: [WeeklyBooster] = draft.boosters.map { booster in
-            let reference: BoosterReference
-            if let taskId = taskIdByName[booster.referenceName.lowercased()] {
-                reference = .task(taskId)
-            } else {
-                reference = .category(fallbackCategory)
-            }
+        // Boosters reference the named task. An unresolved name used to
+        // fall back to `.category(seasonCategories.first)` — "any task in
+        // whatever area happened to be listed first" — so a booster for
+        // six lifting days could quietly become a booster on prayer. A
+        // booster nobody can explain is worse than one that isn't there,
+        // and the server now drops unmatched references before this.
+        let newBoosters: [WeeklyBooster] = draft.boosters.compactMap { booster in
+            guard let taskId = taskIdByName[booster.referenceName.lowercased()] else { return nil }
             return WeeklyBooster(
                 seasonId: seasonId,
                 name: booster.name,
-                reference: reference,
+                reference: .task(taskId),
+                metric: booster.metric,
                 threshold: max(1, booster.threshold),
                 period: .week,
                 bonusPoints: max(1, booster.value)
@@ -190,15 +200,37 @@ extension Store {
         // still tells the full story). The season being replaced is
         // archived as a past chapter first so profile pages can tell the
         // story season by season.
-        // Same clamp as the edit-in-place path, applied here only now
-        // that the board exists: the target and the task list are separate
-        // parts of the model's reply and nothing makes them agree, so a
-        // target the tasks cannot reach would leave the sun unfillable
-        // from day one. Only ever lowered — a reachable target is left as
-        // the conversation set it.
-        let reachable = Store.strongDayValue(from: newTasks)
-        season.dailyGoal = min(season.dailyGoal, reachable)
-        season.weeklyGoal = max(season.dailyGoal, min(season.weeklyGoal, season.dailyGoal * 7))
+        // A safety floor, not a second opinion.
+        //
+        // This used to be `min(dailyGoal, Store.strongDayValue(...))`.
+        // Setup tasks are all created unpinned, so `strongDayValue` fell
+        // through to "the sum of the four highest-valued tasks" — a
+        // cold-start heuristic. With task values capped at 10 that put a
+        // hard ceiling of 40 on any conversation-built season, no matter
+        // how large: a fifty-task board calibrated to a daily 55 was
+        // silently cut to the low thirties, and the number the person had
+        // said out loud was replaced without a word. The server already
+        // validates the target against a knapsack over a real day; the
+        // app cannot reproduce that and should not overrule it.
+        //
+        // What remains is the case that check was actually for: a target
+        // the whole board cannot reach, which would leave the sun
+        // unfillable from day one.
+        let everythingInADay = newTasks.reduce(0) { sum, task in
+            sum + max(1, task.scoring.headlineValue(flatValue: task.pointValue))
+        }
+        if everythingInADay > 0 {
+            season.dailyGoal = min(season.dailyGoal, everythingInADay)
+        }
+        // Weekly was capped at 7× daily, which contradicted the flow's own
+        // teaching — and its own worked example, "daily 55 → weekly ~400",
+        // is 7.3×. A strong week is solid days PLUS the end-of-week
+        // bonuses, so the ceiling has to leave room for them.
+        let boosterHeadroom = newBoosters.reduce(0) { $0 + max(0, $1.bonusPoints) }
+        season.weeklyGoal = max(
+            season.dailyGoal,
+            min(season.weeklyGoal, season.dailyGoal * 7 + boosterHeadroom)
+        )
 
         archiveCurrentSeasonAsChapter()
         currentSeason = season
@@ -236,7 +268,13 @@ extension Store {
         endDate: Date?
     ) -> Season {
         let seasonId = currentSeason.id
-        let slots: [Category] = [.spiritual, .fitness, .health, .work, .creative, .apartment]
+        // Every slot the model may be given. This list used to hold six
+        // while the conversation was told it could build up to eight
+        // areas and the server kept eight, so a seventh or eighth
+        // category — and every task inside it — was dropped here with
+        // no error and nothing on screen. `Category.allCases` keeps the
+        // two in step by construction from now on.
+        let slots: [Category] = Category.allCases
         let cal = Calendar.current
         let startOfToday = cal.startOfDay(for: currentSeason.startDate)
 
@@ -281,7 +319,11 @@ extension Store {
         var newTasks: [FFTask] = []
         var taskIdByName: [String: UUID] = [:]
         for draftTask in draft.tasks {
-            guard let slot = slotByDraftId[draftTask.categoryId] else { continue }
+            // A task whose category found no slot is re-homed rather than
+            // deleted. There should be none now that the slots match what
+            // the flow promises, but silently dropping someone's work is
+            // never the right answer to a mismatch nobody predicted.
+            guard let slot = slotByDraftId[draftTask.categoryId] ?? seasonCategories.last?.category else { continue }
             let scoring: ScoringConfig
             switch draftTask.shape {
             case .flat:
@@ -312,7 +354,8 @@ extension Store {
                     enabled: true,
                     timesThreshold: floor.threshold,
                     condition: .lessThan,
-                    penaltyPoints: floor.value
+                    penaltyPoints: floor.value,
+                    metric: floor.metric
                 )
             }
             taskIdByName[draftTask.name.lowercased()] = task.id
@@ -330,18 +373,19 @@ extension Store {
             )
         }
 
-        let fallbackCategory = seasonCategories.first?.category ?? .health
-        let newBoosters: [WeeklyBooster] = draft.boosters.map { booster in
-            let reference: BoosterReference
-            if let taskId = taskIdByName[booster.referenceName.lowercased()] {
-                reference = .task(taskId)
-            } else {
-                reference = .category(fallbackCategory)
-            }
+        // Boosters reference the named task. An unresolved name used to
+        // fall back to `.category(seasonCategories.first)` — "any task in
+        // whatever area happened to be listed first" — so a booster for
+        // six lifting days could quietly become a booster on prayer. A
+        // booster nobody can explain is worse than one that isn't there,
+        // and the server now drops unmatched references before this.
+        let newBoosters: [WeeklyBooster] = draft.boosters.compactMap { booster in
+            guard let taskId = taskIdByName[booster.referenceName.lowercased()] else { return nil }
             return WeeklyBooster(
                 seasonId: seasonId,
                 name: booster.name,
-                reference: reference,
+                reference: .task(taskId),
+                metric: booster.metric,
                 threshold: max(1, booster.threshold),
                 period: .week,
                 bonusPoints: max(1, booster.value)
@@ -357,20 +401,30 @@ extension Store {
         //
         // But the target and the task list are two separate parts of the
         // model's reply, and nothing guarantees they agree. If it asks
-        // for more than a whole strong day of the tasks it just wrote,
-        // the sun cannot be filled — the same unreachable-sun the cold
-        // start had, arriving by a different route. Clamp only in that
-        // direction: a target the tasks can already reach is left exactly
-        // as the conversation set it.
-        let reachable = Store.strongDayValue(from: newTasks)
+        // for more than the WHOLE BOARD is worth in a day, the sun cannot
+        // be filled — the same unreachable-sun the cold start had,
+        // arriving by a different route.
+        //
+        // The measure used to be `Store.strongDayValue`, which for the
+        // unpinned tasks this path creates means "the four highest
+        // values" — a cold-start heuristic that capped every
+        // conversation-built season at 40 points regardless of size. The
+        // server already validates the target against a knapsack over a
+        // real day; this is only a floor against the impossible.
+        let everythingInADay = newTasks.reduce(0) { sum, task in
+            sum + max(1, task.scoring.headlineValue(flatValue: task.pointValue))
+        }
         let requested = max(1, draft.dailyTarget)
-        let dailyGoal = min(requested, reachable)
+        let dailyGoal = everythingInADay > 0 ? min(requested, everythingInADay) : requested
 
         var season = currentSeason
         season.name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? season.name : name
         season.lengthDays = max(1, lengthDays)
         season.dailyGoal = dailyGoal
-        season.weeklyGoal = max(dailyGoal, min(max(1, draft.weeklyTarget), dailyGoal * 7))
+        // Room for the end-of-week bonuses, which are exactly what makes
+        // a strong week more than seven strong days.
+        let boosterHeadroom = newBoosters.reduce(0) { $0 + max(0, $1.bonusPoints) }
+        season.weeklyGoal = max(dailyGoal, min(max(1, draft.weeklyTarget), dailyGoal * 7 + boosterHeadroom))
         season.categories = seasonCategories
         season.milestones = milestones
         season.endMode = endMode

@@ -47,6 +47,8 @@ enum Theme {
     static let categoryHealth = Color(hex: 0x639922)
     static let categoryWork = Color(hex: 0x185FA5)
     static let categoryCreative = Color(hex: 0x993556)
+    static let categoryLearning = Color(hex: 0x3F8E8E)
+    static let categoryPeople = Color(hex: 0xC2922F)
 
     // MARK: - Status
     static let alertRed = Color(hex: 0xA32D2D)
@@ -221,6 +223,8 @@ extension Category {
         case .work: return Theme.categoryWork
         case .creative: return Theme.categoryCreative
         case .apartment: return Theme.textTertiary
+        case .learning: return Theme.categoryLearning
+        case .people: return Theme.categoryPeople
         }
     }
 
@@ -236,6 +240,8 @@ extension Category {
         case .health:    return Color(hex: 0x3B6D11)
         case .work:      return Color(hex: 0x0C447C)
         case .apartment: return Theme.textSecondary
+        case .learning:  return Color(hex: 0x1F5C5C)
+        case .people:    return Color(hex: 0x7A5A0C)
         }
     }
 }

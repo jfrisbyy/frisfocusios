@@ -263,6 +263,8 @@ extension Store {
         case .health: return "Small habits compound"
         case .work: return "One small thing moves it"
         case .apartment: return "Little fixes pile up"
+        case .learning: return "The thread drops fast"
+        case .people: return "Someone's been waiting to hear from you"
         }
     }
 

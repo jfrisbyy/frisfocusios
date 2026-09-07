@@ -449,6 +449,15 @@ class AuthManager {
         KeychainHelper.delete("access_token")
         KeychainHelper.delete("refresh_token")
         UserDefaults.standard.removeObject(forKey: "RORK_AUTH_REFRESH_TOKEN")
+        // A half-finished season conversation is one of the most personal
+        // things this app ever holds — the job, the health, the sleep, the
+        // drinking, whatever the person was in the middle of saying. It
+        // lived in a device-wide UserDefaults key that survived sign-out,
+        // so the next account to open this phone was offered "Pick the
+        // conversation back up", and the settings screen printed the last
+        // question the PREVIOUS person had been asked, verbatim.
+        SeasonSetupResumeStore.clear()
+        OnboardingProgress.clear()
         user = nil
         sessionExpired = false
     }

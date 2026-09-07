@@ -84,10 +84,37 @@ extension Store {
         }
     }
 
+    /// The total of a task's own logged units across an interval — the
+    /// steps walked, the pushups done, the lessons finished.
+    ///
+    /// A completion with no recorded quantity counts as one, so a flat
+    /// task under a `.sum` booster behaves exactly like a day count
+    /// instead of contributing nothing.
+    func quantitySum(taskIds: Set<UUID>, within interval: DateInterval) -> Int {
+        logEntries.reduce(0) { acc, entry in
+            guard let tid = entry.taskId, taskIds.contains(tid),
+                  entry.entryType == .completed,
+                  interval.contains(entry.date)
+            else { return acc }
+            return acc + Int((entry.quantity ?? 1).rounded())
+        }
+    }
+
     /// Completions counting toward a booster within an interval. For a
     /// task booster it's that task's completions; for a category booster
     /// it's the combined completions of every task in the area.
     func completionCount(for booster: WeeklyBooster, within interval: DateInterval) -> Int {
+        // A `.sum` booster measures volume, not attendance: its threshold
+        // is a weekly total of the task's own units, so counting days
+        // would answer a completely different question.
+        if (booster.metric ?? .days) == .sum {
+            let ids: Set<UUID>
+            switch booster.reference {
+            case .task(let id): ids = [id]
+            case .category(let cat): ids = Set(tasks.filter { $0.category == cat }.map(\.id))
+            }
+            return quantitySum(taskIds: ids, within: interval)
+        }
         switch booster.reference {
         case .task(let id):
             return completionCount(taskId: id, within: interval)

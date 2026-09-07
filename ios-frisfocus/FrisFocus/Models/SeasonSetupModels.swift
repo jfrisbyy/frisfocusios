@@ -134,13 +134,25 @@ nonisolated struct SetupWireNegative: Codable, Sendable {
 nonisolated struct SetupWireRule: Codable, Sendable {
     let name: String
     let references: String?
+    /// "days" (a count of days in the week) or "sum" (a weekly total of
+    /// the task's own units). Absent reads as "days".
+    let metric: String?
     let threshold: Int?
     let value: Int
+}
+
+nonisolated struct SetupWireMilestoneStep: Codable, Sendable {
+    let name: String
+    let value: Int?
 }
 
 nonisolated struct SetupWireMilestone: Codable, Sendable {
     let name: String
     let value: Int
+    /// The stages of a decomposed goal. The prompt has always told the
+    /// model to stage a big destination; there was no channel for it, so
+    /// every rung burned a whole milestone slot.
+    let steps: [SetupWireMilestoneStep]?
 }
 
 // MARK: - Conversation surface state
@@ -254,6 +266,7 @@ struct DraftBooster: Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
     var referenceName: String
+    var metric: BoosterMetric = .days
     var threshold: Int = 3
     var value: Int = 10
 }
@@ -262,14 +275,22 @@ struct DraftWeeklyPenalty: Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
     var referenceName: String
+    var metric: BoosterMetric = .days
     var threshold: Int = 2
     var value: Int = 10
+}
+
+struct DraftMilestoneStep: Identifiable, Equatable {
+    var id: UUID = UUID()
+    var name: String
+    var value: Int = 0
 }
 
 struct DraftMilestone: Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
     var value: Int = 60
+    var steps: [DraftMilestoneStep] = []
 }
 
 /// The whole editable board. Mutated freely on the review screen, then
@@ -337,13 +358,31 @@ struct RubricDraft: Equatable {
             )
         }
         boosters = (wire.weeklyBoosters ?? []).map {
-            DraftBooster(name: $0.name, referenceName: $0.references ?? "", threshold: max(1, $0.threshold ?? 3), value: max(1, $0.value))
+            DraftBooster(
+                name: $0.name,
+                referenceName: $0.references ?? "",
+                metric: $0.metric == "sum" ? .sum : .days,
+                threshold: max(1, $0.threshold ?? 3),
+                value: max(1, $0.value)
+            )
         }
         weeklyPenalties = (wire.weeklyPenalties ?? []).map {
-            DraftWeeklyPenalty(name: $0.name, referenceName: $0.references ?? "", threshold: max(1, $0.threshold ?? 2), value: max(1, $0.value))
+            DraftWeeklyPenalty(
+                name: $0.name,
+                referenceName: $0.references ?? "",
+                metric: $0.metric == "sum" ? .sum : .days,
+                threshold: max(1, $0.threshold ?? 2),
+                value: max(1, $0.value)
+            )
         }
-        milestones = (wire.milestones ?? []).map {
-            DraftMilestone(name: $0.name, value: max(1, $0.value))
+        milestones = (wire.milestones ?? []).map { wireMilestone in
+            DraftMilestone(
+                name: wireMilestone.name,
+                value: max(1, wireMilestone.value),
+                steps: (wireMilestone.steps ?? []).enumerated().map { _, step in
+                    DraftMilestoneStep(name: step.name, value: max(0, step.value ?? 0))
+                }
+            )
         }
     }
 

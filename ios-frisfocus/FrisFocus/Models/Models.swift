@@ -16,8 +16,26 @@ enum Tier: String, Codable, CaseIterable {
     case must, should, could
 }
 
+/// The slots a season's areas of life map onto.
+///
+/// These are stable storage keys, not labels — a season renames and
+/// recolors each one freely (`SeasonCategory.customName`), so "Fitness"
+/// can read as "Hoop" and "Learning" as "French & Creole".
+///
+/// There were six. The season conversation is told it may build 2–8
+/// areas and the server keeps 8, but the commit step mapped them onto
+/// six slots and dropped every task belonging to a seventh or eighth
+/// with no error and nothing on screen — a whole domain, silently, at
+/// the last step. A life with sport, training, language study, faith,
+/// work, making things and upkeep is seven areas before anyone has
+/// tried to be thorough, so the slots now match what the flow promises.
 enum Category: String, Codable, CaseIterable {
     case spiritual, fitness, health, work, creative, apartment
+    /// Study, courses, languages, exams — practice aimed at competence
+    /// rather than output.
+    case learning
+    /// The people in it: calls, visits, showing up for someone.
+    case people
 
     var displayName: String {
         switch self {
@@ -27,6 +45,8 @@ enum Category: String, Codable, CaseIterable {
         case .work: return "Work"
         case .creative: return "Creative"
         case .apartment: return "Apartment"
+        case .learning: return "Learning"
+        case .people: return "People"
         }
     }
 
@@ -39,6 +59,8 @@ enum Category: String, Codable, CaseIterable {
         case .work: return "#185FA5"
         case .creative: return "#993556"
         case .apartment: return "#888780"
+        case .learning: return "#3F8E8E"
+        case .people: return "#C2922F"
         }
     }
 }
@@ -214,6 +236,24 @@ struct BoosterRule: Codable, Equatable {
     var bonusPoints: Int = 10
 }
 
+/// What a booster's or floor's threshold actually counts.
+///
+/// `.days` — how many days in the period the referenced work happened.
+/// `.sum` — the total of the task's own logged units across the period:
+///   150,000 steps, 1,500 pushups, ten lessons.
+///
+/// Everything used to be a day count, so a volume goal could not be
+/// stated at all. "1500 pushups this week" had to become "pushups on
+/// N days", which is a different promise and a much easier one.
+///
+/// Optional-with-a-resolver rather than defaulted, because synthesized
+/// `Decodable` throws on a missing key instead of falling back to a
+/// property default — a plain `var metric = .days` would fail to decode
+/// every booster already on disk.
+nonisolated enum BoosterMetric: String, Codable, Equatable, Sendable {
+    case days, sum
+}
+
 /// What a first-class `WeeklyBooster` watches. A booster can track a
 /// single task or an entire category (every task in that area counts
 /// toward the same threshold), decoupling the reward from any one task.
@@ -234,6 +274,9 @@ struct WeeklyBooster: Codable, Identifiable, Equatable {
     var seasonId: UUID? = nil
     var name: String
     var reference: BoosterReference
+    /// See `BoosterMetric`. Nil reads as `.days`, which is what every
+    /// booster written before this existed meant.
+    var metric: BoosterMetric? = nil
     var threshold: Int = 3
     var period: BoosterPeriod = .week
     var bonusPoints: Int = 10
@@ -273,6 +316,12 @@ struct PenaltyRule: Codable, Equatable {
     var timesThreshold: Int = 2
     var condition: PenaltyCondition = .moreThan
     var penaltyPoints: Int = 10
+    /// See `BoosterMetric`. Nil reads as `.days`. A floor like "less
+    /// than 400 pushups in a week" is a sum, not a day count, and could
+    /// not be expressed while every threshold counted days.
+    var metric: BoosterMetric? = nil
+
+    var resolvedMetric: BoosterMetric { metric ?? .days }
 }
 
 // MARK: - Habit Train

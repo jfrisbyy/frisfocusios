@@ -33,6 +33,8 @@ struct SetupConversationView: View {
     @State private var transcriptDraft: String = ""
     @State private var showTranscriptEditor: Bool = false
     @State private var confirmExit: Bool = false
+    /// The closing reveal has arrived and is waiting to be read.
+    @State private var revealReady: Bool = false
     @FocusState private var keyboardFocused: Bool
     @FocusState private var transcriptFocused: Bool
 
@@ -67,17 +69,30 @@ struct SetupConversationView: View {
                     failureBanner(error)
                 }
 
-                inputBar
+                if revealReady {
+                    seeYourSeasonBar
+                } else {
+                    inputBar
+                }
             }
         }
         .onChange(of: viewModel.conversationDone) { _, done in
             guard done else { return }
-            // Let the orb crest, then advance.
+            // The reveal is the ONLY place the season's mechanics are
+            // ever explained in plain language — what a strong day is,
+            // why the week is more than seven days added up, what the
+            // end-of-week bonuses do, why the heaviest values sit on the
+            // hardest things. It used to be dismissed on a 1.6-second
+            // timer while the typewriter was still typing it (the
+            // typewriter paces any reply to about two seconds, and this
+            // is deliberately the longest turn in the conversation), so
+            // the most important message in the product was guaranteed
+            // to be cut off mid-sentence. With Reduce Motion it appeared
+            // in full and vanished in 0.4s, which is worse.
+            //
+            // It now waits for a tap.
             speech.cancel()
-            Task {
-                try? await Task.sleep(for: .seconds(reduceMotion ? 0.4 : 1.6))
-                viewModel.advanceToReview()
-            }
+            withAnimation(.easeOut(duration: 0.3)) { revealReady = true }
         }
         .onDisappear {
             speech.cancel()
@@ -409,6 +424,30 @@ struct SetupConversationView: View {
     // MARK: - Input bar
 
     @ViewBuilder
+    /// Replaces the input bar once the reveal lands. The reveal is the
+    /// one turn that has to be READ, so nothing advances until the
+    /// person says they're ready.
+    private var seeYourSeasonBar: some View {
+        Button {
+            viewModel.advanceToReview()
+        } label: {
+            Text("See your season →")
+                .font(.serif(17, weight: .semibold))
+                .foregroundStyle(Theme.warmWheat)
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
+                .background(
+                    Capsule().fill(Theme.textPrimary)
+                )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 28)
+        .padding(.bottom, 24)
+        .padding(.top, 8)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .accessibilityHint("Opens the season you just built")
+    }
+
     private var inputBar: some View {
         VStack(spacing: 10) {
             if !viewModel.answerOptions.isEmpty

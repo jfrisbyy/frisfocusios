@@ -35,7 +35,12 @@ extension Store {
         }
 
         let interval = currentWeekInterval()
-        let count = completionCount(taskId: task.id, within: interval)
+        // A `.sum` floor measures volume, not attendance — "less than
+        // 400 pushups this week" is a total, and counting days would
+        // answer a different question and let a week of single reps pass.
+        let count = rule.resolvedMetric == .sum
+            ? quantitySum(taskIds: [task.id], within: interval)
+            : completionCount(taskId: task.id, within: interval)
         let breached: Bool = {
             switch rule.condition {
             case .moreThan: return count > rule.timesThreshold

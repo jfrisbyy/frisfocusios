@@ -25,8 +25,13 @@ struct RubricReviewView: View {
 
     @State private var collapsedCategories: Set<UUID> = []
     @State private var showBoosters: Bool = true
-    @State private var showPenalties: Bool = false
-    @State private var showMilestones: Bool = false
+    // These were collapsed by default, so a first-time user never saw
+    // the weekly deduction or the destinations they had just agreed to
+    // out loud — the two parts of the season most likely to surprise
+    // them later were the two parts hidden on the only screen that
+    // shows the whole thing.
+    @State private var showPenalties: Bool = true
+    @State private var showMilestones: Bool = true
 
     private var draft: RubricDraft { viewModel.draftBinding }
 
@@ -125,10 +130,18 @@ struct RubricReviewView: View {
                 taskNames: draft.tasks.map(\.name),
                 onSave: { name, reference, threshold, value in
                     viewModel.updateDraft { d in
+                        // Carry the metric through. The sheet edits name,
+                        // reference, threshold and value; rebuilding the
+                        // whole value without it would silently turn a
+                        // weekly TOTAL back into a day count.
+                        let rebuilt = DraftBooster(
+                            id: booster.id, name: name, referenceName: reference,
+                            metric: booster.metric, threshold: threshold, value: value
+                        )
                         if let idx = d.boosters.firstIndex(where: { $0.id == booster.id }) {
-                            d.boosters[idx] = DraftBooster(id: booster.id, name: name, referenceName: reference, threshold: threshold, value: value)
+                            d.boosters[idx] = rebuilt
                         } else {
-                            d.boosters.append(DraftBooster(id: booster.id, name: name, referenceName: reference, threshold: threshold, value: value))
+                            d.boosters.append(rebuilt)
                         }
                     }
                 },
@@ -153,10 +166,14 @@ struct RubricReviewView: View {
                 taskNames: draft.tasks.map(\.name),
                 onSave: { name, reference, threshold, value in
                     viewModel.updateDraft { d in
+                        let rebuilt = DraftWeeklyPenalty(
+                            id: penalty.id, name: name, referenceName: reference,
+                            metric: penalty.metric, threshold: threshold, value: value
+                        )
                         if let idx = d.weeklyPenalties.firstIndex(where: { $0.id == penalty.id }) {
-                            d.weeklyPenalties[idx] = DraftWeeklyPenalty(id: penalty.id, name: name, referenceName: reference, threshold: threshold, value: value)
+                            d.weeklyPenalties[idx] = rebuilt
                         } else {
-                            d.weeklyPenalties.append(DraftWeeklyPenalty(id: penalty.id, name: name, referenceName: reference, threshold: threshold, value: value))
+                            d.weeklyPenalties.append(rebuilt)
                         }
                     }
                 },

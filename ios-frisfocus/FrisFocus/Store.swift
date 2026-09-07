@@ -1966,6 +1966,8 @@ extension Store {
         case .health: return "Small habits compound. Pick one to do today."
         case .work: return "Pick one small thing \u{2014} 30 minutes."
         case .apartment: return "Small fixes pile up if you let them."
+        case .learning: return "The thread drops fast. Ten minutes holds it."
+        case .people: return "One message is enough to keep it alive."
         }
     }
 
