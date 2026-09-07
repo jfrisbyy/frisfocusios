@@ -618,6 +618,16 @@ Deno.serve(async (req) => {
     const messages: { role: string; content: string }[] = [
       { role: "system", content: SYSTEM_PROMPT },
     ];
+    // The prompt has always told the model "today's date is provided in
+    // context for resolving relative dates" — and it never was, so every
+    // "before summer", "the race in April", "in about three months" was
+    // resolved against training data. A date that landed in the past was
+    // then silently discarded by the client, so someone who named a real
+    // end date could end up with an open-ended season and no explanation.
+    messages.push({
+      role: "system",
+      content: `Today's date is ${new Date().toISOString().slice(0, 10)} (UTC).`,
+    });
     // Warm start: inject the cold-start context as a system-side block
     // BEFORE the history so the model reflects it in the opener.
     if (coldStartBrief) {
