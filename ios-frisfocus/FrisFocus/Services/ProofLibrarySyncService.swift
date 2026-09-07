@@ -194,13 +194,15 @@ final class ProofLibrarySyncService {
             self.refusedMedia.remove(itemId)
             self.persistQueues()
             do {
-                try await self.supabase.from("proof_library")
+                // `supabase` is the file-scope client every sync service
+                // uses; it is not a member of self.
+                try await supabase.from("proof_library")
                     .delete()
                     .eq("id", value: itemId.uuidString)
                     .eq("user_id", value: myUserId)
                     .execute()
                 if let mediaPath {
-                    _ = try? await self.supabase.storage.from("proof-library").remove(paths: [mediaPath])
+                    _ = try? await supabase.storage.from("proof-library").remove(paths: [mediaPath])
                 }
             } catch {
                 Log.proofLibrary.error("delete failed for \(itemId): \(error)")
