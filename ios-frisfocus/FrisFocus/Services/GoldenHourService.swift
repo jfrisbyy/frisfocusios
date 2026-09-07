@@ -906,6 +906,17 @@ final class GoldenHourService {
         return Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
+    /// Report a failure that happened before the network — a clip that
+    /// couldn't be read off disk, a photo that wouldn't encode —
+    /// through the same alert every other Golden Hour failure uses.
+    /// These paths used to `return` in silence, so the "Post to the
+    /// wall" button simply did nothing and never said why.
+    func reportCaptureFailure(_ message: String) {
+        Log.goldenHour.error("capture failed before upload: \(message)")
+        errorMessage = message
+        showError = true
+    }
+
     private func fail(_ message: String, _ error: Error) {
         Log.goldenHour.error("\(message) \(error)")
         errorMessage = message

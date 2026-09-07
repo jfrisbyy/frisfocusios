@@ -97,13 +97,20 @@ enum CaptureDraftStore {
     // MARK: Save
 
     /// Persist the current editor session as the (single) draft.
+    ///
+    /// Returns whether the draft actually landed on disk. This used to
+    /// return Void and swallow every error, while the caller played a
+    /// success haptic and closed the editor — so a copy that failed
+    /// (no space, protected data unavailable) threw the person's work
+    /// away and told them it was saved.
+    @discardableResult
     static func save(
         result: CaptureResult,
         filter: CaptureFilter,
         captions: [CaptionBlock],
         stickers: [TaskStickerBlock],
         drawing: PKDrawing
-    ) {
+    ) -> Bool {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
@@ -114,7 +121,10 @@ enum CaptureDraftStore {
             case .photo(let image):
                 try? FileManager.default.removeItem(at: videoURL)
                 try? FileManager.default.removeItem(at: thumbURL)
-                guard let data = image.jpegData(compressionQuality: 0.92) else { return }
+                guard let data = image.jpegData(compressionQuality: 0.92) else {
+                    Log.captureDraft.error("Save failed: photo would not encode")
+                    return false
+                }
                 try data.write(to: photoURL, options: .atomic)
 
             case .video(let url, let thumb, let duration):
@@ -145,8 +155,10 @@ enum CaptureDraftStore {
 
             let drawingData = drawing.dataRepresentation()
             try drawingData.write(to: directory.appendingPathComponent("drawing.data"), options: .atomic)
+            return true
         } catch {
             Log.captureDraft.error("Save failed: \(error)")
+            return false
         }
     }
 

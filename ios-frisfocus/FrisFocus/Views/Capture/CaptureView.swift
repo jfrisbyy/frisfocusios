@@ -229,6 +229,26 @@ struct CaptureView: View {
                 stopRecording()
             }
         }
+        .onChange(of: camera.recordingState) { _, state in
+            guard state == .idle, isRecording else { return }
+                // A recording can end without anyone asking: a phone
+                // call or another app seizes the camera, the session
+                // hits a runtime error, or the app leaves the
+                // foreground. AVFoundation finalizes the file and goes
+                // idle, but nothing told this view — so the ring kept
+                // sweeping to the cap over a session that had stopped,
+                // and the release fired a photo instead. `stopRecording`
+                // clears `isRecording` before the delegate lands, so
+                // reaching here with it still set means the end was not
+                // ours.
+            isRecording = false
+            isLocked = false
+            lockProgress = 0
+            recordStart = nil
+            recordElapsed = 0
+            suppressPhotoOnRelease = true
+            pinchBase = camera.currentZoom
+        }
         .onDisappear {
             pressTimerTask?.cancel()
             camera.stop()
@@ -703,12 +723,13 @@ struct CaptureView: View {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         // The slide-zoom sticks: future pinches continue from here.
         pinchBase = camera.currentZoom
-        let duration = recordElapsed
+        let polled = recordElapsed
         camera.stopRecording { url in
             guard let url else { return }
             Task { @MainActor in
-                let thumb = await Self.generateThumbnail(for: url)
-                captureResult = .video(url: url, thumbnail: thumb, duration: duration)
+                async let thumb = Self.generateThumbnail(for: url)
+                async let seconds = CameraService.duration(of: url, fallback: polled)
+                captureResult = .video(url: url, thumbnail: await thumb, duration: await seconds)
             }
         }
     }
@@ -1269,6 +1290,21 @@ final class CameraService: NSObject {
             session.removeInput(input)
         }
         session.commitConfiguration()
+    }
+
+    /// The real duration of a finished recording.
+    ///
+    /// Every camera surface reported the value from its own 0.05 s UI
+    /// stopwatch, which is a display number: it drifts whenever the main
+    /// thread stalls, it's clamped at the cap, and it starts before
+    /// AVFoundation has opened the file. Recipients then saw a length
+    /// that didn't match the clip they were watching. The asset knows.
+    nonisolated static func duration(of url: URL, fallback: Double) async -> Double {
+        guard let time = try? await AVURLAsset(url: url).load(.duration),
+              time.isNumeric else { return fallback }
+        let seconds = time.seconds
+        guard seconds.isFinite, seconds > 0 else { return fallback }
+        return seconds
     }
 
     func stopRecording(completion: @escaping (URL?) -> Void) {

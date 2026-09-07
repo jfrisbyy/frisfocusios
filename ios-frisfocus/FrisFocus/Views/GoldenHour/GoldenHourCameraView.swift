@@ -24,7 +24,12 @@ struct GoldenHourCameraView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
-    @State private var camera = CameraService()
+    /// The shared, pre-warmable app camera — the same instance every
+    /// other capture surface uses. This built its own `CameraService()`,
+    /// so opening Golden Hour raised a SECOND AVCaptureSession against
+    /// the same physical device while the shared one was still running:
+    /// whichever lost the arbitration went dark or refused to record.
+    private var camera: CameraService { .shared }
     @State private var captured: CaptureResult?
     @State private var isPosting = false
 
@@ -33,6 +38,13 @@ struct GoldenHourCameraView: View {
     @State private var recordStart: Date?
     @State private var recordElapsed: Double = 0
     @State private var pressTimerTask: Task<Void, Never>?
+    /// The 10 s cap ended the recording while the finger was still
+    /// down. The release that follows closes THAT recording — it is not
+    /// a request for a photo. `takePhoto`'s `captured == nil` guard
+    /// didn't cover this: `captured` is only set from `stopRecording`'s
+    /// async completion, so the release usually won the race and
+    /// replaced the clip with a still.
+    @State private var suppressPhotoOnRelease: Bool = false
 
     private let maxRecordSeconds: Double = 10
     private let recordTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
@@ -73,8 +85,26 @@ struct GoldenHourCameraView: View {
             let elapsed = Date().timeIntervalSince(start)
             recordElapsed = min(elapsed, maxRecordSeconds)
             if elapsed >= maxRecordSeconds {
+                suppressPhotoOnRelease = true
                 stopRecording()
             }
+        }
+        .onChange(of: camera.recordingState) { _, state in
+            guard state == .idle, isRecording else { return }
+                // A recording can end without anyone asking: a phone
+                // call or another app seizes the camera, the session
+                // hits a runtime error, or the app leaves the
+                // foreground. AVFoundation finalizes the file and goes
+                // idle, but nothing told this view — so the ring kept
+                // sweeping to the cap over a session that had stopped,
+                // and the release fired a photo instead. `stopRecording`
+                // clears `isRecording` before the delegate lands, so
+                // reaching here with it still set means the end was not
+                // ours.
+            isRecording = false
+            recordStart = nil
+            recordElapsed = 0
+            suppressPhotoOnRelease = true
         }
         .onDisappear {
             pressTimerTask?.cancel()
@@ -205,20 +235,24 @@ struct GoldenHourCameraView: View {
                 guard pressTimerTask == nil, !isRecording, camera.isReady, captured == nil else { return }
                 pressTimerTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(220))
-                    if !Task.isCancelled {
-                        startRecording()
-                    }
+                    guard !Task.isCancelled else { return }
+                    // Clear the slot from inside the task too — cleared
+                    // only in onEnded, a gesture that never delivered
+                    // one left hold-to-record dead for good.
+                    pressTimerTask = nil
+                    startRecording()
                 }
             }
             .onEnded { _ in
+                pressTimerTask?.cancel()
+                pressTimerTask = nil
                 if isRecording {
                     stopRecording()
+                } else if suppressPhotoOnRelease {
+                    suppressPhotoOnRelease = false
                 } else {
-                    pressTimerTask?.cancel()
-                    pressTimerTask = nil
                     takePhoto()
                 }
-                pressTimerTask = nil
             }
     }
 
@@ -234,22 +268,24 @@ struct GoldenHourCameraView: View {
 
     private func startRecording() {
         guard camera.isReady, !isRecording, captured == nil else { return }
+        // Only show a recording UI for a recording the service accepted.
+        guard camera.startRecording() else { return }
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
         recordElapsed = 0
         recordStart = Date()
         isRecording = true
-        camera.startRecording()
     }
 
     private func stopRecording() {
         guard isRecording else { return }
         isRecording = false
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        let duration = recordElapsed
+        let polled = recordElapsed
         camera.stopRecording { url in
             guard let url else { return }
             Task { @MainActor in
-                captured = .video(url: url, thumbnail: nil, duration: duration)
+                let seconds = await CameraService.duration(of: url, fallback: polled)
+                captured = .video(url: url, thumbnail: nil, duration: seconds)
             }
         }
     }
@@ -361,7 +397,10 @@ struct GoldenHourCameraView: View {
             defer { isPosting = false }
             switch result {
             case .photo(let image):
-                guard let data = image.jpegData(compressionQuality: 0.85) else { return }
+                guard let data = image.jpegData(compressionQuality: 0.85), !data.isEmpty else {
+                    service.reportCaptureFailure("That photo couldn't be prepared. Try taking it again.")
+                    return
+                }
                 let ok = await service.postCapture(
                     circleId: moment.circleId,
                     data: data,
@@ -375,7 +414,10 @@ struct GoldenHourCameraView: View {
                 }
             case .video(let url, _, let duration):
                 let compressed = await VideoTranscoder.compressForUpload(sourceURL: url) ?? url
-                guard let data = try? Data(contentsOf: compressed) else { return }
+                guard let data = try? Data(contentsOf: compressed), !data.isEmpty else {
+                    service.reportCaptureFailure("That clip couldn't be prepared. Try recording it again.")
+                    return
+                }
                 let ok = await service.postCapture(
                     circleId: moment.circleId,
                     data: data,

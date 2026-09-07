@@ -83,6 +83,11 @@ struct ShareCameraView: View {
     /// Arms the hold-to-record after a short press; a quick release
     /// before it fires is a photo instead.
     @State private var pressTimerTask: Task<Void, Never>?
+    /// The 30 s cap ended the recording while the finger was still
+    /// down. Whatever release follows closes THAT recording — it is not
+    /// a request for a photo. Without this the cap silently replaced a
+    /// full-length video with a still the moment the finger lifted.
+    @State private var suppressPhotoOnRelease: Bool = false
 
     // Visual effects
     @State private var flashOpacity: Double = 0
@@ -218,6 +223,24 @@ struct ShareCameraView: View {
         .onDisappear {
             pressTimerTask?.cancel()
             camera.stop()
+        }
+        .onChange(of: camera.recordingState) { _, state in
+            guard state == .idle, isRecording else { return }
+                // A recording can end without anyone asking: a phone
+                // call or another app seizes the camera, the session
+                // hits a runtime error, or the app leaves the
+                // foreground. AVFoundation finalizes the file and goes
+                // idle, but nothing told this view — so the ring kept
+                // sweeping to the cap over a session that had stopped,
+                // and the release fired a photo instead. `stopRecording`
+                // clears `isRecording` before the delegate lands, so
+                // reaching here with it still set means the end was not
+                // ours.
+            withAnimation(.easeOut(duration: 0.2)) { isRecording = false }
+            recordStart = nil
+            recordElapsed = 0
+            suppressPhotoOnRelease = true
+            pinchBase = camera.currentZoom
         }
         .onReceive(recordTimer) { _ in
             tickRecording()
@@ -502,23 +525,29 @@ struct ShareCameraView: View {
                     camera.setZoom(recordZoomBase + rise / 110)
                     return
                 }
-                guard pressTimerTask == nil, camera.hasCamera else { return }
+                guard pressTimerTask == nil, camera.isReady else { return }
                 pressTimerTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(220))
-                    if !Task.isCancelled {
-                        startRecording()
-                    }
+                    guard !Task.isCancelled else { return }
+                    // Clear the slot from inside the task too. It used
+                    // to be cleared only in onEnded, so any gesture that
+                    // never delivered one — a system interruption, a
+                    // cancelled touch — left the slot occupied and
+                    // hold-to-record dead for the rest of the session.
+                    pressTimerTask = nil
+                    startRecording()
                 }
             }
             .onEnded { _ in
+                pressTimerTask?.cancel()
+                pressTimerTask = nil
                 if isRecording {
                     stopRecording()
+                } else if suppressPhotoOnRelease {
+                    suppressPhotoOnRelease = false
                 } else {
-                    pressTimerTask?.cancel()
-                    pressTimerTask = nil
                     takePhoto()
                 }
-                pressTimerTask = nil
             }
     }
 
@@ -592,34 +621,44 @@ struct ShareCameraView: View {
     }
 
     private func startRecording() {
-        guard camera.hasCamera, !isRecording else { return }
+        guard camera.isReady, !isRecording else { return }
+        // Only show a recording UI for a recording the service actually
+        // accepted. This used to flip `isRecording` first and never ask,
+        // so a refused start left a progress ring spinning over nothing
+        // and a release that produced no clip and no explanation.
+        guard camera.startRecording() else { return }
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
         recordStart = Date()
         recordElapsed = 0
         recordZoomBase = camera.currentZoom
         withAnimation(.easeOut(duration: 0.2)) { isRecording = true }
-        camera.startRecording()
         if !shutterHintSeen { shutterHintSeen = true }
     }
 
     private func stopRecording() {
         guard isRecording else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        let duration = recordElapsed
+        let polled = recordElapsed
         withAnimation(.easeOut(duration: 0.2)) { isRecording = false }
         recordStart = nil
         pinchBase = camera.currentZoom
         camera.stopRecording { url in
-            if let url {
-                result = .video(url: url, thumbnail: nil, duration: duration)
+            guard let url else { return }
+            Task { @MainActor in
+                let seconds = await CameraService.duration(of: url, fallback: polled)
+                result = .video(url: url, thumbnail: nil, duration: seconds)
             }
         }
     }
 
     private func tickRecording() {
         guard isRecording, let start = recordStart else { return }
-        recordElapsed = Date().timeIntervalSince(start)
-        if recordElapsed >= maxRecordSeconds {
+        let elapsed = Date().timeIntervalSince(start)
+        recordElapsed = min(elapsed, maxRecordSeconds)
+        if elapsed >= maxRecordSeconds {
+            // The finger is still down. Whatever release follows is the
+            // end of THIS recording, not a new photo.
+            suppressPhotoOnRelease = true
             stopRecording()
         }
     }

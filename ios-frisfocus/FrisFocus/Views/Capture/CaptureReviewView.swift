@@ -542,14 +542,22 @@ struct CaptureReviewView: View {
             titleVisibility: .visible
         ) {
             Button("Save draft") {
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-                CaptureDraftStore.save(
+                // Confirm and leave only if it really saved. The haptic
+                // used to fire first and the editor closed regardless,
+                // so a failed write lost the work behind a success cue.
+                let saved = CaptureDraftStore.save(
                     result: result,
                     filter: selectedFilter,
                     captions: captions,
                     stickers: taskStickers,
                     drawing: pkCanvas.drawing
                 )
+                guard saved else {
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    postFailure = "That draft couldn't be saved. Your post is still here."
+                    return
+                }
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
                 onRetake()
             }
             Button("Discard", role: .destructive) {
