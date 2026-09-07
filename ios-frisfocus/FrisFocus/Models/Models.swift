@@ -192,7 +192,13 @@ enum ScoringType: String, Codable, Equatable, CaseIterable {
 /// One discrete level in a tiered task. At or above `threshold` (measured
 /// in the config's `unit`), the level awards `points`. The engine awards
 /// the points of the highest tier whose threshold the logged amount meets.
-struct ScoreTier: Codable, Equatable, Identifiable {
+///
+/// `nonisolated` because the setup draft types are, and they hold these.
+/// The project defaults every type to the main actor, so a main-actor
+/// `Equatable` conformance reached from a nonisolated `Draft` struct is a
+/// warning today and an error in the Swift 6 language mode. Two integers
+/// have no business being actor-bound either way.
+nonisolated struct ScoreTier: Codable, Equatable, Identifiable, Sendable {
     var id: UUID = UUID()
     var threshold: Double
     var points: Int
@@ -517,7 +523,7 @@ enum NegativeType: String, Codable, Equatable, CaseIterable {
 /// fifteen altogether, not eighteen. The per-occurrence charge is the
 /// difference between the tier you just reached and the one you were
 /// on, which keeps the running total honest and keeps undo exact.
-struct NegativeTier: Codable, Equatable, Hashable {
+nonisolated struct NegativeTier: Codable, Equatable, Hashable, Sendable {
     var threshold: Int
     var points: Int
 }
