@@ -1404,6 +1404,11 @@ struct SharePreviewView: View {
                 if ok {
                     savedCount += 1
                     if let label = store.proofTargetLabel(target) { pinLabels.append(label) }
+                    // The real id, not just the name. Linking by display
+                    // name is what made "show me every proof for this
+                    // milestone" unanswerable, and orphaned a task's
+                    // proofs the moment it was renamed.
+                    store.linkProofLibraryItem(libraryItemId, to: target)
                 }
             }
         }
@@ -1447,9 +1452,11 @@ struct SharePreviewView: View {
         var labels: [String] = []
         for id in taskIds where store.attachProof(media, toTaskId: id) {
             if let label = store.proofTargetLabel(.task(id)) { labels.append(label) }
+            store.linkProofLibraryItem(libraryItemId, to: .task(id))
         }
         for id in todoIds where store.attachProof(media, toTodoId: id) {
             if let label = store.proofTargetLabel(.todo(id)) { labels.append(label) }
+            store.linkProofLibraryItem(libraryItemId, to: .todo(id))
         }
         store.appendProofLibraryLabels(libraryItemId, labels: labels)
     }
@@ -1484,8 +1491,11 @@ struct SharePreviewView: View {
             ok = false
             confirmation = "Couldn't save — try again"
         }
-        if ok, let label = store.proofTargetLabel(target) {
-            store.appendProofLibraryLabels(libraryItemId, labels: [label])
+        if ok {
+            store.linkProofLibraryItem(libraryItemId, to: target)
+            if let label = store.proofTargetLabel(target) {
+                store.appendProofLibraryLabels(libraryItemId, labels: [label])
+            }
         }
         UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
         withAnimation(.easeOut(duration: 0.22)) {

@@ -1874,6 +1874,28 @@ struct CaptureReviewView: View {
         .accessibilityHint("Keeps the proof beyond the 24 hour story")
     }
 
+    /// What this proof is OF, gathered from wherever the capture was
+    /// opened. A task sticker on the card carries the id of the task it
+    /// came from, which is exactly the "it should already know" case:
+    /// holding a task to add a proof means the proof belongs to that
+    /// task, and nobody should have to say so twice.
+    private func libraryContext(caption: String, sharedTo: [ProofShareDestination]) -> ProofLibraryContext {
+        var links = ProofLibraryLinks()
+        var labels: [String] = []
+        for sticker in taskStickers {
+            if links.taskId == nil, let id = sticker.sourceTaskId { links.taskId = id }
+            if links.todoId == nil, let id = sticker.sourceTodoId { links.todoId = id }
+            if !labels.contains(sticker.title) { labels.append(sticker.title) }
+        }
+        let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ProofLibraryContext(
+            caption: trimmed.isEmpty ? nil : trimmed,
+            links: links,
+            sharedTo: sharedTo,
+            labels: labels
+        )
+    }
+
     /// Every target the proof is already pinned to via a task/to-do
     /// sticker on the card. The picker shows these pre-ticked + locked.
     private var stickerTargets: Set<ProofAttachTarget> {
@@ -2337,6 +2359,17 @@ struct CaptureReviewView: View {
                     isPosting = false
                     return
                 }
+                // A live proof is still something they made. It never
+                // reached the library, so the one thing a person is most
+                // likely to want back — the proof they sent someone —
+                // was the one thing not kept.
+                store.recordProofToLibrary(
+                    imageData: mediaData,
+                    type: mediaType,
+                    duration: duration,
+                    source: .saved,
+                    context: libraryContext(caption: captionToSend, sharedTo: [.friend])
+                )
                 withAnimation(.easeOut(duration: 0.2)) {
                     sentToast = "Proof sent to \(liveProofRecipientName ?? "your friend")"
                 }
@@ -2407,14 +2440,23 @@ struct CaptureReviewView: View {
             if audience.hasPrivateRecipients {
                 toast = "Proof sent to \(summaryLabel(tokens: privateTokens, empty: "your picks"))"
             }
-            if audience.everyone || !audience.circleIds.isEmpty {
-                store.recordProofToLibrary(
-                    imageData: mediaData,
-                    type: mediaType,
-                    duration: duration,
-                    source: .posted
-                )
-            }
+            // Everything a person makes is archived, not just what they
+            // posted publicly. A proof sent only to a friend used to
+            // leave no trace in their own library — the one place they
+            // would go looking for it later. `sharedTo` records where it
+            // went, so "just for me" and "this went out" stay legible
+            // without having to infer it from where the bytes landed.
+            var destinations: [ProofShareDestination] = []
+            if audience.everyone { destinations.append(.story) }
+            if !audience.circleIds.isEmpty { destinations.append(.circle) }
+            if !audience.friendIds.isEmpty { destinations.append(.friend) }
+            store.recordProofToLibrary(
+                imageData: mediaData,
+                type: mediaType,
+                duration: duration,
+                source: destinations.contains(.story) || destinations.contains(.circle) ? .posted : .saved,
+                context: libraryContext(caption: captionToSend, sharedTo: destinations)
+            )
 
             // A posted draft is done — clear the stored copy.
             if initialDraftState != nil { CaptureDraftStore.clear() }
