@@ -10,34 +10,26 @@ you choose, and never gamified into pressure.
 
 ## Getting the project to build
 
-`ios-frisfocus/FrisFocus/Config.swift` carries the environment values every
-network call needs, and it **is** tracked — the platform that builds this app
-syncs the repository verbatim, so a file it cannot see is a compile error. The
-values are safe to commit only because row-level security is on for every
-Supabase table; the anon key's safety depends entirely on that.
+`ios-frisfocus/FrisFocus/Config.swift` is **tracked, and every value in it is
+an empty string on purpose.** It is the build platform's own file: a read-only
+view of the public environment variables, with the real values injected at iOS
+build time. Do not edit it to add values, and do not read it expecting to find
+any — you will only ever see `""`. Build it as committed and it works.
 
-Check what is committed before trusting a build:
-
-```bash
-./scripts/check-config.sh
-```
-
-A blank `Config.swift` compiles and then signs nobody in and reaches no
-backend, so that check is the only thing standing between an empty value and a
-silently dead app. To regenerate the file — for an offline build, or after
-rotating a key:
+That only holds inside the platform's build. To open the project in Xcode
+locally and actually reach the network, overwrite it with your own values —
+which dirties a tracked file, so discard the change before committing:
 
 ```bash
-# Placeholders — compiles and opens, but cannot reach the network.
-./scripts/bootstrap-config.sh
-
-# Real values — a working local build.
 FRISFOCUS_SUPABASE_URL="https://<ref>.supabase.co" \
 FRISFOCUS_SUPABASE_ANON_KEY="<anon key>" \
 FRISFOCUS_RORK_AUTH_URL="https://api.rork.com" \
 FRISFOCUS_RORK_APP_KEY="<app key>" \
 FRISFOCUS_PROJECT_ID="<project id>" \
 ./scripts/bootstrap-config.sh
+
+# when you are done
+git checkout -- ios-frisfocus/FrisFocus/Config.swift
 ```
 
 Then:
@@ -65,9 +57,9 @@ fresh clone and CI keep building.
 
 `.github/workflows/ios.yml` runs on every push:
 
-- **Build & test** (macOS): checks the committed `Config.swift`, falling back
-  to repository secrets (with a warning annotation) when it is blank, then
-  compiles the `FrisFocus` scheme against the iOS Simulator SDK, and runs the
+- **Build & test** (macOS): compiles the committed `Config.swift` — the same
+  file the platform builds, generating a placeholder one only if the repo has
+  none — then compiles the `FrisFocus` scheme against the iOS Simulator SDK, and runs the
   unit tests.
 - **Edge functions typecheck** (Ubuntu): `deno check` over every
   `backend/functions/*/index.ts`.

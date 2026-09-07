@@ -49,30 +49,20 @@ jobs:
           swift --version
           xcodebuild -showsdks | grep -i "iphonesimulator" || true
 
-      # Config.swift is tracked now — the platform that builds this app
-      # syncs the repo verbatim, and a missing file is a compile error
-      # there. So the committed values are what ships. Check them; only
-      # fall back to secrets when the committed file is blank, and say so
-      # loudly, because a blank Config compiles and then does nothing.
-      - name: Check committed Config.swift
-        id: config
+      # Config.swift is tracked and is the build platform's own file:
+      # every property is empty in source control and the real values are
+      # injected at iOS build time. CI should compile the file Rork
+      # compiles, so it only generates one when the repo has none — which
+      # would otherwise be a `cannot find 'Config' in scope` failure that
+      # says nothing about the change under test.
+      - name: Ensure Config.swift exists
         run: |
-          if ./scripts/check-config.sh; then
-            echo "generate=false" >> "$GITHUB_OUTPUT"
+          if [ -f ios-frisfocus/FrisFocus/Config.swift ]; then
+            echo "Using the committed Config.swift (values injected at build time)."
           else
-            echo "generate=true" >> "$GITHUB_OUTPUT"
-            echo "::warning file=ios-frisfocus/FrisFocus/Config.swift::Committed Config.swift has empty or placeholder values. This build is compiling against CI secrets, but anything built from this commit elsewhere will sign nobody in and reach no backend."
+            echo "::warning::No committed Config.swift; generating placeholders so this job can compile."
+            ./scripts/bootstrap-config.sh
           fi
-
-      - name: Generate Config.swift from secrets
-        if: steps.config.outputs.generate == 'true'
-        env:
-          FRISFOCUS_SUPABASE_URL: ${{ secrets.FRISFOCUS_SUPABASE_URL }}
-          FRISFOCUS_SUPABASE_ANON_KEY: ${{ secrets.FRISFOCUS_SUPABASE_ANON_KEY }}
-          FRISFOCUS_RORK_AUTH_URL: ${{ secrets.FRISFOCUS_RORK_AUTH_URL }}
-          FRISFOCUS_RORK_APP_KEY: ${{ secrets.FRISFOCUS_RORK_APP_KEY }}
-          FRISFOCUS_PROJECT_ID: ${{ secrets.FRISFOCUS_PROJECT_ID }}
-        run: ./scripts/bootstrap-config.sh
 
       - name: Cache SwiftPM
         uses: actions/cache@v4
