@@ -147,17 +147,23 @@ extension Store {
                 scoring: scoring
             )
             // Weekly floor referencing this task → attached penalty rule.
-            if let floor = draft.weeklyPenalties.first(where: {
-                $0.referenceName.caseInsensitiveCompare(draftTask.name) == .orderedSame
-            }) {
-                task.penalty = PenaltyRule(
-                    enabled: true,
-                    timesThreshold: floor.threshold,
-                    condition: .lessThan,
-                    penaltyPoints: floor.value,
-                    metric: floor.metric
-                )
-            }
+            // Every floor referencing this task, not just the first.
+            // Taking `.first` dropped the rest without a word, so
+            // someone who wanted both "at least three runs" and "at
+            // least 15km" lost one and never learned which.
+            let floors = draft.weeklyPenalties
+                .filter { $0.referenceName.caseInsensitiveCompare(draftTask.name) == .orderedSame }
+                .map { floor in
+                    PenaltyRule(
+                        enabled: true,
+                        timesThreshold: floor.threshold,
+                        condition: .lessThan,
+                        penaltyPoints: floor.value,
+                        metric: floor.metric
+                    )
+                }
+            task.penalty = floors.first
+            task.extraPenalties = Array(floors.dropFirst())
             taskIdByName[draftTask.name.lowercased()] = task.id
             newTasks.append(task)
         }
@@ -356,17 +362,23 @@ extension Store {
                 pinSchedule: .none,
                 scoring: scoring
             )
-            if let floor = draft.weeklyPenalties.first(where: {
-                $0.referenceName.caseInsensitiveCompare(draftTask.name) == .orderedSame
-            }) {
-                task.penalty = PenaltyRule(
-                    enabled: true,
-                    timesThreshold: floor.threshold,
-                    condition: .lessThan,
-                    penaltyPoints: floor.value,
-                    metric: floor.metric
-                )
-            }
+            // Every floor referencing this task, not just the first.
+            // Taking `.first` dropped the rest without a word, so
+            // someone who wanted both "at least three runs" and "at
+            // least 15km" lost one and never learned which.
+            let floors = draft.weeklyPenalties
+                .filter { $0.referenceName.caseInsensitiveCompare(draftTask.name) == .orderedSame }
+                .map { floor in
+                    PenaltyRule(
+                        enabled: true,
+                        timesThreshold: floor.threshold,
+                        condition: .lessThan,
+                        penaltyPoints: floor.value,
+                        metric: floor.metric
+                    )
+                }
+            task.penalty = floors.first
+            task.extraPenalties = Array(floors.dropFirst())
             taskIdByName[draftTask.name.lowercased()] = task.id
             newTasks.append(task)
         }
