@@ -147,7 +147,7 @@ struct HabitTrainBuilderView: View {
                     Text(task.title)
                         .font(.sans(14, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
-                    Text("\(task.category.displayName) · \(task.pointValue) pts")
+                    Text("\(store.categoryDisplayName(task.category)) · \(task.pointValue) pts")
                         .font(.sans(11, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.55))
                 }
@@ -325,7 +325,7 @@ private struct TaskPickerView: View {
                             .disabled(excludedTaskIds.contains(task.id))
                         }
                     } header: {
-                        Text(group.category.displayName)
+                        Text(store.categoryDisplayName(group.category))
                             .font(.sans(11, weight: .semibold))
                             .foregroundStyle(group.category.darkColor)
                     }

@@ -154,7 +154,7 @@ struct AddToSectionSheet: View {
                         .foregroundStyle(Theme.textPrimary.opacity(added ? 0.5 : 1))
                         .lineLimit(1)
                     HStack(spacing: 5) {
-                        Text(task.category.displayName)
+                        Text(store.categoryDisplayName(task.category))
                         if task.timeWindow != nil {
                             Text("· fixed time")
                         }

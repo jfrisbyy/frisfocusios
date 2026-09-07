@@ -205,7 +205,7 @@ private struct SharedTaskRow: View {
             HStack(spacing: 5) {
                 Image(systemName: "link")
                     .font(.sans(10, weight: .semibold))
-                Text("linked to your \(personal.category.displayName.lowercased()) board")
+                Text("linked to your \(store.categoryDisplayName(personal.category).lowercased()) board")
                     .font(.sans(12, weight: .regular))
             }
             .foregroundStyle(Theme.alertGreen)

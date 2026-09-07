@@ -204,7 +204,7 @@ struct TaskLinkingPickerView: View {
     }
 
     private func metadataText(for task: FFTask) -> String {
-        "\(task.category.displayName) · \(task.pointValue) pts"
+        "\(store.categoryDisplayName(task.category)) · \(task.pointValue) pts"
     }
 
     private func radio(isSelected: Bool, accent: Color, disabled: Bool) -> some View {

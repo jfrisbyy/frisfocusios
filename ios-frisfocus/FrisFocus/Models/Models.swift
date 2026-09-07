@@ -85,7 +85,9 @@ extension Category {
         case .learning:  return ["learn", "study", "school", "class", "course", "exam", "language",
                                  "read", "french", "spanish", "certif", "skill", "practice", "revision"]
         case .people:    return ["people", "friend", "family", "relationship", "social", "connect",
-                                 "love", "partner", "call", "community", "mum", "mom", "dad"]
+                                 "love", "partner", "call", "community", "mum", "mom", "dad",
+                                 "kid", "child", "son", "daughter", "parent", "mother", "father",
+                                 "wife", "husband", "marriage", "brother", "sister"]
         }
     }
 

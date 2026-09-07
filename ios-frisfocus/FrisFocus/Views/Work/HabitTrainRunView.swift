@@ -195,7 +195,7 @@ struct HabitTrainRunView: View {
                     .strikethrough(isDone, color: Theme.textPrimary.opacity(0.6))
                 HStack(spacing: 6) {
                     Circle().fill(task.category.color).frame(width: 5, height: 5)
-                    Text("\(task.category.displayName) · \(task.pointValue) pts")
+                    Text("\(store.categoryDisplayName(task.category)) · \(task.pointValue) pts")
                         .font(.sans(11, weight: .regular))
                         .foregroundStyle(Theme.textPrimary.opacity(0.6))
                 }
