@@ -848,9 +848,9 @@ struct RubricReviewView: View {
     private var cta: some View {
         Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            viewModel.advanceToNaming()
+            viewModel.advanceToShape()
         } label: {
-            Text("Name your season →")
+            Text("Shape your week →")
                 .font(.sans(16, weight: .medium))
                 .foregroundStyle(Theme.textCream)
                 .frame(maxWidth: .infinity)

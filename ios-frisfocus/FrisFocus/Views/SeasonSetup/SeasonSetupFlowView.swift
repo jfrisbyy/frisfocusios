@@ -56,6 +56,10 @@ struct SeasonSetupFlowView: View {
                 RubricReviewView(viewModel: viewModel)
                     .transition(stageTransition)
 
+            case .shape:
+                ShapeYourWeekView(viewModel: viewModel)
+                    .transition(stageTransition)
+
             case .naming:
                 SetupNameView(viewModel: viewModel) { name, endMode, endDate in
                     frozenName = name

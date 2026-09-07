@@ -247,6 +247,7 @@ nonisolated struct SetupConversationSnapshot: Codable, Sendable {
         case "review": return usedStarter == true
             ? "Your starter board, ready to edit"
             : "Your season is built \u{2014} review and start it"
+        case "shape": return "Setting the shape of your week"
         case "naming": return "Just needs a name"
         default: break
         }

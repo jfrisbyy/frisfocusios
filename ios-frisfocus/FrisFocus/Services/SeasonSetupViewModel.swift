@@ -23,6 +23,10 @@ final class SeasonSetupViewModel {
         case begin
         case conversation
         case review
+        /// Where the week gets its shape. Between the board and the
+        /// name because the last thing you decide about a season is
+        /// what to call it.
+        case shape
         case naming
         case begins
     }
@@ -135,7 +139,11 @@ final class SeasonSetupViewModel {
             suggestedEndDate = snapshot.suggestedEndDate
             conversationDone = true
             arcProgress = 1.0
-            stage = snapshot.stage == "naming" ? .naming : .review
+            switch snapshot.stage {
+            case "naming": stage = .naming
+            case "shape": stage = .shape
+            default: stage = .review
+            }
             return
         }
 
@@ -182,7 +190,8 @@ final class SeasonSetupViewModel {
     /// Persist the current in-progress conversation so it can be resumed.
     /// No-op once the rubric is produced (the flow advances to review).
     func saveProgress() {
-        guard stage == .conversation || stage == .review || stage == .naming else { return }
+        guard stage == .conversation || stage == .review
+                || stage == .shape || stage == .naming else { return }
         // A conversation the person has not spoken in is not a
         // conversation. This used to require only a non-empty history,
         // which is true the moment the OPENER lands — so tapping Begin,
@@ -198,6 +207,7 @@ final class SeasonSetupViewModel {
         let stageName: String
         switch stage {
         case .review: stageName = "review"
+        case .shape: stageName = "shape"
         case .naming: stageName = "naming"
         default: stageName = "conversation"
         }
@@ -270,14 +280,26 @@ final class SeasonSetupViewModel {
     }
 
     /// Review → naming.
+    /// Review → the shaping screen.
+    func advanceToShape() {
+        stage = .shape
+        saveProgress()
+    }
+
+    /// Shaping → back to the board (the back chevron).
+    func backToReviewFromShape() {
+        stage = .review
+        saveProgress()
+    }
+
     func advanceToNaming() {
         stage = .naming
         saveProgress()
     }
 
-    /// Naming → back to review (the back chevron).
+    /// Naming → back to shaping (the back chevron).
     func backToReview() {
-        stage = .review
+        stage = .shape
     }
 
     /// Freeze the rubric into the Store and land on the closing screen.
