@@ -176,7 +176,6 @@ struct HomeView: View {
         return messageGraph.totalUnread(myUserId: myId)
     }
 
-    @ViewBuilder
     /// How far the sun zone's header row (share button + profile avatar)
     /// reaches below the safe-area top: a 38pt row plus its 12pt bottom
     /// padding. The pinned glance chips offset by this so they sit under
@@ -188,6 +187,7 @@ struct HomeView: View {
     /// back into each other.
     static let sunHeaderBandHeight: CGFloat = 50
 
+    @ViewBuilder
     private var home: some View {
         ScrollViewReader { scrollProxy in
             ZStack(alignment: .bottom) {
