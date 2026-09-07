@@ -32,8 +32,3 @@ xcuserdata/
 # Rork
 .rork/
 .env
-
-# Generated build configuration — carries environment values, never
-# committed. Regenerate with scripts/bootstrap-config.sh; add new keys to
-# scripts/config/Config.example.swift.
-Config.swift
