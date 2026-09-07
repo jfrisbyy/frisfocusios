@@ -3658,6 +3658,13 @@ extension Store {
         //     answered once a week is over, and nothing used to ask.
         sweepClosedWeekPenalties(asOf: today)
 
+        // 1c. Stamp today's assigned template. This ran only from
+        //     inside the agenda screen, so someone who set up their
+        //     week and then never tapped the calendar button had a week
+        //     that never happened — the assignment was real, the days
+        //     it described simply never assembled.
+        materializeAssignedTemplateIfNeeded(for: today)
+
         // 2. Penalise yesterday's missed Must-Dos. Skipped on first
         //    launch — there's no "yesterday" to evaluate when the app
         //    didn't exist yet.

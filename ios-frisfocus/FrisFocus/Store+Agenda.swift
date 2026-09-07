@@ -13,6 +13,42 @@ import Foundation
 
 extension Store {
 
+    // MARK: - Today's plan, by band
+
+    /// Today's plan split into the three day bands plus the Anytime
+    /// tray, each in clock order with unanchored rows after.
+    ///
+    /// A season built in conversation can carry fifty-eight tasks, and
+    /// a flat list of fifty-eight rows is not a plan — it is a wall you
+    /// scroll past. The bands are what make a dense day legible: three
+    /// short sections of things placed at a time, and a tray holding
+    /// everything that is simply available. Empty bands are omitted, so
+    /// a person who never places anything sees exactly what they saw
+    /// before.
+    var todaysPlanByBand: [(band: PartOfDay, items: [HomeRowItem])] {
+        let grouped = Dictionary(grouping: todaysPlan, by: \.band)
+        let order: [PartOfDay] = PartOfDay.bands + [.anytime]
+        return order.compactMap { band in
+            guard let items = grouped[band], !items.isEmpty else { return nil }
+            let sorted = items.sorted { lhs, rhs in
+                switch (lhs.minuteAnchor, rhs.minuteAnchor) {
+                case let (l?, r?): return l < r
+                case (_?, nil):    return true
+                case (nil, _?):    return false
+                case (nil, nil):   return false
+                }
+            }
+            return (band: band, items: sorted)
+        }
+    }
+
+    /// True when the day has anything actually placed in a band, rather
+    /// than everything sitting in the tray. The plan only bothers with
+    /// headings once that is true.
+    var todaysPlanHasBands: Bool {
+        todaysPlan.contains { $0.band != .anytime }
+    }
+
     // MARK: - Buckets: resolution
 
     /// Every bucket that appears on the given calendar day, ordered:

@@ -54,6 +54,11 @@ struct AgendaDayView: View {
     @State private var scheduleTask: FFTask?
     @State private var showNewBucket: Bool = false
     @State private var showTemplateLibrary: Bool = false
+    /// The week view had no entry point anywhere in the app — three
+    /// hundred lines reachable only from its own Xcode preview. It
+    /// matters now that a season arrives carrying real weekday
+    /// schedules: the week is where you see them.
+    @State private var showWeek: Bool = false
     @State private var showSaveTemplate: Bool = false
     @State private var dropTarget: PartOfDay?
     @State private var addToBand: PartOfDay?
@@ -146,6 +151,10 @@ struct AgendaDayView: View {
                 .environment(store)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showWeek) {
+            WeekScheduleView()
+                .environment(store)
         }
         .sheet(isPresented: $showTemplateLibrary) {
             DayTemplateLibrarySheet(day: selectedDay)
@@ -455,6 +464,9 @@ struct AgendaDayView: View {
             HStack(spacing: 10) {
                 footerButton(title: "Add bucket", systemImage: "plus.rectangle.on.rectangle") {
                     showNewBucket = true
+                }
+                footerButton(title: "The week", systemImage: "calendar") {
+                    showWeek = true
                 }
                 footerButton(title: "Save as template", systemImage: "square.and.arrow.down") {
                     showSaveTemplate = true

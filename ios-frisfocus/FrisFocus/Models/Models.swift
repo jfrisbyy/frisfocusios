@@ -1552,6 +1552,28 @@ enum HomeRowItem: Identifiable {
         case .bucket(let b): return b.id
         }
     }
+
+    /// Which part of the day this row belongs to.
+    ///
+    /// A to-do or a routine link has no placement of its own — those
+    /// belong to the day rather than to an hour of it — so they land in
+    /// the tray alongside everything the season didn't presume to place.
+    var band: PartOfDay {
+        switch self {
+        case .task(let t): return t.timeWindow.map { PartOfDay.band(forMinutes: $0.startMinutes) } ?? t.partOfDay
+        case .bucket(let b): return b.resolvedBand
+        case .todo, .cadenceLink: return .anytime
+        }
+    }
+
+    /// Sort key inside a band: clock-anchored rows first, in time order.
+    var minuteAnchor: Int? {
+        switch self {
+        case .task(let t): return t.timeWindow?.startMinutes
+        case .bucket(let b): return b.timeWindow?.startMinutes
+        case .todo, .cadenceLink: return nil
+        }
+    }
 }
 
 // MARK: - To-do due text

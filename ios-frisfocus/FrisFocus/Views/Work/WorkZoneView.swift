@@ -23,6 +23,9 @@ struct WorkZoneView: View {
     @State private var proofTask: FFTask?
     @State private var showQuickAdd: Bool = false
     @State private var showAgenda: Bool = false
+    /// Whether the Anytime tray is open. Starts closed so a dense day
+    /// opens on what was actually planned.
+    @State private var trayExpanded: Bool = false
     /// The flexible block whose honor sheet is open (tapped on the flat list).
     @State private var fulfillBucket: Bucket?
     /// One-time gentle teaching line for the hidden swipe shortcuts —
@@ -84,7 +87,15 @@ struct WorkZoneView: View {
                     ForEach(store.habitTrains) { train in
                         HabitTrainRow(train: train)
                     }
-                    if store.todaysPlan.count > Self.planScrollThreshold {
+                    // A conversation-built season can carry fifty-eight
+                    // tasks, and a flat list of fifty-eight rows is not
+                    // a plan — it is a wall. Once anything is actually
+                    // placed in a band, the day reads as three short
+                    // sections plus a tray of what is simply available.
+                    // A day with nothing placed looks exactly as it did.
+                    if store.todaysPlanHasBands {
+                        bandedPlanList
+                    } else if store.todaysPlan.count > Self.planScrollThreshold {
                         scrollingPlanList
                     } else {
                         ForEach(store.todaysPlan) { item in
@@ -214,6 +225,9 @@ struct WorkZoneView: View {
     /// list becomes a self-contained scrollable box instead of pushing
     /// the whole page taller.
     private static let planScrollThreshold: Int = 8
+    /// Above this many tray rows, the tray collapses. Below it, hiding
+    /// four things behind a disclosure is worse than showing them.
+    private static let trayCollapseThreshold: Int = 6
 
     /// Approximate height of a single plan row (card + inter-row spacing).
     /// Used to cap the scroll box at roughly the threshold number of rows.
@@ -363,6 +377,74 @@ struct WorkZoneView: View {
                 endPoint: .bottom
             )
         )
+    }
+
+    // MARK: - Banded plan
+
+    /// The day in bands. Morning, afternoon and evening carry what was
+    /// placed; the tray carries everything else and collapses once it
+    /// is long enough to bury the rest of the page.
+    @ViewBuilder
+    private var bandedPlanList: some View {
+        VStack(spacing: 14) {
+            ForEach(store.todaysPlanByBand, id: \.band) { group in
+                if group.band == .anytime {
+                    anytimeGroup(group.items)
+                } else {
+                    VStack(spacing: 8) {
+                        bandHeader(group.band, count: group.items.count)
+                        ForEach(group.items) { item in
+                            planRow(for: item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func anytimeGroup(_ items: [HomeRowItem]) -> some View {
+        // Long trays collapse. Short ones never do — hiding four things
+        // behind a disclosure is worse than showing them.
+        let collapsible = items.count > Self.trayCollapseThreshold
+        VStack(spacing: 8) {
+            Button {
+                guard collapsible else { return }
+                UISelectionFeedbackGenerator().selectionChanged()
+                withAnimation(.easeInOut(duration: 0.2)) { trayExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    bandHeader(.anytime, count: items.count)
+                    if collapsible {
+                        Image(systemName: trayExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                    }
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+            .allowsHitTesting(collapsible)
+
+            if !collapsible || trayExpanded {
+                ForEach(items) { item in
+                    planRow(for: item)
+                }
+            }
+        }
+    }
+
+    private func bandHeader(_ band: PartOfDay, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: band.symbol)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.35))
+            EyebrowText(text: band.displayName, opacity: 0.42)
+            Text("\(count)")
+                .font(.sans(10.5, weight: .regular))
+                .foregroundStyle(Theme.textPrimary.opacity(0.28))
+            Spacer()
+        }
     }
 
     // MARK: - Week schedule entry
