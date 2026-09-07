@@ -678,12 +678,112 @@ struct WeeklyRuleShapeTests {
 
     @Test("The two new category slots exist and are stable")
     func categorySlots() {
-        // The commit path maps the conversation's areas onto
-        // `Category.allCases` by index, so both the count and the raw
-        // values are load-bearing: a reorder would silently re-home
-        // every task in every persisted season.
+        // The commit path caps a season's areas at `Category.allCases`,
+        // and the raw values are what every persisted season stores, so
+        // a rename or a removal would silently re-home real tasks.
         #expect(Category.allCases.count == 8)
         #expect(Category.learning.rawValue == "learning")
         #expect(Category.people.rawValue == "people")
+    }
+}
+
+// MARK: - Matching a season's areas onto the slots
+//
+// The bug: slots were handed out by POSITION. The setup conversation
+// leads with the person's top domain, so slot 0 — `.spiritual` — took
+// whatever mattered most. Someone whose season opened on training found
+// the gym filed under a header reading "Spiritual", tinted indigo
+// against an orange season, and nudged back to life with "Quiet time has
+// been waiting".
+
+@Suite("Area slots")
+struct CategorySlotTests {
+
+    private func slot(_ name: String, taken: Set<Category> = []) -> Category {
+        Category.bestSlot(for: name, avoiding: taken)
+    }
+
+    @Test("An area lands in the slot its own name means")
+    func namesMatchSlots() {
+        #expect(slot("Fitness") == .fitness)
+        #expect(slot("Training") == .fitness)
+        #expect(slot("Faith") == .spiritual)
+        #expect(slot("Ministry") == .spiritual)
+        #expect(slot("Languages") == .learning)
+        #expect(slot("Work") == .work)
+        #expect(slot("Creative") == .creative)
+        #expect(slot("The flat") == .apartment)
+        #expect(slot("My kid") == .people)
+    }
+
+    @Test("Case and surrounding words do not matter")
+    func matchingIsLoose() {
+        #expect(slot("MY TRAINING BLOCK") == .fitness)
+        #expect(slot("keeping the place from falling apart") == .apartment)
+    }
+
+    @Test("Two areas never take the same slot")
+    func slotsAreNotShared() {
+        var taken: Set<Category> = []
+        for name in ["Fitness", "Basketball", "Faith", "Work"] {
+            let assigned = Category.bestSlot(for: name, avoiding: taken)
+            #expect(!taken.contains(assigned))
+            taken.insert(assigned)
+        }
+        #expect(taken.count == 4)
+    }
+
+    @Test("A name nothing matches still gets a slot")
+    func unmatchedStillLands() {
+        let taken: Set<Category> = [.spiritual, .fitness]
+        let assigned = slot("Zzzz", taken: taken)
+        #expect(!taken.contains(assigned))
+    }
+
+    @Test("A season using every slot still assigns one")
+    func fullBoardDoesNotCrash() {
+        // The commit path caps at eight areas, so this is unreachable
+        // there — but a function that can return nothing has to be
+        // proved not to.
+        _ = Category.bestSlot(for: "anything", avoiding: Set(Category.allCases))
+    }
+}
+
+// MARK: - Drafts that predate a field
+//
+// The bug this defends against, twice already: synthesized `Decodable`
+// does NOT fall back to a property's default when the key is missing —
+// it throws. Only Optional properties get `decodeIfPresent`. A draft
+// saved before a field existed therefore fails to decode, and takes the
+// whole resumed conversation down with it.
+
+@Suite("Draft decoding")
+struct DraftDecodingTests {
+
+    @Test("A negative saved before tiers existed still decodes")
+    func negativeWithoutTiers() throws {
+        let json = Data(#"{"id":"00000000-0000-0000-0000-000000000001","name":"Takeaway","shape":"frequencyThreshold","value":4,"window":"weekly","freeCount":2}"#.utf8)
+        let decoded = try JSONDecoder().decode(DraftNegative.self, from: json)
+        #expect(decoded.name == "Takeaway")
+        #expect(decoded.shape == .frequencyThreshold)
+        #expect(decoded.freeCount == 2)
+        #expect(decoded.tiers.isEmpty)
+    }
+
+    @Test("A tiered negative round-trips")
+    func tieredRoundTrip() throws {
+        let negative = DraftNegative(
+            name: "Drinking",
+            shape: .tiered,
+            value: 15,
+            tiers: [NegativeTier(threshold: 1, points: 3), NegativeTier(threshold: 2, points: 15)]
+        )
+        let data = try JSONEncoder().encode(negative)
+        let back = try JSONDecoder().decode(DraftNegative.self, from: data)
+        #expect(back.shape == .tiered)
+        #expect(back.tiers.count == 2)
+        // The steps are day TOTALS, so the headline value is the worst
+        // a day can cost — not the sum of both steps.
+        #expect(back.value == 15)
     }
 }
