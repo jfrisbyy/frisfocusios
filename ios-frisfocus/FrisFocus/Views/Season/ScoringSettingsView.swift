@@ -64,7 +64,8 @@ struct ScoringSettingsView: View {
                                     .font(.system(size: 18, weight: .regular))
                                     .foregroundStyle(Theme.sunShadow)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("Continue where you left off")
+                                    Text(savedSetup.pausedLabel.map { "Continue where you left off · \($0)" }
+                                        ?? "Continue where you left off")
                                         .font(.sans(15, weight: .medium))
                                         .foregroundStyle(Theme.textPrimary)
                                     Text(savedSetup.hint)

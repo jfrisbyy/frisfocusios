@@ -185,6 +185,34 @@ nonisolated struct SetupConversationSnapshot: Codable, Sendable {
     var userTurns: Int
     var savedAt: Date
 
+    /// How long ago this was put down, phrased for the resume card, or
+    /// nil when it was minutes ago and saying so would be noise.
+    ///
+    /// `savedAt` was written on every exchange and read by nothing, so
+    /// "Continue where you left off" said exactly the same thing after
+    /// three minutes and after three months — and a resumed conversation
+    /// opened mid-drill on a question the person had no memory of being
+    /// asked.
+    var pausedLabel: String? {
+        let elapsed = Date().timeIntervalSince(savedAt)
+        let hour = 3600.0, day = 86_400.0
+        switch elapsed {
+        case ..<hour: return nil
+        case ..<day: return "paused a few hours ago"
+        case ..<(2 * day): return "paused yesterday"
+        case ..<(30 * day):
+            let days = Int((elapsed / day).rounded())
+            return "paused \(days) days ago"
+        default: return "paused a while ago"
+        }
+    }
+
+    /// Whole days since this was put down, for telling the model the
+    /// person stepped away. Zero for a same-day resume.
+    var pausedDays: Int {
+        max(0, Int(Date().timeIntervalSince(savedAt) / 86_400))
+    }
+
     /// A short human hint for the resume card — the last thing discussed.
     var hint: String {
         let trimmed = currentMessage.trimmingCharacters(in: .whitespacesAndNewlines)

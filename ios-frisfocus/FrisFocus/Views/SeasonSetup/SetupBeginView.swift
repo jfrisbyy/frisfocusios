@@ -130,7 +130,12 @@ struct SetupBeginView: View {
                     .clipShape(Circle())
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Continue where you left off")
+                    // Say how long ago. Without it this card reads
+                    // identically after three minutes and three months,
+                    // and someone resuming a week-old conversation has
+                    // no idea why the question makes no sense to them.
+                    Text(snapshot.pausedLabel.map { "Continue where you left off · \($0)" }
+                        ?? "Continue where you left off")
                         .font(.sans(14.5, weight: .semibold))
                         .foregroundStyle(Theme.textCream)
                     Text(snapshot.hint)

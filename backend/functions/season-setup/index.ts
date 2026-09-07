@@ -598,7 +598,11 @@ Deno.serve(async (req) => {
       return json({ error: "Season setup AI is not configured yet (missing OPENROUTER_API_KEY secret)" }, 503);
     }
 
-    const body = (await req.json()) as { messages?: ChatMessage[]; cold_start_context?: ColdStartContext };
+    const body = (await req.json()) as {
+      messages?: ChatMessage[];
+      cold_start_context?: ColdStartContext;
+      paused_days?: number;
+    };
     const history = Array.isArray(body.messages) ? body.messages : [];
     const coldStartBrief = formatColdStartContext(body.cold_start_context);
     if (history.length > MAX_MESSAGES) {
@@ -632,6 +636,18 @@ Deno.serve(async (req) => {
     // BEFORE the history so the model reflects it in the opener.
     if (coldStartBrief) {
       messages.push({ role: "system", content: coldStartBrief });
+    }
+    // The person put this down and came back. Without knowing that, the
+    // conversation picks up mid-drill as though the last answer were
+    // seconds old — on a question they no longer remember being asked.
+    const pausedDays = typeof body.paused_days === "number" && Number.isFinite(body.paused_days)
+      ? Math.max(0, Math.min(365, Math.round(body.paused_days)))
+      : 0;
+    if (pausedDays > 0) {
+      messages.push({
+        role: "system",
+        content: `The user stepped away and is coming back ${pausedDays} day${pausedDays === 1 ? "" : "s"} later. Before your next question, re-orient them in ONE short sentence — remind them where you got to in their own words. Do not restart, do not re-ask what they already answered, and do not apologise for the gap.`,
+      });
     }
     messages.push(...history);
     // An empty history means "open the conversation" — give the model a

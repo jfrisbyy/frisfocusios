@@ -84,6 +84,9 @@ final class SeasonSetupViewModel {
     private(set) var usedStarter: Bool = false
 
     private var history: [AIMessage] = []
+    /// Set on resume: whole days the conversation sat untouched. Sent
+    /// once, on the first turn back, then cleared.
+    private var pendingPausedDays: Int? = nil
     private var userTurns: Int = 0
     private let synthesizer = AVSpeechSynthesizer()
 
@@ -113,6 +116,10 @@ final class SeasonSetupViewModel {
         teaching = snapshot.teaching
         arcProgress = snapshot.arcProgress
         userTurns = snapshot.userTurns
+        // Tell the model, once, that time passed. Without it the
+        // conversation picks up as though the last answer were seconds
+        // old, on a question the person no longer remembers being asked.
+        pendingPausedDays = snapshot.pausedDays > 0 ? snapshot.pausedDays : nil
         stage = .conversation
 
         // If the saved conversation had already reached its rubric, the
@@ -287,7 +294,14 @@ final class SeasonSetupViewModel {
         let contextForTurn = attempt.isEmpty ? coldStartContext : nil
 
         do {
-            let envelope = try await SeasonSetupAI.send(history: attempt, coldStartContext: contextForTurn)
+            let envelope = try await SeasonSetupAI.send(
+                history: attempt,
+                coldStartContext: contextForTurn,
+                pausedDays: pendingPausedDays
+            )
+            // Spent — the re-orientation belongs to the first turn back,
+            // not to every turn for the rest of the conversation.
+            pendingPausedDays = nil
             // Commit history only on success so a retry replays cleanly.
             history = attempt
             history.append(.assistant(envelope.raw))

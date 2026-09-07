@@ -33,16 +33,24 @@ private nonisolated struct SetupRequestBody: Encodable, Sendable {
     /// The warm-start envelope. Omitted from the JSON when nil so legacy
     /// (cold) conversations send exactly what they always did.
     let coldStartContext: ColdStartContext?
+    /// Whole days since the conversation was put down, sent only on the
+    /// first turn after a resume. The model has no idea time passed
+    /// otherwise, so it picks up mid-drill as though the last answer
+    /// were seconds old — on a question the person no longer remembers
+    /// being asked.
+    let pausedDays: Int?
 
     enum CodingKeys: String, CodingKey {
         case messages
         case coldStartContext = "cold_start_context"
+        case pausedDays = "paused_days"
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(messages, forKey: .messages)
         try container.encodeIfPresent(coldStartContext, forKey: .coldStartContext)
+        try container.encodeIfPresent(pausedDays, forKey: .pausedDays)
     }
 }
 
@@ -61,7 +69,8 @@ enum SeasonSetupAI {
     /// turn so the model references what the person already chose/built.
     nonisolated static func send(
         history: [AIMessage],
-        coldStartContext: ColdStartContext? = nil
+        coldStartContext: ColdStartContext? = nil,
+        pausedDays: Int? = nil
     ) async throws -> SetupWireEnvelope {
         guard let token = KeychainHelper.get("access_token"), !token.isEmpty else {
             throw SeasonSetupAIError.notSignedIn
@@ -73,7 +82,11 @@ enum SeasonSetupAI {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120
         request.httpBody = try JSONEncoder().encode(
-            SetupRequestBody(messages: history, coldStartContext: coldStartContext)
+            SetupRequestBody(
+                messages: history,
+                coldStartContext: coldStartContext,
+                pausedDays: pausedDays
+            )
         )
 
         let (data, response) = try await URLSession.shared.data(for: request)
