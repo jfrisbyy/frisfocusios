@@ -41,6 +41,7 @@ struct ProfileAvatarButton: View {
     var body: some View {
         Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Log.app.debug("profile: avatar tap delivered")
             action()
         } label: {
             ZStack {
@@ -81,6 +82,7 @@ struct ProfileAvatarButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel(showDot ? "Profile, new friend requests waiting" : "Profile")
         .accessibilityHint("Open profile, settings, and season management")
+        .accessibilityIdentifier("profile.avatar")
     }
 
     @ViewBuilder

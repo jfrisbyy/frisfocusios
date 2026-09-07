@@ -42,8 +42,10 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var pendingInvite: InviteTarget?
+    @State private var showProfileSheet: Bool = false
     /// The finished pact whose closing is on screen, if any.
     @State private var closingPact: Pact?
+    @State private var presentedClosingPactID: UUID?
     @State private var showSeasonSetupFromComplete: Bool = false
     @State private var showExitDemoDialog: Bool = false
 
@@ -84,7 +86,7 @@ struct ContentView: View {
 
     var body: some View {
         @Bindable var store = store
-        return HomeView()
+        return HomeView(showProfileSheet: $showProfileSheet)
             // Quiet top-of-home layers: cloud-restore state, the demo
             // marker, and the soft notification prime card.
             .overlay(alignment: .top) {
@@ -123,6 +125,8 @@ struct ContentView: View {
                 .padding(.top, HomeView.sunHeaderBandHeight + 4)
                 .animation(.easeInOut(duration: 0.3), value: shouldOfferNotificationPrime)
             }
+            // One presenter above home/social navigation AND root banners.
+            .profileQuickCard(isPresented: $showProfileSheet)
             .animation(.easeInOut(duration: 0.3), value: store.appMode)
             .animation(.easeInOut(duration: 0.3), value: seasonSync.isRestoring)
             .confirmationDialog(
@@ -204,11 +208,13 @@ struct ContentView: View {
                 // the next one — someone back after two weeks away may
                 // have more than one window to close, and they should
                 // arrive one at a time, oldest first.
-                if let shown = closingPact { store.acknowledgePactClosing(shown.id) }
+                if let id = presentedClosingPactID { store.acknowledgePactClosing(id) }
+                presentedClosingPactID = nil
                 closingPact = store.pactAwaitingClosing
             }) { pact in
                 PactClosingView(pact: pact)
                     .environment(store)
+                    .onAppear { presentedClosingPactID = pact.id }
             }
             .task(id: auth.user?.id) {
                 // Keep the user's own editable profile (custom name,
@@ -237,6 +243,7 @@ struct ContentView: View {
                     // app reaches first interactivity in one round-trip
                     // instead of six stacked ones. Realtime subscriptions
                     // attach right after each load lands.
+                    async let proofLoad: Void = proofLibrarySync.start(myUserId: myId, store: store)
                     async let messagesLoad: Void = messageGraph.load(myUserId: myId)
                     async let friendsLoad: Void = friendGraph.load(myUserId: myId)
                     async let goldenLoad: Void = goldenHour.load(myUserId: myId)
@@ -260,7 +267,7 @@ struct ContentView: View {
                     // The proof archive follows the account too. Rows go
                     // up on any connection; the media waits for a
                     // connection worth spending.
-                    await proofLibrarySync.start(myUserId: myId, store: store)
+                    await proofLoad
                     // NO permission prompt here — the soft prime card on
                     // the home owns that moment, and only after something
                     // deliverable has actually arrived.
@@ -351,6 +358,7 @@ struct ContentView: View {
                         // Catch up on anything that arrived while the
                         // socket was suspended in the background.
                         Task { await messageGraph.load(myUserId: myId) }
+                        Task { await proofLibrarySync.refresh() }
                         Task { await friendGraph.load(myUserId: myId) }
                         // Re-resolve today's Golden Hour moment (a turns-mode
                         // pick may have landed) and refresh the alerts.

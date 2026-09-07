@@ -93,8 +93,8 @@ struct MilestoneShareOptions: Equatable, Codable {
 extension Store {
     /// Freezes a milestone into its share context, pre-loading up to
     /// five journey photos as small thumbnails for the overlay strip.
-    func milestoneShareContext(for milestone: Milestone) -> ShareMilestoneContext {
-        let thumbs: [MilestoneJourneyThumb] = milestone.photoAttachments
+    func milestoneShareContext(for milestone: Milestone, journeyThumbs: [MilestoneJourneyThumb]? = nil) -> ShareMilestoneContext {
+        let thumbs: [MilestoneJourneyThumb] = journeyThumbs ?? milestone.photoAttachments
             .suffix(5)
             .compactMap { attachment in
                 guard let image = MilestoneMediaStore.image(for: attachment) else { return nil }

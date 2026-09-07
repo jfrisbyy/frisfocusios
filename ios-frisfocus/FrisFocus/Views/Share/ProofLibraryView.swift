@@ -75,9 +75,7 @@ enum ProofLibraryFilter: Identifiable, Equatable {
 
 struct ProofLibraryView: View {
     @Environment(Store.self) private var store
-    /// Optional because the library is also presented from surfaces that
-    /// re-inject only the Store. Without the service the grid still
-    /// works — it just can't pull down media this device is missing.
+    /// Optional for local-only previews; production inherits the root service.
     @Environment(ProofLibrarySyncService.self) private var proofSync: ProofLibrarySyncService?
 
     @State private var viewerItem: ProofLibraryItem?
@@ -191,7 +189,7 @@ struct ProofLibraryView: View {
                             .padding(.top, 10)
                             .padding(.bottom, 40)
                         }
-                        .overlay(alignment: .bottom) { restoringPill }
+                        .refreshable { await proofSync?.refresh(forceMedia: true) }
                     }
                 }
             }
@@ -202,7 +200,19 @@ struct ProofLibraryView: View {
         // background sweep is Wi-Fi-only by design, which used to mean a
         // restored library rendered as a grid of empty tiles on cellular
         // — patient behaviour that read as a broken screen.
-        .task { await proofSync?.fetchMissingMedia(force: true) }
+        .task(id: proofSync?.myUserId) {
+            Log.proofLibrary.debug("archive: opened, sync attached=\(proofSync?.myUserId != nil)")
+            await proofSync?.refresh(forceMedia: true)
+        }
+        .safeAreaInset(edge: .bottom) { restoringPill }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    Task { await proofSync?.refresh(forceMedia: true) }
+                }
+                .disabled(proofSync?.isRestoring == true || proofSync?.isFetchingMedia == true)
+            }
+        }
         .fullScreenCover(item: $viewerItem) { item in
             ProofLibraryViewerView(item: item)
                 .environment(store)
@@ -239,7 +249,7 @@ struct ProofLibraryView: View {
             Color.black.opacity(0.15)
                 .aspectRatio(9.0 / 16.0, contentMode: .fit)
                 .overlay {
-                    ProofLibraryThumb(item: item, mediaRevision: proofSync?.mediaRevision ?? 0)
+                    ProofLibraryThumb(item: item, mediaRevision: proofSync?.downloadRevisions[item.id] ?? 0, isDownloading: proofSync?.activeDownloads.contains(item.filename) == true)
                         .allowsHitTesting(false)
                 }
                 .overlay(alignment: .bottomLeading) {
@@ -287,12 +297,21 @@ struct ProofLibraryView: View {
     /// coming down from the account.
     @ViewBuilder
     private var restoringPill: some View {
-        if let proofSync, proofSync.isFetchingMedia, proofSync.missingMediaCount > 0 {
+        if let proofSync, let message = proofSync.restoreError ?? (proofSync.failedDownloads.isEmpty ? nil : "Some proofs couldn't download. Please try again.") {
+            VStack(spacing: 8) {
+                Text(message).font(.sans(12, weight: .medium))
+                Button("Try again") { Task { await proofSync.refresh(forceMedia: true) } }
+                    .frame(minHeight: 44)
+            }
+            .multilineTextAlignment(.center)
+            .padding(12)
+            .background(Theme.paperCream)
+        } else if let proofSync, proofSync.isRestoring || proofSync.isFetchingMedia {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
                     .tint(Theme.textPrimary)
-                Text("Bringing \(proofSync.missingMediaCount) proof\(proofSync.missingMediaCount == 1 ? "" : "s") back from your account…")
+                Text(proofSync.isRestoring ? "Refreshing your archive…" : "Bringing proofs back from your account…")
                     .font(.sans(12, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary.opacity(0.8))
             }
@@ -342,6 +361,7 @@ private struct ProofLibraryThumb: View {
     /// tile that rendered before its media existed reloads the instant
     /// the file lands rather than holding a placeholder until relaunch.
     let mediaRevision: Int
+    let isDownloading: Bool
 
     @State private var image: UIImage?
     @State private var didAttempt: Bool = false
@@ -349,7 +369,7 @@ private struct ProofLibraryThumb: View {
     /// The bytes are on the server but not on this device — worth a
     /// spinner, not a broken-file glyph.
     private var isPending: Bool {
-        guard image == nil, didAttempt, item.mediaPath != nil else { return false }
+        guard image == nil, didAttempt, isDownloading else { return false }
         guard let url = item.url else { return false }
         return !FileManager.default.fileExists(atPath: url.path)
     }
@@ -384,9 +404,7 @@ private struct ProofLibraryThumb: View {
         if item.kind == .video {
             return await VideoThumbnailService.thumbnail(for: url, maxDimension: 360)
         }
-        return await Task.detached(priority: .userInitiated) {
-            UIImage(contentsOfFile: url.path)
-        }.value
+        return await LocalThumbnailLoader.load(url: url, maxDimension: 360)
     }
 }
 
@@ -404,7 +422,8 @@ struct ProofLibraryViewerView: View {
 
     /// On the server, not yet on this device.
     private var isPending: Bool {
-        guard item.mediaPath != nil, let url = item.url else { return false }
+        guard proofSync?.activeDownloads.contains(item.filename) == true || proofSync?.isRestoring == true,
+              let url = item.url else { return false }
         return !FileManager.default.fileExists(atPath: url.path)
     }
 
@@ -470,12 +489,11 @@ struct ProofLibraryViewerView: View {
         // "Proof unavailable" over a file that was simply waiting for
         // Wi-Fi is the cruellest possible sentence to show someone about
         // their own archive.
-        .task(id: "\(item.filename)#\(proofSync?.mediaRevision ?? 0)") {
-            if isPending {
-                await proofSync?.fetchMissingMedia(force: true)
-            }
+        .task(id: item.id) { await proofSync?.refresh(forceMedia: true) }
+        .task(id: "\(item.filename)#\(proofSync?.downloadRevisions[item.id] ?? 0)") {
+            let loaded = await loadImage()
             guard !Task.isCancelled else { return }
-            image = await loadImage()
+            image = loaded
             didAttempt = true
         }
     }
@@ -504,8 +522,16 @@ struct ProofLibraryViewerView: View {
             VStack(spacing: 8) {
                 Image(systemName: "photo")
                     .font(.system(size: 28, weight: .regular))
-                Text("Proof unavailable")
+                Text("This proof isn't available on this device yet.")
                     .font(.sans(13, weight: .medium))
+                Text("Try refreshing. If its media was never backed up, open FrisFocus on the device where you made it and connect to Wi-Fi.")
+                    .font(.sans(12, weight: .regular))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                Button("Try again") {
+                    Task { await proofSync?.refresh(forceMedia: true) }
+                }
+                .frame(minHeight: 44)
             }
             .foregroundStyle(Color.white.opacity(0.6))
         }

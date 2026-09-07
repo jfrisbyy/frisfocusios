@@ -204,9 +204,9 @@ struct ShareCameraView: View {
         }
         .statusBarHidden()
         .simultaneousGesture(overlayCarouselGesture)
+        .task { await buildPages() }
+        .task { await camera.requestAccessAndStart() }
         .onAppear {
-            buildPages()
-            Task { await camera.requestAccessAndStart() }
             // Attribution — taught the first time the share surface is
             // reached, after a beat so it doesn't fight the camera open.
             // The floor is claimed AFTER the beat, never across it: a
@@ -296,7 +296,7 @@ struct ShareCameraView: View {
     /// milestone of the season (→ the journal card for note captures).
     /// The entry subject's exact context is reused so deep entry points
     /// (a past day, the week, a specific milestone) keep their data.
-    private func buildPages() {
+    private func buildPages() async {
         guard pages.isEmpty else { return }
         var built: [ShareCardSubject] = [.blank]
 
@@ -306,10 +306,22 @@ struct ShareCameraView: View {
             built.append(.day(store.dayShareContext()))
         }
 
-        var milestonePages = store.currentSeason.milestones
+        let milestones = store.currentSeason.milestones
             .sorted { $0.weekNumber < $1.weekNumber }
             .prefix(8)
-            .map { ShareCardSubject.milestone(store.milestoneShareContext(for: $0)) }
+        var milestonePages: [ShareCardSubject] = []
+        for milestone in milestones {
+            var thumbs: [MilestoneJourneyThumb] = []
+            for attachment in milestone.photoAttachments.suffix(5) {
+                guard !Task.isCancelled else { return }
+                if let url = attachment.url,
+                   let image = await LocalThumbnailLoader.load(url: url, maxDimension: 280) {
+                    thumbs.append(MilestoneJourneyThumb(id: attachment.id, image: image))
+                }
+            }
+            guard !Task.isCancelled else { return }
+            milestonePages.append(.milestone(store.milestoneShareContext(for: milestone, journeyThumbs: thumbs)))
+        }
         if case .milestone(let context) = subject,
            !milestonePages.contains(.milestone(context)) {
             milestonePages.insert(.milestone(context), at: 0)

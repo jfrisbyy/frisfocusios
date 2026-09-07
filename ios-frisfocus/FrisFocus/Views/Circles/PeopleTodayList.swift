@@ -44,11 +44,11 @@ struct PeopleTodayList: View {
     /// collapse never hides a pending interaction.
     private let collapsedCount: Int = 4
 
-    /// Real unread count from the synced messaging backend.
-    private func unreadCount(for friend: Friend) -> Int {
-        guard let myId = auth.user?.id,
-              let remote = socialSync.remoteId(forLocal: friend.id) else { return 0 }
-        return messageGraph.unreadCount(fromFriendId: remote, myUserId: myId)
+    private var unreadBySender: [String: [DirectMessage]] {
+        guard let myId = auth.user?.id else { return [:] }
+        return Dictionary(grouping: messageGraph.messages.filter {
+            $0.recipientId == myId && $0.readAt == nil
+        }, by: \.senderId)
     }
 
     /// Below this the list is short enough to read at a glance, and a
@@ -61,16 +61,12 @@ struct PeopleTodayList: View {
     private var showsSearch: Bool { showAll && store.friends.count >= searchThreshold }
 
     private var orderedFriends: [Friend] {
-        // Unread is resolved ONCE per friend, up front. It used to be
-        // asked inside the comparator, where a sort calls it O(n log n)
-        // times and each call rescans the whole delivered message set —
-        // so opening this page did tens of thousands of comparisons of
-        // work on the main thread while the push animation was trying to
-        // run. That is the stall between tapping Friends and seeing it.
+        let senders = unreadBySender
         var unreadByFriend: [UUID: Bool] = [:]
         unreadByFriend.reserveCapacity(store.friends.count)
         for friend in store.friends {
-            unreadByFriend[friend.id] = unreadCount(for: friend) > 0
+            unreadByFriend[friend.id] = socialSync.remoteId(forLocal: friend.id)
+                .map { senders[$0]?.isEmpty == false } ?? false
         }
         return store.friends.sorted { a, b in
             let aUnread = unreadByFriend[a.id] ?? false
@@ -112,7 +108,9 @@ struct PeopleTodayList: View {
     private var hiddenCount: Int { max(0, store.friends.count - collapsedCount) }
 
     var body: some View {
-        VStack(spacing: 0) {
+        let unread = unreadBySender
+        let visible = visibleFriends
+        return LazyVStack(spacing: 0) {
             labelRow
                 .padding(.horizontal, Theme.pageHorizontalPadding)
                 .padding(.top, 18)
@@ -124,18 +122,22 @@ struct PeopleTodayList: View {
                     .padding(.bottom, 10)
             }
 
-            ForEach(Array(visibleFriends.enumerated()), id: \.element.id) { idx, friend in
+            ForEach(Array(visible.enumerated()), id: \.element.id) { idx, friend in
+                let messages = socialSync.remoteId(forLocal: friend.id).flatMap { unread[$0] } ?? []
                 if idx > 0 {
                     hairline
                 }
                 PersonTodayRow(
                     friend: friend,
+                    day: store.friendDay(for: friend),
+                    unread: messages.count,
+                    latestUnread: messages.max(by: { $0.createdAt < $1.createdAt }),
                     onTap: { onRowTap(friend) },
                     onActionTap: { onActionTap(friend) }
                 )
             }
 
-            if showsSearch && visibleFriends.isEmpty {
+            if showsSearch && visible.isEmpty {
                 Text("Nobody by that name.")
                     .font(.serifItalic(14, weight: .regular))
                     .foregroundStyle(Theme.textPrimary.opacity(0.55))
@@ -242,29 +244,19 @@ struct PeopleTodayList: View {
 // MARK: - One person, one row
 
 private struct PersonTodayRow: View {
-    @Environment(Store.self) private var store
-    @Environment(AuthManager.self) private var auth
-    @Environment(MessageGraphService.self) private var messageGraph
-    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let friend: Friend
+    let day: FriendDay
+    let unread: Int
+    let latestUnread: DirectMessage?
     let onTap: () -> Void
     let onActionTap: () -> Void
 
     @State private var ringFill: Double = 0
-    /// This friend's day, resolved once per render.
-    ///
-    /// `store.friendDay(for:)` walks every shared circle, every task in
-    /// them, and every completion record. It was called as a computed
-    /// property from the status line, the ring, the goal check, and
-    /// `dayRingFraction` (which recomputes it a second time) — five full
-    /// walks per row, per render, times every friend on the page.
-    @State private var resolvedDay: FriendDay?
 
     private var accent: Color { Color(hex: friend.accentColorHex) }
     private var tier: VisibilityTier { friend.sharesWithMe.tier }
-    private var day: FriendDay { resolvedDay ?? store.friendDay(for: friend) }
 
     /// A quiet tier reads as a fully private day — dashed ring, row
     /// dimmed, the season line and nothing more.
@@ -281,24 +273,6 @@ private struct PersonTodayRow: View {
 
     private var goalReached: Bool {
         friend.hitGoalToday == true || ringFraction >= 0.999
-    }
-
-    /// This friend's real cloud id — the key the synced messaging
-    /// backend speaks.
-    private var remoteId: String? { socialSync.remoteId(forLocal: friend.id) }
-
-    /// Live unread count from the delivered (Supabase) message stream.
-    private var unread: Int {
-        guard let myId = auth.user?.id, let remote = remoteId else { return 0 }
-        return messageGraph.unreadCount(fromFriendId: remote, myUserId: myId)
-    }
-
-    /// The newest still-unread message from this friend, for the notice
-    /// line and the pill's proof/note flavor.
-    private var latestUnread: DirectMessage? {
-        guard unread > 0, let myId = auth.user?.id, let remote = remoteId else { return nil }
-        return messageGraph.thread(withFriendId: remote, myUserId: myId)
-            .last { $0.senderId == remote && $0.readAt == nil }
     }
 
     private var hasProofUnread: Bool { latestUnread?.isProof == true }
@@ -321,12 +295,7 @@ private struct PersonTodayRow: View {
         .padding(.horizontal, Theme.pageHorizontalPadding)
         .padding(.vertical, 14)
         .opacity(isPrivateDay ? 0.65 : 1)
-        .task(id: friend.id) {
-            // Resolved off the render pass so the row can paint
-            // immediately and fill its ring a beat later.
-            let resolved = store.friendDay(for: friend)
-            guard !Task.isCancelled else { return }
-            resolvedDay = resolved
+        .onChange(of: ringFraction, initial: true) { _, _ in
             let target = isPrivateDay ? 0 : min(1, ringFraction)
             if reduceMotion {
                 ringFill = target

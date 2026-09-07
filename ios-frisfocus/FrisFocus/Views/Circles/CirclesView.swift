@@ -34,12 +34,11 @@ struct CirclesView: View {
 
     @State private var circlesExpanded: Bool = true
     @State private var activeRail: CirclesRailSection = .friends
-    @State private var sectionTops: [CirclesRailSection: CGFloat] = [:]
 
     // MARK: - Sheet + navigation state
 
     @State private var showCaptureSheet: Bool = false
-    @State private var showProfileSheet: Bool = false
+    @Binding var showProfileSheet: Bool
     @State private var showStartTogether: Bool = false
     @State private var pendingCreate: CreateKind? = nil
     @State private var activeCreate: CreateKind? = nil
@@ -94,11 +93,15 @@ struct CirclesView: View {
                     .ignoresSafeArea()
 
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
+                    LazyVStack(spacing: 0) {
                         header
                             .padding(.top, 8)
                             .id(friendsAnchor)
                             .background(sectionTopTracker(.friends))
+
+                        GoldenHourBanner { circleId in
+                            goldenTarget = GoldenHourTarget(circleId: circleId)
+                        }
 
                         PeopleStoryRow(
                             userInitials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
@@ -148,8 +151,7 @@ struct CirclesView: View {
                 .refreshable { await refreshRoom() }
                 .coordinateSpace(.named(scrollSpace))
                 .onPreferenceChange(CirclesSectionTopsPreferenceKey.self) { tops in
-                    sectionTops = tops
-                    updateActiveRailFromScroll()
+                    updateActiveRailFromScroll(tops)
                 }
                 .overlay(alignment: .trailing) {
                     CirclesSideRailView(
@@ -176,12 +178,6 @@ struct CirclesView: View {
                     circlesBadgeCount: directUnread
                 )
                 .ignoresSafeArea(edges: .bottom)
-            }
-            .overlay(alignment: .top) {
-                GoldenHourBanner { circleId in
-                    goldenTarget = GoldenHourTarget(circleId: circleId)
-                }
-                .padding(.top, 6)
             }
             .fullScreenCover(item: $goldenTarget) { target in
                 GoldenHourHostView(circleId: target.circleId)
@@ -285,12 +281,14 @@ struct CirclesView: View {
             .navigationDestination(item: $route) { route in
                 destination(for: route)
             }
-            .profileQuickCard(isPresented: $showProfileSheet)
             .walkthroughLessonSheet($storyLesson) { walkthrough.markSeen($0); walkthrough.release($0) }
             // Stories arrive by sync while the page is open as often as
             // they are already there when it opens, so both entries have
             // to be watched.
-            .onAppear { maybeFireStoryLesson() }
+            .onAppear {
+                Log.app.debug("navigation: social appeared")
+                maybeFireStoryLesson()
+            }
             .onChange(of: someoneElsesStoryIsWatchable) { _, _ in maybeFireStoryLesson() }
             .task { await loadMessages() }
         }
@@ -310,7 +308,9 @@ struct CirclesView: View {
     /// anything vanishes, disappearance reads as the design; told after,
     /// it reads as an apology for a bug.
     private func maybeFireStoryLesson() {
-        guard someoneElsesStoryIsWatchable,
+        guard !showProfileSheet, route == nil, !showDirect, threadFriend == nil,
+              !showStoryCapture, !showMyStory,
+              someoneElsesStoryIsWatchable,
               storyLesson == nil,
               walkthrough.claim(.storiesExpire) else { return }
         storyLesson = .storiesExpire
@@ -665,7 +665,7 @@ struct CirclesView: View {
     /// recently crossed the top of the viewport. Falls back to TODAY
     /// when both sections sit below the fold (e.g. at the very top of
     /// the page).
-    private func updateActiveRailFromScroll() {
+    private func updateActiveRailFromScroll(_ sectionTops: [CirclesRailSection: CGFloat]) {
         // A small offset below the status bar so the active mark flips
         // as soon as a section header is roughly at the top of the
         // visible content, not right at the screen edge.
@@ -736,7 +736,7 @@ struct CirclesSectionTopsPreferenceKey: PreferenceKey {
 
 #Preview {
     NavigationStack {
-        CirclesView()
+        CirclesView(showProfileSheet: .constant(false))
             .environment(Store())
             .environment(AuthManager())
             .environment(MessageGraphService())

@@ -81,7 +81,14 @@ final class ProofLibrarySyncService {
     private(set) var mediaRevision: Int = 0
     /// True while a user-initiated fetch is bringing missing archive
     /// media down. Drives the library's "still coming down" state.
-    private(set) var isFetchingMedia: Bool = false
+    var isFetchingMedia: Bool { !activeDownloads.isEmpty }
+    private(set) var failedDownloads: Set<UUID> = []
+    private(set) var downloadRevisions: [UUID: Int] = [:]
+    private(set) var restoreError: String?
+    private(set) var isRestoring: Bool = false
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var downloadTask: Task<Void, Never>?
+    @ObservationIgnored private var lifecycleID: UUID = UUID()
     /// Archived proofs whose bytes are not on this device yet.
     private(set) var missingMediaCount: Int = 0
 
@@ -96,14 +103,14 @@ final class ProofLibrarySyncService {
     @ObservationIgnored private var pendingMedia: Set<UUID> = []
     /// Filenames being fetched right now, so a second refresh doesn't
     /// download the same clip twice.
-    @ObservationIgnored private var activeDownloads: Set<String> = []
+    private(set) var activeDownloads: Set<String> = []
     /// Media the server has refused permanently — too large, or a
     /// bucket rejection. Retrying cannot make a file smaller, and a
     /// queue that never drains blocks everything behind it.
     @ObservationIgnored private var refusedMedia: Set<UUID> = []
 
     /// Whether the current connection is cheap enough for media.
-    @ObservationIgnored private let pathMonitor = NWPathMonitor()
+    @ObservationIgnored private var pathMonitor: NWPathMonitor?
     @ObservationIgnored private var unmetered = false
 
     private enum Keys {
@@ -118,6 +125,7 @@ final class ProofLibrarySyncService {
     /// Begin syncing for the signed-in user. Idempotent per user id.
     func start(myUserId: String, store: Store) async {
         if self.myUserId == myUserId, self.store === store { return }
+        stop()
         self.myUserId = myUserId
         self.store = store
         store.proofLibrarySync = self
@@ -127,7 +135,9 @@ final class ProofLibrarySyncService {
         // Pull before push. A fresh install has an empty library, and
         // uploading that emptiness first would be indistinguishable
         // from having deleted everything.
-        await restoreFromCloud()
+        let lifecycle = lifecycleID
+        await refresh()
+        guard lifecycle == lifecycleID, !Task.isCancelled else { return }
 
         let defaults = UserDefaults.standard
         if !defaults.bool(forKey: Keys.initialPush(myUserId)) {
@@ -148,26 +158,42 @@ final class ProofLibrarySyncService {
     func stop() {
         flushDebounce?.cancel()
         flushDebounce = nil
-        pathMonitor.cancel()
+        lifecycleID = UUID()
+        refreshTask?.cancel()
+        refreshTask = nil
+        downloadTask?.cancel()
+        downloadTask = nil
+        activeDownloads.removeAll()
+        failedDownloads.removeAll()
+        downloadRevisions.removeAll()
+        isRestoring = false
+        restoreError = nil
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        unmetered = false
         myUserId = nil
     }
 
     private func beginWatchingConnection() {
-        pathMonitor.pathUpdateHandler = { [weak self] path in
+        pathMonitor?.cancel()
+        let monitor = NWPathMonitor()
+        pathMonitor = monitor
+        let lifecycle = lifecycleID
+        monitor.pathUpdateHandler = { [weak self] path in
             let cheap = path.status == .satisfied && !path.isExpensive && !path.isConstrained
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.lifecycleID == lifecycle else { return }
                 let wasMetered = !self.unmetered
                 self.unmetered = cheap
                 // Landing on Wi-Fi is the moment the media queue can
                 // finally drain, so take it rather than waiting for the
                 // next app launch.
-                if cheap, wasMetered, !self.pendingMedia.isEmpty {
+                if cheap, wasMetered {
                     self.scheduleFlush()
                 }
             }
         }
-        pathMonitor.start(queue: DispatchQueue(label: "frisfocus.prooflibrary.path"))
+        monitor.start(queue: DispatchQueue(label: "frisfocus.prooflibrary.path"))
     }
 
     // MARK: Up-sync hooks
@@ -249,7 +275,7 @@ final class ProofLibrarySyncService {
 
         guard unmetered else { return }
 
-        for id in pendingMedia where !refusedMedia.contains(id) {
+        for id in pendingMedia where !refusedMedia.contains(id) && !pendingRows.contains(id) {
             guard let item = store.proofLibrary.first(where: { $0.id == id }) else {
                 pendingMedia.remove(id)
                 continue
@@ -270,7 +296,41 @@ final class ProofLibrarySyncService {
     /// cellular every restored proof rendered as an empty tile and the
     /// library looked broken rather than patient. Asking to look at your
     /// own archive is an explicit request for those bytes.
+    /// Refresh metadata before bytes: known rows can gain a cloud path later.
+    func refresh(forceMedia: Bool = false) async {
+        if let refreshTask {
+            await refreshTask.value
+            if forceMedia { await fetchMissingMedia(force: true) }
+            return
+        }
+        guard myUserId != nil else { return }
+        let lifecycle = lifecycleID
+        let task = Task {
+            await self.restoreFromCloud()
+            guard !Task.isCancelled, self.lifecycleID == lifecycle else { return }
+            await self.fetchMissingMedia(force: forceMedia)
+        }
+        refreshTask = task
+        await task.value
+        if lifecycleID == lifecycle { refreshTask = nil }
+    }
+
     func fetchMissingMedia(force: Bool = false) async {
+        if let downloadTask {
+            await downloadTask.value
+            return
+        }
+        guard myUserId != nil, force || unmetered else { return }
+        let lifecycle = lifecycleID
+        // Owned by the service, not a thumbnail/viewer task that changes
+        // identity when bytes arrive.
+        let task = Task { await self.downloadMissingMedia(force: force, lifecycle: lifecycle) }
+        downloadTask = task
+        await task.value
+        if lifecycleID == lifecycle { downloadTask = nil }
+    }
+
+    private func downloadMissingMedia(force: Bool, lifecycle: UUID) async {
         guard force || unmetered else {
             refreshMissingCount()
             return
@@ -283,25 +343,31 @@ final class ProofLibrarySyncService {
         missingMediaCount = outstanding.count
         guard !outstanding.isEmpty else { return }
 
-        isFetchingMedia = true
         defer {
-            isFetchingMedia = false
-            refreshMissingCount()
+            if lifecycleID == lifecycle { refreshMissingCount() }
         }
 
         for item in outstanding {
+            guard lifecycleID == lifecycle, !Task.isCancelled else { return }
             guard let mediaPath = item.mediaPath,
                   let localURL = item.url,
                   !activeDownloads.contains(item.filename) else { continue }
             activeDownloads.insert(item.filename)
+            failedDownloads.remove(item.id)
             do {
                 let data = try await supabase.storage.from("proof-library").download(path: mediaPath)
-                if !data.isEmpty {
+                guard lifecycleID == lifecycle, !Task.isCancelled else { return }
+                guard !data.isEmpty else { throw URLError(.zeroByteResource) }
+                try await Task.detached(priority: .utility) {
                     try data.write(to: localURL, options: .atomic)
-                    mediaRevision &+= 1
-                }
+                }.value
+                guard lifecycleID == lifecycle, !Task.isCancelled else { return }
+                mediaRevision &+= 1
+                downloadRevisions[item.id, default: 0] &+= 1
             } catch {
-                Log.proofLibrary.error("media download failed for \(item.filename): \(error)")
+                guard lifecycleID == lifecycle, !Task.isCancelled else { return }
+                failedDownloads.insert(item.id)
+                Log.proofLibrary.error("archive download failed (\((error as NSError).domain), code=\((error as NSError).code))")
             }
             activeDownloads.remove(item.filename)
         }
@@ -342,7 +408,10 @@ final class ProofLibrarySyncService {
 
     private func uploadMedia(for item: ProofLibraryItem) async -> Bool {
         guard let myUserId, item.mediaPath == nil else { return true }
-        guard let url = item.url, let data = try? Data(contentsOf: url), !data.isEmpty else {
+        guard let url = item.url,
+              let data = await Task.detached(priority: .utility, operation: {
+                  try? Data(contentsOf: url)
+              }).value, !data.isEmpty else {
             // The local file is gone. Nothing to upload and nothing to
             // retry — the row keeps the record of what was there.
             return true
@@ -391,12 +460,14 @@ final class ProofLibrarySyncService {
 
     // MARK: Down-sync
 
-    /// Pull every archived proof this account knows about and merge it
-    /// into the local library. Rows the device already has are left
-    /// alone: the local copy is the truth, and the bytes it points at
-    /// are already on disk.
+    /// Merge media availability even for known IDs, without overwriting
+    /// local captions, links, or pending edits.
     private func restoreFromCloud() async {
         guard let myUserId, let store else { return }
+        let lifecycle = lifecycleID
+        isRestoring = true
+        restoreError = nil
+        defer { if lifecycleID == lifecycle { isRestoring = false } }
         do {
             let rows: [RemoteProofRow] = try await supabase
                 .from("proof_library")
@@ -407,9 +478,19 @@ final class ProofLibrarySyncService {
                 .execute()
                 .value
 
-            let known = Set(store.proofLibrary.map(\.id))
+            guard lifecycleID == lifecycle, !Task.isCancelled else { return }
+            let known = Dictionary(store.proofLibrary.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
             var restored: [ProofLibraryItem] = []
-            for row in rows where !known.contains(row.id) {
+            var merged = false
+            for row in rows {
+                if let index = known[row.id] {
+                    if let path = row.mediaPath, store.proofLibrary[index].mediaPath != path {
+                        store.proofLibrary[index].mediaPath = path
+                        store.proofLibrary[index].uploadedAt = Date()
+                        merged = true
+                    }
+                    continue
+                }
                 let ext = (row.mediaPath as NSString?)?.pathExtension
                 let suffix = (ext?.isEmpty == false) ? ext! : (row.kind == "video" ? "mp4" : "jpg")
                 var item = ProofLibraryItem(
@@ -429,10 +510,10 @@ final class ProofLibrarySyncService {
                     sharedTo: row.sharedTo.compactMap(ProofShareDestination.init(rawValue:))
                 )
                 item.mediaPath = row.mediaPath
-                item.uploadedAt = Date()
+                item.uploadedAt = row.mediaPath == nil ? nil : Date()
                 restored.append(item)
             }
-            guard !restored.isEmpty else {
+            guard merged || !restored.isEmpty else {
                 refreshMissingCount()
                 return
             }
@@ -441,7 +522,9 @@ final class ProofLibrarySyncService {
             refreshMissingCount()
             Log.proofLibrary.debug("restored \(restored.count) archived proofs from the account")
         } catch {
-            Log.proofLibrary.error("restore failed: \(error)")
+            guard lifecycleID == lifecycle, !Task.isCancelled else { return }
+            restoreError = "Couldn't refresh your archive. Check your connection and try again."
+            Log.proofLibrary.error("archive refresh failed (\((error as NSError).domain), code=\((error as NSError).code))")
         }
     }
 

@@ -939,7 +939,8 @@ final class CameraService: NSObject {
     /// camera permission is already granted — a half-finished swipe must
     /// never summon the system permission dialog.
     func prewarm() {
-        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { return }
+        guard !isReady, startupTask == nil,
+              AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { return }
         Task { await requestAccessAndStart() }
     }
 
@@ -1001,11 +1002,14 @@ final class CameraService: NSObject {
     /// instead of nothing — and never leaves a recording nobody can stop.
     private var stopRequestedWhileStarting = false
     private var observersRegistered: Bool = false
+    @ObservationIgnored private var startupTask: Task<Void, Never>?
+    @ObservationIgnored private var startupID: UUID = UUID()
+    private var shouldRun: Bool = false
 
     var viewState: ViewState {
-        if hasCamera { return .running }
         if authorization == .denied || authorization == .restricted { return .denied }
         if startupFailed { return .failed }
+        if isReady { return .running }
         if authorization == .granted, !Self.cameraDeviceExists { return .unavailable }
         return .warmingUp
     }
@@ -1050,16 +1054,21 @@ final class CameraService: NSObject {
     }
 
     func requestAccessAndStart() async {
-        // Idempotent: if we've already set the session up successfully,
-        // just ensure it's running so re-entries (post-capture retake)
-        // don't get stuck on a frozen frame.
-        if hasCamera {
-            sessionQueue.async { [session] in
-                if !session.isRunning { session.startRunning() }
-            }
+        shouldRun = true
+        if let startupTask {
+            await startupTask.value
             return
         }
+        let id = UUID()
+        startupID = id
+        let task = Task { await self.startSession() }
+        startupTask = task
+        await task.value
+        if startupID == id { startupTask = nil }
+    }
 
+    private func startSession() async {
+        registerSessionObservers()
         startupFailed = false
 
         // Video permission only — the microphone is deliberately NOT
@@ -1078,8 +1087,8 @@ final class CameraService: NSObject {
         @unknown default: authorization = .denied
         }
 
-        guard authorization == .granted else {
-            hasCamera = false
+        guard authorization == .granted, shouldRun, !Task.isCancelled else {
+            isReady = false
             return
         }
 
@@ -1088,7 +1097,7 @@ final class CameraService: NSObject {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             sessionQueue.async { [weak self] in
                 self?.configureSession()
-                continuation.resume()
+                Task { @MainActor in continuation.resume() }
             }
         }
     }
@@ -1105,6 +1114,12 @@ final class CameraService: NSObject {
         guard !observersRegistered else { return }
         observersRegistered = true
         let nc = NotificationCenter.default
+        nc.addObserver(
+            self,
+            selector: #selector(applicationBecameActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
         nc.addObserver(
             self,
             selector: #selector(sessionWasInterrupted),
@@ -1125,25 +1140,45 @@ final class CameraService: NSObject {
         )
     }
 
+    @objc nonisolated private func applicationBecameActive() {
+        Task { @MainActor in
+            guard self.shouldRun, self.startupTask == nil else { return }
+            await self.requestAccessAndStart()
+        }
+    }
+
     @objc nonisolated private func sessionWasInterrupted() {
-        Task { @MainActor in self.isInterrupted = true }
+        Task { @MainActor in
+            self.isInterrupted = true
+            self.isReady = false
+            Log.app.debug("camera: session interrupted")
+        }
     }
 
     @objc nonisolated private func sessionInterruptionEnded() {
-        sessionQueue.async { [session] in
-            if !session.isRunning { session.startRunning() }
+        Task { @MainActor in
+            self.isInterrupted = false
+            guard self.shouldRun else { return }
+            await self.requestAccessAndStart()
         }
-        Task { @MainActor in self.isInterrupted = false }
     }
 
     @objc nonisolated private func sessionRuntimeError() {
-        // Bounce the session back the moment the system lets us.
-        sessionQueue.async { [session] in
-            if !session.isRunning { session.startRunning() }
+        Task { @MainActor in
+            self.isReady = false
+            self.startupFailed = true
+            Log.app.error("camera: session runtime error; retry available")
         }
     }
 
     func stop() {
+        // A later open must enqueue startup AFTER this stop, not join
+        // the earlier task whose start is ahead of the stop on the queue.
+        startupID = UUID()
+        startupTask?.cancel()
+        startupTask = nil
+        shouldRun = false
+        Log.app.debug("camera: stop requested")
         // Readiness has to fall with the session. Leaving `isReady` true
         // over a stopped session let the next `startRecording` sail past
         // its guard and record into nothing.
@@ -1285,18 +1320,6 @@ final class CameraService: NSObject {
             }
             self.movieOutput.startRecording(to: url, recordingDelegate: self)
 
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard self.recordingState == .starting else { return }
-                self.recordingState = .recording
-                // The release that arrived before the file was open. Now
-                // that it is, honour it — the person gets the short clip
-                // they actually recorded rather than silence.
-                if self.stopRequestedWhileStarting {
-                    self.stopRequestedWhileStarting = false
-                    self.performStop()
-                }
-            }
         }
         return true
     }
@@ -1394,6 +1417,14 @@ final class CameraService: NSObject {
     // MARK: - Session config (off-main)
 
     nonisolated private func configureSession() {
+        // The serial queue owns configuration. A prewarm and presentation
+        // can share it; never add a second video input on reentry.
+        if let input = session.inputs.compactMap({ $0 as? AVCaptureDeviceInput })
+            .first(where: { $0.device.hasMediaType(.video) }) {
+            if !session.isRunning { session.startRunning() }
+            publishStartup(input: input)
+            return
+        }
         session.beginConfiguration()
         // External cameras do not always offer `.high`; asking anyway
         // throws the configuration away and takes the viewfinder with it.
@@ -1430,16 +1461,21 @@ final class CameraService: NSObject {
         session.commitConfiguration()
         session.startRunning()
 
+        publishStartup(input: input)
+    }
+
+    nonisolated private func publishStartup(input: AVCaptureDeviceInput) {
         let running = session.isRunning
-        let devicePosition = device.position
+        let devicePosition = input.device.position
         let multipleCameras = Set(Self.discoverCameras().map(\.uniqueID)).count > 1
         Task { @MainActor in
             self.currentInput = input
             self.position = devicePosition
-            self.hasCamera = running
-            self.isReady = running
-            self.startupFailed = !running
+            self.hasCamera = true
+            self.isReady = running && self.shouldRun
+            self.startupFailed = !running && self.shouldRun
             self.canFlipCamera = multipleCameras
+            Log.app.debug("camera: configured, running=\(running), requested=\(self.shouldRun)")
         }
     }
 
@@ -1506,6 +1542,22 @@ extension CameraService: @preconcurrency AVCapturePhotoCaptureDelegate {
 // MARK: - Movie file output delegate
 
 extension CameraService: @preconcurrency AVCaptureFileOutputRecordingDelegate {
+    nonisolated func fileOutput(
+        _ output: AVCaptureFileOutput,
+        didStartRecordingTo fileURL: URL,
+        from connections: [AVCaptureConnection]
+    ) {
+        Task { @MainActor in
+            guard self.pendingRecordingURL == fileURL else { return }
+            if self.stopRequestedWhileStarting || !self.shouldRun {
+                self.stopRequestedWhileStarting = false
+                self.performStop()
+            } else if self.recordingState == .starting {
+                self.recordingState = .recording
+            }
+        }
+    }
+
     nonisolated func fileOutput(
         _ output: AVCaptureFileOutput,
         didFinishRecordingTo outputFileURL: URL,

@@ -5455,15 +5455,26 @@ extension Store {
         let categories: [Category] = [.fitness, .health, .creative, .work, .spiritual, .apartment]
         var tasks: [FriendDayTask] = []
         var ci = 0
+        let dayStart = cal.startOfDay(for: today)
+        let circleHistory = circleTaskCompletions.filter { $0.memberId == friend.id }
+        let pactHistory = pactCompletions.filter { $0.userId == friend.id }
+        var circleDone: [UUID: Set<UUID>] = [:]
+        var pactDone: [UUID: Set<UUID>] = [:]
+        var countsByDay: [Date: Int] = [:]
+        for record in circleHistory {
+            let day = cal.startOfDay(for: record.date)
+            countsByDay[day, default: 0] += 1
+            if day == dayStart { circleDone[record.circleId, default: []].insert(record.circleTaskId) }
+        }
+        for record in pactHistory {
+            let day = cal.startOfDay(for: record.date)
+            countsByDay[day, default: 0] += 1
+            if day == dayStart { pactDone[record.pactId, default: []].insert(record.taskId) }
+        }
 
         for circle in sharedCircles(withFriendId: friend.id) where circle.hasSharedList {
             for task in circle.tasks {
-                let done = circleTaskCompletions.contains { c in
-                    c.circleId == circle.id
-                        && c.circleTaskId == task.id
-                        && c.memberId == friend.id
-                        && cal.isDate(c.date, inSameDayAs: today)
-                }
+                let done = circleDone[circle.id]?.contains(task.id) == true
                 tasks.append(FriendDayTask(title: task.title, isDone: done, category: categories[ci % categories.count]))
                 ci += 1
             }
@@ -5471,12 +5482,7 @@ extension Store {
         let activePacts = sharedPacts(withFriendId: friend.id).filter { $0.status == .active }
         for pact in activePacts {
             for task in pact.tasks {
-                let done = pactCompletions.contains { c in
-                    c.pactId == pact.id
-                        && c.taskId == task.id
-                        && c.userId == friend.id
-                        && cal.isDate(c.date, inSameDayAs: today)
-                }
+                let done = pactDone[pact.id]?.contains(task.id) == true
                 tasks.append(FriendDayTask(title: task.name, isDone: done, category: categories[ci % categories.count]))
                 ci += 1
             }
@@ -5485,11 +5491,7 @@ extension Store {
         // Rhythm: how much shared activity each of the last 10 days held.
         let bars: [Double] = (0..<10).reversed().map { offset in
             guard let day = cal.date(byAdding: .day, value: -offset, to: today) else { return 0 }
-            let count = circleTaskCompletions.filter {
-                $0.memberId == friend.id && cal.isDate($0.date, inSameDayAs: day)
-            }.count + pactCompletions.filter {
-                $0.userId == friend.id && cal.isDate($0.date, inSameDayAs: day)
-            }.count
+            let count = countsByDay[cal.startOfDay(for: day), default: 0]
             return min(1.0, Double(count) / 3.0)
         }
         let momentumAvg = bars.reduce(0, +) / 10.0

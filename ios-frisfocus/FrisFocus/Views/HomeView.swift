@@ -55,7 +55,7 @@ struct HomeView: View {
     @State private var scrollPosition = ScrollPosition(edge: .top)
 
     // Nav / sheet state
-    @State private var showProfileSheet: Bool = false
+    @Binding var showProfileSheet: Bool
     @State private var showCircles: Bool = false
     /// The circle whose Golden Hour surface the golden orb opens.
     @State private var goldenTarget: GoldenHourTarget?
@@ -108,7 +108,7 @@ struct HomeView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showCircles) {
-                CirclesView()
+                CirclesView(showProfileSheet: $showProfileSheet)
             }
             .navigationDestination(isPresented: $showFriendsFromBanner) {
                 // Pushed in place — the system back button and edge
@@ -129,7 +129,6 @@ struct HomeView: View {
                 .environment(goldenHour)
                 .environment(auth)
         }
-        .profileQuickCard(isPresented: $showProfileSheet)
         .sheet(item: $homeEventTarget) { target in
             CircleEventDetailView(eventId: target.eventId)
                 .environment(store)
@@ -313,6 +312,7 @@ struct HomeView: View {
                         },
                         onCirclesTap: {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Log.app.debug("navigation: social tap")
                             showCircles = true
                         },
                         circlesBadgeCount: unreadMessages
@@ -424,7 +424,6 @@ struct HomeView: View {
                         // collision rare enough to look like a flake.
                         // Making activity always accessible made it
                         // permanent: the profile button was simply dead.
-                        .padding(.top, Self.sunHeaderBandHeight)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
@@ -475,7 +474,7 @@ struct HomeView: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
-                .padding(.top, max(topSafeInset, 12) + 6)
+                .padding(.top, max(topSafeInset, 12) + Self.sunHeaderBandHeight + 6)
             }
         }
     }
@@ -797,5 +796,5 @@ struct ZoneFramesPreferenceKey: PreferenceKey {
 }
 
 #Preview {
-    HomeView()
+    HomeView(showProfileSheet: .constant(false))
 }

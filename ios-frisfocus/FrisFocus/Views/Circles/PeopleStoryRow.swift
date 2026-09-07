@@ -49,7 +49,7 @@ struct PeopleStoryRow: View {
         // exactly as the page is being pushed on screen.
         let glances = friendGlances
         return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 14) {
+            LazyHStack(alignment: .top, spacing: 14) {
                 YourStoryBubble(
                     initials: userInitials,
                     photoURL: userPhotoURL,
@@ -495,12 +495,12 @@ struct MomentThumb: View {
             // Reset before reloading — otherwise a previously loaded
             // frame sticks around when the newest post changes.
             localImage = nil
-            loadLocal()
+            await loadLocal()
             // Older video posts never got a poster frame — generate
             // one now, persist it, and re-read.
             if localImage == nil, let media, media.type == .video {
                 await store.ensureVideoPoster(mediaId: media.id)
-                loadLocal()
+                await loadLocal()
             }
         }
     }
@@ -513,7 +513,7 @@ struct MomentThumb: View {
             .first { $0.scheme?.hasPrefix("http") == true }
     }
 
-    private func loadLocal() {
+    private func loadLocal() async {
         // Re-read from the Store so a freshly generated poster (which
         // updates the asset's thumbnailURL) is picked up even though
         // our `media` value is a pre-poster copy.
@@ -528,7 +528,8 @@ struct MomentThumb: View {
             candidates.append(local)
         }
         for url in candidates {
-            if let img = UIImage(contentsOfFile: url.path) {
+            if let img = await LocalThumbnailLoader.load(url: url, maxDimension: 240) {
+                guard !Task.isCancelled else { return }
                 localImage = img
                 return
             }

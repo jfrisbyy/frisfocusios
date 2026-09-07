@@ -117,7 +117,9 @@ private struct ProfileQuickCardOverlay: View {
     @Environment(ProfileStore.self) private var profileStore
     @Environment(FriendGraphService.self) private var friendGraph
 
-    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isClosing: Bool = false
+    @State private var shown: Bool = false
     @State private var drag: CGSize = .zero
     @State private var topInset: CGFloat = 47
 
@@ -160,8 +162,9 @@ private struct ProfileQuickCardOverlay: View {
         }
         .ignoresSafeArea()
         .task {
+            Log.app.debug("profile: quick card mounted")
             topInset = Self.keyWindowTopInset()
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) { shown = true }
+            withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.82)) { shown = true }
         }
     }
 
@@ -406,12 +409,13 @@ private struct ProfileQuickCardOverlay: View {
     }
 
     private func close(routingTo dest: ProfileQuickDestination?) {
+        guard !isClosing else { return }
+        isClosing = true
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.easeIn(duration: 0.13)) {
+        withAnimation(reduceMotion ? nil : .easeIn(duration: 0.13), completionCriteria: .logicallyComplete) {
             shown = false
             drag = .zero
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.13) {
+        } completion: {
             onDismiss(dest)
         }
     }

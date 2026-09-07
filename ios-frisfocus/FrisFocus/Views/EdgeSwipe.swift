@@ -119,6 +119,7 @@ private struct EdgeSwipeCameraModifier: ViewModifier {
     @State private var showCamera = false
     /// Prevents re-triggering within one continuous drag.
     @State private var firedThisDrag = false
+    @State private var prewarmedThisDrag: Bool = false
     /// True once a drag has qualified, so the page can lean toward the
     /// camera while the finger is still down instead of sitting still
     /// and then cutting to a modal.
@@ -164,7 +165,10 @@ private struct EdgeSwipeCameraModifier: ViewModifier {
                 // Pre-warm the shared camera the instant the swipe
                 // begins — by the time the cover presents, the session
                 // is already delivering frames (no warming beat).
-                CameraService.shared.prewarm()
+                if !prewarmedThisDrag {
+                    prewarmedThisDrag = true
+                    CameraService.shared.prewarm()
+                }
 
                 // A damped follow, capped well short of the trigger, so
                 // the page never travels far enough to look like it is
@@ -179,6 +183,8 @@ private struct EdgeSwipeCameraModifier: ViewModifier {
                 showCamera = true
             }
             .onEnded { _ in
+                if prewarmedThisDrag, !showCamera { CameraService.shared.stop() }
+                prewarmedThisDrag = false
                 firedThisDrag = false
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragX = 0 }
             }
