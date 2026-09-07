@@ -164,6 +164,7 @@ struct RubricReviewView: View {
                 value: booster.value,
                 valueLabel: "Bonus points",
                 taskNames: draft.tasks.map(\.name),
+                countableTaskNames: countableTaskNames,
                 allowsManual: true,
                 isManual: booster.isManual,
                 onSave: { name, reference, threshold, value, metric in
@@ -200,6 +201,7 @@ struct RubricReviewView: View {
                 value: penalty.value,
                 valueLabel: "Deduction",
                 taskNames: draft.tasks.map(\.name),
+                countableTaskNames: countableTaskNames,
                 // A floor attaches to a task; there is no manual shape.
                 allowsManual: false,
                 isManual: false,
@@ -359,6 +361,12 @@ struct RubricReviewView: View {
         .padding(12)
         .background(Theme.sunWarm.opacity(0.16))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// Tasks that log a number, so a weekly TOTAL can be counted
+    /// against them. A flat task caps at one completion a day.
+    private var countableTaskNames: Set<String> {
+        Set(draft.tasks.filter { $0.shape != .flat }.map(\.name))
     }
 
     /// The palette a new area is coloured from — the same hex values

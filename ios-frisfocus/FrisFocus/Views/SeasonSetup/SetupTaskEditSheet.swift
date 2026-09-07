@@ -413,6 +413,12 @@ struct SetupRuleEditSheet: View {
     let value: Int
     let valueLabel: String
     let taskNames: [String]
+    /// The subset of `taskNames` that logs a NUMBER — a graduated task.
+    /// A flat task records at most one completion a day, so a weekly
+    /// TOTAL above seven on one can never be reached however the week
+    /// goes; offering the choice would let someone build a rule that
+    /// cannot be met.
+    let countableTaskNames: Set<String>
     /// True for boosters, which may watch nothing and be ticked by hand.
     /// A floor cannot: a penalty rule lives ON a task in the season.
     let allowsManual: Bool
@@ -458,11 +464,13 @@ struct SetupRuleEditSheet: View {
                                 Text(taskName).tag(taskName)
                             }
                         }
-                        Picker("Counts", selection: $editedMetric) {
-                            Text("Days in the week").tag(BoosterMetric.days)
-                            Text("A weekly total").tag(BoosterMetric.sum)
+                        if countableTaskNames.contains(editedReference) {
+                            Picker("Counts", selection: $editedMetric) {
+                                Text("Days in the week").tag(BoosterMetric.days)
+                                Text("A weekly total").tag(BoosterMetric.sum)
+                            }
+                            .pickerStyle(.segmented)
                         }
-                        .pickerStyle(.segmented)
                     }
                     // A day count lives in 1...7; a weekly TOTAL does
                     // not. This stepper was pinned to 1...7 and labelled
@@ -540,6 +548,14 @@ struct SetupRuleEditSheet: View {
                     .font(.sans(15, weight: .medium))
                     .disabled(editedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+            }
+        }
+        .onChange(of: editedReference) { _, newReference in
+            // Re-pointing a weekly total at a flat task would leave a
+            // threshold nothing can reach.
+            if !countableTaskNames.contains(newReference), editedMetric == .sum {
+                editedMetric = .days
+                editedThreshold = min(max(1, editedThreshold), 7)
             }
         }
         .onAppear {
