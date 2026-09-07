@@ -131,7 +131,16 @@ extension Store {
         // never be lost to the debounce window if the app exits.
         persistAll()
         flushPendingSaves()
+        proofLibrarySync?.proofRecorded(item.id)
         return item.id
+    }
+
+    /// The media for an archived proof has reached the account.
+    func markProofLibraryUploaded(_ itemId: UUID, mediaPath: String) {
+        guard let idx = proofLibrary.firstIndex(where: { $0.id == itemId }) else { return }
+        proofLibrary[idx].mediaPath = mediaPath
+        proofLibrary[idx].uploadedAt = Date()
+        persistAll()
     }
 
     /// Attach a link to an already-archived proof — the attach flow
@@ -151,6 +160,7 @@ extension Store {
         }
         persistAll()
         flushPendingSaves()
+        proofLibrarySync?.proofUpdated(itemId)
     }
 
     /// Record that an archived proof also went somewhere.
@@ -162,6 +172,7 @@ extension Store {
         }
         persistAll()
         flushPendingSaves()
+        proofLibrarySync?.proofUpdated(itemId)
     }
 
     /// Note where an archived proof was pinned (task / to-do / note /
@@ -183,6 +194,10 @@ extension Store {
         if let url = proofLibrary[idx].url {
             try? FileManager.default.removeItem(at: url)
         }
+        // Take the remote copy with it. A reinstall that resurrected a
+        // proof the person deliberately removed would be worse than not
+        // syncing at all.
+        proofLibrarySync?.proofDeleted(itemId, mediaPath: proofLibrary[idx].mediaPath)
         proofLibrary.remove(at: idx)
         persistAll()
         flushPendingSaves()

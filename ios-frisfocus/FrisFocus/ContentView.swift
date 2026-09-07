@@ -37,6 +37,7 @@ struct ContentView: View {
     @Environment(FriendGraphService.self) private var friendGraph
     @Environment(NotesSyncService.self) private var notesSync
     @Environment(SeasonSyncService.self) private var seasonSync
+    @Environment(ProofLibrarySyncService.self) private var proofLibrarySync
     @Environment(WalkthroughManager.self) private var walkthrough
     @Environment(\.scenePhase) private var scenePhase
 
@@ -250,6 +251,10 @@ struct ContentView: View {
                     // Private season sync: season, tasks, score history,
                     // and milestones follow the account too.
                     await seasonSync.start(myUserId: myId, store: store)
+                    // The proof archive follows the account too. Rows go
+                    // up on any connection; the media waits for a
+                    // connection worth spending.
+                    await proofLibrarySync.start(myUserId: myId, store: store)
                     // NO permission prompt here — the soft prime card on
                     // the home owns that moment, and only after something
                     // deliverable has actually arrived.
@@ -271,6 +276,7 @@ struct ContentView: View {
                     socialSync.stop()
                     notesSync.stop()
                     seasonSync.stop()
+                    proofLibrarySync.stop()
                     await cadence.refresh(myUserId: nil)
                 }
             }

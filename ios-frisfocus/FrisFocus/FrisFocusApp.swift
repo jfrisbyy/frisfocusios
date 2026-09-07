@@ -38,6 +38,7 @@ struct FrisFocusApp: App {
     /// milestones (with their steps + journey media) mirror to the
     /// user's own cloud space — offline-first, latest-wins per slice.
     @State private var seasonSync = SeasonSyncService()
+    @State private var proofLibrarySync = ProofLibrarySyncService()
     /// App-wide focus app-blocking (Screen Time shield) + the chosen
     /// blocklist, shared by solo and grove focus.
     @State private var focusBlocking = FocusBlockingService.shared
@@ -59,6 +60,7 @@ struct FrisFocusApp: App {
                 .environment(friendGraph)
                 .environment(notesSync)
                 .environment(seasonSync)
+                .environment(proofLibrarySync)
                 .environment(focusBlocking)
                 .environment(walkthrough)
                 .environment(appDelegate.notifications)

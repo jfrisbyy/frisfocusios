@@ -178,6 +178,7 @@ final class Store {
     /// notifies it from `flushPendingSaves`, so no individual mutation
     /// needs to remember to call it.
     @ObservationIgnored weak var seasonSync: SeasonSyncService?
+    @ObservationIgnored weak var proofLibrarySync: ProofLibrarySyncService?
 
     /// Hand a piece of sync bookkeeping to the season sync service.
     ///
