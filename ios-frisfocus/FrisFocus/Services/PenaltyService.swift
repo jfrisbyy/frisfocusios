@@ -26,8 +26,9 @@ extension Store {
     /// Idempotent: at most one `.penalty` log entry tagged with this
     /// task lives in the current week interval at any time.
     func evaluatePenaltyForTask(_ task: FFTask) {
-        guard let rule = task.penalty, rule.enabled else {
-            // Rule was removed — sweep any lingering penalty entry
+        let rules = task.allPenalties
+        guard !rules.isEmpty else {
+            // Every rule was removed — sweep any lingering penalty entry
             // from the current week so disabling immediately restores
             // the deducted points.
             removeTaskPenaltyEntries(taskId: task.id)
@@ -35,39 +36,59 @@ extension Store {
         }
 
         let interval = currentWeekInterval()
-        // A `.sum` floor measures volume, not attendance — "less than
-        // 400 pushups this week" is a total, and counting days would
-        // answer a different question and let a week of single reps pass.
-        let count = rule.resolvedMetric == .sum
-            ? quantitySum(taskIds: [task.id], within: interval)
-            : completionCount(taskId: task.id, within: interval)
-        let breached: Bool = {
-            switch rule.condition {
-            case .moreThan: return count > rule.timesThreshold
-            case .lessThan: return count < rule.timesThreshold
-            }
-        }()
-
-        let hasEntry = logEntries.contains { entry in
+        // A floor whose rule is gone leaves its charge behind otherwise.
+        let liveIds = Set(rules.map(\.id))
+        logEntries.removeAll { entry in
             entry.taskId == task.id
                 && entry.entryType == .penalty
                 && interval.contains(entry.date)
-                // Distinguish from a Must-Do skip penalty (which is
-                // tied to a single past day, not the current week).
                 && isWeeklyLimitPenaltyEntry(entry, taskId: task.id, interval: interval)
+                && !(entry.penaltyRuleId.map(liveIds.contains) ?? true)
         }
 
-        if breached && !hasEntry {
-            let entry = LogEntry(
-                date: Date(),
-                taskId: task.id,
-                todoId: nil,
-                pointsEarned: -abs(rule.penaltyPoints),
-                entryType: .penalty
-            )
-            logEntries.append(entry)
-        } else if !breached && hasEntry {
-            removeTaskPenaltyEntries(taskId: task.id, restrictTo: interval)
+        for rule in rules {
+            // A `.sum` floor measures volume, not attendance — "less than
+            // 400 pushups this week" is a total, and counting days would
+            // answer a different question and let a week of single reps pass.
+            let count = rule.resolvedMetric == .sum
+                ? quantitySum(taskIds: [task.id], within: interval)
+                : completionCount(taskId: task.id, within: interval)
+            let breached: Bool = {
+                switch rule.condition {
+                case .moreThan: return count > rule.timesThreshold
+                case .lessThan: return count < rule.timesThreshold
+                }
+            }()
+
+            // Keyed by RULE, not by task. Keying by task is what made a
+            // second floor impossible: its charge was indistinguishable
+            // from the first's, so one would swallow the other. An entry
+            // with no rule id is a legacy single-floor charge and belongs
+            // to whichever rule is primary.
+            let matches: (LogEntry) -> Bool = { entry in
+                entry.taskId == task.id
+                    && entry.entryType == .penalty
+                    && interval.contains(entry.date)
+                    && self.isWeeklyLimitPenaltyEntry(entry, taskId: task.id, interval: interval)
+                    && (entry.penaltyRuleId == rule.id
+                        || (entry.penaltyRuleId == nil && rule.id == task.penalty?.id))
+            }
+
+            let hasEntry = logEntries.contains(where: matches)
+            if breached && !hasEntry {
+                logEntries.append(
+                    LogEntry(
+                        date: Date(),
+                        taskId: task.id,
+                        todoId: nil,
+                        penaltyRuleId: rule.id,
+                        pointsEarned: -abs(rule.penaltyPoints),
+                        entryType: .penalty
+                    )
+                )
+            } else if !breached && hasEntry {
+                logEntries.removeAll(where: matches)
+            }
         }
     }
 

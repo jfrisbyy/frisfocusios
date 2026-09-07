@@ -321,7 +321,12 @@ enum PenaltyCondition: String, Codable, CaseIterable, Equatable {
 /// configured direction, `penaltyPoints` are subtracted once for the
 /// week. Crossing back removes the deduction. Framed as a limit /
 /// reduction goal, never as a punishment.
-struct PenaltyRule: Codable, Equatable {
+struct PenaltyRule: Codable, Equatable, Identifiable {
+    /// Identifies this rule's own deduction in the log. Without it a
+    /// task could only ever carry one floor: the ledger keyed penalties
+    /// by TASK, so a second rule's charge was indistinguishable from
+    /// the first's and would have been swept away with it.
+    var id: UUID = UUID()
     var enabled: Bool = false
     var timesThreshold: Int = 2
     var condition: PenaltyCondition = .moreThan
@@ -332,6 +337,42 @@ struct PenaltyRule: Codable, Equatable {
     var metric: BoosterMetric? = nil
 
     var resolvedMetric: BoosterMetric { metric ?? .days }
+
+    // Decoded by hand because `id` is non-optional with a default, and
+    // synthesized Decodable throws on a missing key rather than falling
+    // back to it — which would have failed every penalty rule already
+    // persisted, taking its whole task down with it.
+    private enum CodingKeys: String, CodingKey {
+        case id, enabled, timesThreshold, condition, penaltyPoints, metric
+    }
+
+    init(
+        id: UUID = UUID(),
+        enabled: Bool = false,
+        timesThreshold: Int = 2,
+        condition: PenaltyCondition = .moreThan,
+        penaltyPoints: Int = 10,
+        metric: BoosterMetric? = nil
+    ) {
+        self.id = id
+        self.enabled = enabled
+        self.timesThreshold = timesThreshold
+        self.condition = condition
+        self.penaltyPoints = penaltyPoints
+        self.metric = metric
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        timesThreshold = try c.decodeIfPresent(Int.self, forKey: .timesThreshold) ?? 2
+        let rawCondition = (try? c.decodeIfPresent(String.self, forKey: .condition)) ?? nil
+        condition = rawCondition.flatMap(PenaltyCondition.init(rawValue:)) ?? .moreThan
+        penaltyPoints = try c.decodeIfPresent(Int.self, forKey: .penaltyPoints) ?? 10
+        let rawMetric = (try? c.decodeIfPresent(String.self, forKey: .metric)) ?? nil
+        metric = rawMetric.flatMap(BoosterMetric.init(rawValue:))
+    }
 }
 
 // MARK: - Habit Train
@@ -951,6 +992,19 @@ struct FFTask: Codable, Identifiable {
     var templateStamp: TemplateStamp? = nil
     var booster: BoosterRule? = nil
     var penalty: PenaltyRule? = nil
+    /// Further weekly floors beyond the first.
+    ///
+    /// A task could only ever carry one, and the setup commit took the
+    /// FIRST match and dropped the rest without a word — so a person who
+    /// wanted both "at least three runs" and "at least 15km" lost one
+    /// silently. The editor still edits the primary; these come from the
+    /// conversation, which can now say more than one thing about a week.
+    var extraPenalties: [PenaltyRule] = []
+
+    /// Every weekly floor on this task, primary first.
+    var allPenalties: [PenaltyRule] {
+        ([penalty].compactMap { $0 } + extraPenalties).filter(\.enabled)
+    }
     /// The scoring shape (flat / tiered / quantity). Defaults to flat so
     /// every task scored before this field existed reads as a flat
     /// `pointValue` task with no behavior change.
@@ -975,7 +1029,7 @@ struct FFTask: Codable, Identifiable {
     // `booster` / `penalty` / `scoring` still hydrate. Missing keys fall
     // through to the property defaults.
     private enum CodingKeys: String, CodingKey {
-        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, partOfDay, templateStamp, booster, penalty, scoring, agendaOrder, milestoneLink, isCustom
+        case id, title, category, pointValue, tier, skipPenalty, estimatedMinutes, pinSchedule, oneOffPinDate, skipDate, timeWindow, partOfDay, templateStamp, booster, penalty, extraPenalties, scoring, agendaOrder, milestoneLink, isCustom
     }
 
     init(
@@ -1037,6 +1091,7 @@ struct FFTask: Codable, Identifiable {
         self.templateStamp = try c.decodeIfPresent(TemplateStamp.self, forKey: .templateStamp)
         self.booster = try c.decodeIfPresent(BoosterRule.self, forKey: .booster)
         self.penalty = try c.decodeIfPresent(PenaltyRule.self, forKey: .penalty)
+        self.extraPenalties = try c.decodeIfPresent([PenaltyRule].self, forKey: .extraPenalties) ?? []
         self.scoring = try c.decodeIfPresent(ScoringConfig.self, forKey: .scoring) ?? ScoringConfig()
         self.agendaOrder = try c.decodeIfPresent(Int.self, forKey: .agendaOrder)
         self.milestoneLink = try c.decodeIfPresent(String.self, forKey: .milestoneLink)
@@ -1060,6 +1115,7 @@ struct FFTask: Codable, Identifiable {
         try c.encodeIfPresent(templateStamp, forKey: .templateStamp)
         try c.encodeIfPresent(booster, forKey: .booster)
         try c.encodeIfPresent(penalty, forKey: .penalty)
+        try c.encode(extraPenalties, forKey: .extraPenalties)
         try c.encode(scoring, forKey: .scoring)
         try c.encodeIfPresent(agendaOrder, forKey: .agendaOrder)
         try c.encodeIfPresent(milestoneLink, forKey: .milestoneLink)
@@ -1111,6 +1167,9 @@ struct LogEntry: Codable, Identifiable {
     /// booster fired without leaning on `taskId`. `nil` for non-booster
     /// entries and entries persisted before boosters became first-class.
     var boosterId: UUID? = nil
+    /// Set when this entry is one task's weekly-floor deduction. A task
+    /// may carry several floors, so the charge has to name which.
+    var penaltyRuleId: UUID? = nil
     /// The amount logged for a tiered / quantity task (hours, reps, steps),
     /// kept so the row can show what was logged and so an edit can
     /// recompute. `nil` for flat tasks and non-task entries.
