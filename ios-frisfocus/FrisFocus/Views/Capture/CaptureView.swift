@@ -306,11 +306,13 @@ struct CaptureView: View {
                 }
                 .accessibilityLabel(camera.isFlashOn ? "Flash on" : "Flash off")
 
-                chromeButton(systemName: "camera.rotate") {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    camera.flipCamera()
+                if camera.canFlipCamera {
+                    chromeButton(systemName: "camera.rotate") {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        camera.flipCamera()
+                    }
+                    .accessibilityLabel("Flip camera")
                 }
-                .accessibilityLabel("Flip camera")
             }
         }
     }
@@ -961,6 +963,11 @@ final class CameraService: NSObject {
     private(set) var isFlashOn: Bool = false
     private(set) var position: AVCaptureDevice.Position = .back
     private(set) var currentZoom: CGFloat = 1.0
+    /// False when this machine has only one camera (an external webcam,
+    /// a single attached device). Flipping then tears the input out and
+    /// puts the same one back — a black flash for no gain — so the
+    /// control hides instead of lying about a second lens.
+    private(set) var canFlipCamera: Bool = false
 
     private let sessionQueue = DispatchQueue(label: "frisfocus.camera.session")
     private let photoOutput = AVCapturePhotoOutput()
@@ -1003,11 +1010,43 @@ final class CameraService: NSObject {
         return .warmingUp
     }
 
-    /// Whether the hardware has any camera at all — distinguishes the
-    /// cloud simulator's placeholder from a real-device startup failure.
+    /// Whether the hardware has any camera at all — distinguishes a
+    /// genuinely camera-less machine from a real startup failure.
     nonisolated private static var cameraDeviceExists: Bool {
-        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil
-            || AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) != nil
+        !discoverCameras().isEmpty
+    }
+
+    /// Every video device this machine can offer, in preference order.
+    ///
+    /// This used to ask `AVCaptureDevice.default(.builtInWideAngleCamera,
+    /// …)`, a question plenty of real setups answer with nil: the cloud
+    /// simulator publishes the operator's webcam as an EXTERNAL device
+    /// (iOS 17+), and Continuity / Mac-attached cameras do the same.
+    /// With no built-in wide angle to find, the session refused to
+    /// configure, `hasCamera` stayed false, and the proxy fell all the
+    /// way through to `.unavailable` — a viewfinder that never loaded on
+    /// hardware with a perfectly good camera attached.
+    nonisolated private static func discoverCameras() -> [AVCaptureDevice] {
+        var types: [AVCaptureDevice.DeviceType] = [
+            .builtInWideAngleCamera,
+            .builtInDualWideCamera,
+            .builtInDualCamera,
+            .builtInTripleCamera
+        ]
+        if #available(iOS 17.0, *) {
+            types.append(.external)
+        }
+        let found = AVCaptureDevice.DiscoverySession(
+            deviceTypes: types,
+            mediaType: .video,
+            position: .unspecified
+        ).devices
+        // Last resort: whatever the system considers the default video
+        // device, in case it is a type not named above.
+        if found.isEmpty, let fallback = AVCaptureDevice.default(for: .video) {
+            return [fallback]
+        }
+        return found
     }
 
     func requestAccessAndStart() async {
@@ -1125,6 +1164,7 @@ final class CameraService: NSObject {
     func toggleFlash() { isFlashOn.toggle() }
 
     func flipCamera() {
+        guard canFlipCamera else { return }
         let next: AVCaptureDevice.Position = (position == .back) ? .front : .back
         sessionQueue.async { [weak self] in
             self?.switchCamera(to: next)
@@ -1355,7 +1395,11 @@ final class CameraService: NSObject {
 
     nonisolated private func configureSession() {
         session.beginConfiguration()
-        session.sessionPreset = .high
+        // External cameras do not always offer `.high`; asking anyway
+        // throws the configuration away and takes the viewfinder with it.
+        if session.canSetSessionPreset(.high) {
+            session.sessionPreset = .high
+        }
 
         guard let device = Self.defaultDevice(position: .back) ?? Self.defaultDevice(position: .front),
               let input = try? AVCaptureDeviceInput(device: device),
@@ -1388,12 +1432,14 @@ final class CameraService: NSObject {
 
         let running = session.isRunning
         let devicePosition = device.position
+        let multipleCameras = Set(Self.discoverCameras().map(\.uniqueID)).count > 1
         Task { @MainActor in
             self.currentInput = input
             self.position = devicePosition
             self.hasCamera = running
             self.isReady = running
             self.startupFailed = !running
+            self.canFlipCamera = multipleCameras
         }
     }
 
@@ -1426,7 +1472,13 @@ final class CameraService: NSObject {
     }
 
     nonisolated private static func defaultDevice(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
-        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+        let devices = discoverCameras()
+        if let exact = devices.first(where: { $0.position == position }) { return exact }
+        // External / Continuity cameras report `.unspecified`. When one
+        // exists it is usually the only camera present, so it answers a
+        // request for either side rather than nothing at all.
+        if let unspecified = devices.first(where: { $0.position == .unspecified }) { return unspecified }
+        return devices.first
     }
 }
 

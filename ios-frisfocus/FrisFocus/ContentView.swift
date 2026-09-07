@@ -114,7 +114,13 @@ struct ContentView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
-                .padding(.top, 4)
+                // Clear the sun zone's header row. Every card in this
+                // stack is full width, so at the old 4pt offset the
+                // restore banner, the demo pill, and the notification
+                // prime card each sat directly on top of the profile
+                // avatar — swallowing its taps outright for as long as
+                // they were on screen.
+                .padding(.top, HomeView.sunHeaderBandHeight + 4)
                 .animation(.easeInOut(duration: 0.3), value: shouldOfferNotificationPrime)
             }
             .animation(.easeInOut(duration: 0.3), value: store.appMode)

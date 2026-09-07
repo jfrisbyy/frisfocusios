@@ -61,9 +61,20 @@ struct PeopleTodayList: View {
     private var showsSearch: Bool { showAll && store.friends.count >= searchThreshold }
 
     private var orderedFriends: [Friend] {
-        store.friends.sorted { a, b in
-            let aUnread = unreadCount(for: a) > 0
-            let bUnread = unreadCount(for: b) > 0
+        // Unread is resolved ONCE per friend, up front. It used to be
+        // asked inside the comparator, where a sort calls it O(n log n)
+        // times and each call rescans the whole delivered message set —
+        // so opening this page did tens of thousands of comparisons of
+        // work on the main thread while the push animation was trying to
+        // run. That is the stall between tapping Friends and seeing it.
+        var unreadByFriend: [UUID: Bool] = [:]
+        unreadByFriend.reserveCapacity(store.friends.count)
+        for friend in store.friends {
+            unreadByFriend[friend.id] = unreadCount(for: friend) > 0
+        }
+        return store.friends.sorted { a, b in
+            let aUnread = unreadByFriend[a.id] ?? false
+            let bUnread = unreadByFriend[b.id] ?? false
             if aUnread != bUnread { return aUnread }
             // Every remaining comparison has to be decisive. Returning
             // false for ties satisfies the ordering but leaves the rest
@@ -242,17 +253,34 @@ private struct PersonTodayRow: View {
     let onActionTap: () -> Void
 
     @State private var ringFill: Double = 0
+    /// This friend's day, resolved once per render.
+    ///
+    /// `store.friendDay(for:)` walks every shared circle, every task in
+    /// them, and every completion record. It was called as a computed
+    /// property from the status line, the ring, the goal check, and
+    /// `dayRingFraction` (which recomputes it a second time) — five full
+    /// walks per row, per render, times every friend on the page.
+    @State private var resolvedDay: FriendDay?
 
     private var accent: Color { Color(hex: friend.accentColorHex) }
     private var tier: VisibilityTier { friend.sharesWithMe.tier }
-    private var day: FriendDay { store.friendDay(for: friend) }
+    private var day: FriendDay { resolvedDay ?? store.friendDay(for: friend) }
 
     /// A quiet tier reads as a fully private day — dashed ring, row
     /// dimmed, the season line and nothing more.
     private var isPrivateDay: Bool { tier == .quiet }
 
+    /// The same 0...1 the store derives, off the already-resolved day.
+    private var ringFraction: Double {
+        switch tier {
+        case .full: return day.completionFraction
+        case .open: return day.momentum
+        case .quiet: return 0
+        }
+    }
+
     private var goalReached: Bool {
-        friend.hitGoalToday == true || store.dayRingFraction(for: friend) >= 0.999
+        friend.hitGoalToday == true || ringFraction >= 0.999
     }
 
     /// This friend's real cloud id — the key the synced messaging
@@ -293,8 +321,13 @@ private struct PersonTodayRow: View {
         .padding(.horizontal, Theme.pageHorizontalPadding)
         .padding(.vertical, 14)
         .opacity(isPrivateDay ? 0.65 : 1)
-        .onAppear {
-            let target = isPrivateDay ? 0 : min(1, store.dayRingFraction(for: friend))
+        .task(id: friend.id) {
+            // Resolved off the render pass so the row can paint
+            // immediately and fill its ring a beat later.
+            let resolved = store.friendDay(for: friend)
+            guard !Task.isCancelled else { return }
+            resolvedDay = resolved
+            let target = isPrivateDay ? 0 : min(1, ringFraction)
             if reduceMotion {
                 ringFill = target
             } else {

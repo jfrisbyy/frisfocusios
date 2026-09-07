@@ -74,6 +74,17 @@ private nonisolated struct RemoteProofMediaPatch: Encodable, Sendable {
 final class ProofLibrarySyncService {
     private(set) var myUserId: String?
 
+    /// Bumped every time archive bytes land on disk. The grid keys its
+    /// thumbnails on this, so a proof restored from the account paints
+    /// the moment its media arrives instead of sitting on a placeholder
+    /// glyph until the next launch.
+    private(set) var mediaRevision: Int = 0
+    /// True while a user-initiated fetch is bringing missing archive
+    /// media down. Drives the library's "still coming down" state.
+    private(set) var isFetchingMedia: Bool = false
+    /// Archived proofs whose bytes are not on this device yet.
+    private(set) var missingMediaCount: Int = 0
+
     @ObservationIgnored weak var store: Store?
     @ObservationIgnored private var flushDebounce: Task<Void, Never>?
     @ObservationIgnored private var isFlushing = false
@@ -246,7 +257,62 @@ final class ProofLibrarySyncService {
             if await uploadMedia(for: item) { pendingMedia.remove(id) }
         }
         persistQueues()
-        await downloadMissingMedia()
+        await fetchMissingMedia()
+    }
+
+    /// Bring down the bytes for any archived proof whose local file is
+    /// missing — a fresh install, a second device, or a row that
+    /// restored before its media did.
+    ///
+    /// `force` is what opening the library passes. The background sweep
+    /// stays Wi-Fi-only (nobody wants their archive pushed over a
+    /// hotspot), but that gate used to apply to DOWNLOADS too — so on
+    /// cellular every restored proof rendered as an empty tile and the
+    /// library looked broken rather than patient. Asking to look at your
+    /// own archive is an explicit request for those bytes.
+    func fetchMissingMedia(force: Bool = false) async {
+        guard force || unmetered else {
+            refreshMissingCount()
+            return
+        }
+        guard let store else { return }
+        let outstanding = store.proofLibrary.filter { item in
+            guard item.mediaPath != nil, let localURL = item.url else { return false }
+            return !FileManager.default.fileExists(atPath: localURL.path)
+        }
+        missingMediaCount = outstanding.count
+        guard !outstanding.isEmpty else { return }
+
+        isFetchingMedia = true
+        defer {
+            isFetchingMedia = false
+            refreshMissingCount()
+        }
+
+        for item in outstanding {
+            guard let mediaPath = item.mediaPath,
+                  let localURL = item.url,
+                  !activeDownloads.contains(item.filename) else { continue }
+            activeDownloads.insert(item.filename)
+            do {
+                let data = try await supabase.storage.from("proof-library").download(path: mediaPath)
+                if !data.isEmpty {
+                    try data.write(to: localURL, options: .atomic)
+                    mediaRevision &+= 1
+                }
+            } catch {
+                Log.proofLibrary.error("media download failed for \(item.filename): \(error)")
+            }
+            activeDownloads.remove(item.filename)
+        }
+    }
+
+    private func refreshMissingCount() {
+        guard let store else { return }
+        missingMediaCount = store.proofLibrary.reduce(into: 0) { total, item in
+            guard item.mediaPath != nil, let localURL = item.url else { return }
+            if !FileManager.default.fileExists(atPath: localURL.path) { total += 1 }
+        }
     }
 
     private func upsertRow(_ item: ProofLibraryItem) async -> Bool {
@@ -366,35 +432,16 @@ final class ProofLibrarySyncService {
                 item.uploadedAt = Date()
                 restored.append(item)
             }
-            guard !restored.isEmpty else { return }
+            guard !restored.isEmpty else {
+                refreshMissingCount()
+                return
+            }
             store.proofLibrary.append(contentsOf: restored)
             store.persistAll()
+            refreshMissingCount()
             Log.proofLibrary.debug("restored \(restored.count) archived proofs from the account")
         } catch {
             Log.proofLibrary.error("restore failed: \(error)")
-        }
-    }
-
-    /// Fetch the bytes for any archived proof whose local file is
-    /// missing — a fresh install, or a second device. Unmetered only.
-    private func downloadMissingMedia() async {
-        guard unmetered, let store else { return }
-        for item in store.proofLibrary {
-            guard let mediaPath = item.mediaPath,
-                  !activeDownloads.contains(item.filename),
-                  let localURL = item.url,
-                  !FileManager.default.fileExists(atPath: localURL.path)
-            else { continue }
-            activeDownloads.insert(item.filename)
-            do {
-                let data = try await supabase.storage.from("proof-library").download(path: mediaPath)
-                if !data.isEmpty {
-                    try data.write(to: localURL, options: .atomic)
-                }
-            } catch {
-                Log.proofLibrary.error("media download failed for \(item.filename): \(error)")
-            }
-            activeDownloads.remove(item.filename)
         }
     }
 

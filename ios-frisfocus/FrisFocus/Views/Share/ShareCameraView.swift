@@ -425,7 +425,9 @@ struct ShareCameraView: View {
                     .background(Circle().fill(Color.black.opacity(0.35)))
             }
             .accessibilityLabel("Flip camera")
-            .disabled(!camera.hasCamera)
+            .disabled(!camera.canFlipCamera)
+            .opacity(camera.canFlipCamera ? 1 : 0)
+            .allowsHitTesting(camera.canFlipCamera)
         }
         .padding(.horizontal, 18)
         .padding(.top, 16)
@@ -602,7 +604,7 @@ struct ShareCameraView: View {
     private var doubleTapFlipGesture: some Gesture {
         TapGesture(count: 2)
             .onEnded {
-                guard camera.hasCamera else { return }
+                guard camera.canFlipCamera else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 camera.flipCamera()
             }

@@ -75,6 +75,10 @@ enum ProofLibraryFilter: Identifiable, Equatable {
 
 struct ProofLibraryView: View {
     @Environment(Store.self) private var store
+    /// Optional because the library is also presented from surfaces that
+    /// re-inject only the Store. Without the service the grid still
+    /// works — it just can't pull down media this device is missing.
+    @Environment(ProofLibrarySyncService.self) private var proofSync: ProofLibrarySyncService?
 
     @State private var viewerItem: ProofLibraryItem?
     @State private var pendingDelete: ProofLibraryItem?
@@ -187,12 +191,18 @@ struct ProofLibraryView: View {
                             .padding(.top, 10)
                             .padding(.bottom, 40)
                         }
+                        .overlay(alignment: .bottom) { restoringPill }
                     }
                 }
             }
         }
         .navigationTitle("Proof library")
         .navigationBarTitleDisplayMode(.inline)
+        // Opening the archive is an explicit request for the bytes. The
+        // background sweep is Wi-Fi-only by design, which used to mean a
+        // restored library rendered as a grid of empty tiles on cellular
+        // — patient behaviour that read as a broken screen.
+        .task { await proofSync?.fetchMissingMedia(force: true) }
         .fullScreenCover(item: $viewerItem) { item in
             ProofLibraryViewerView(item: item)
                 .environment(store)
@@ -229,7 +239,7 @@ struct ProofLibraryView: View {
             Color.black.opacity(0.15)
                 .aspectRatio(9.0 / 16.0, contentMode: .fit)
                 .overlay {
-                    ProofLibraryThumb(item: item)
+                    ProofLibraryThumb(item: item, mediaRevision: proofSync?.mediaRevision ?? 0)
                         .allowsHitTesting(false)
                 }
                 .overlay(alignment: .bottomLeading) {
@@ -273,6 +283,32 @@ struct ProofLibraryView: View {
         .accessibilityLabel("Proof from \(shortDate(item.createdAt))")
     }
 
+    /// Quiet marker while archive media this device doesn't have yet is
+    /// coming down from the account.
+    @ViewBuilder
+    private var restoringPill: some View {
+        if let proofSync, proofSync.isFetchingMedia, proofSync.missingMediaCount > 0 {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Theme.textPrimary)
+                Text("Bringing \(proofSync.missingMediaCount) proof\(proofSync.missingMediaCount == 1 ? "" : "s") back from your account…")
+                    .font(.sans(12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.8))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(Capsule(style: .continuous).fill(.ultraThinMaterial))
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Theme.sunWarm.opacity(0.45), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.1), radius: 8, y: 3)
+            .padding(.bottom, 18)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 10) {
             Image(systemName: "photo.stack")
@@ -302,8 +338,21 @@ struct ProofLibraryView: View {
 /// the downscaled photo otherwise.
 private struct ProofLibraryThumb: View {
     let item: ProofLibraryItem
+    /// The sync service's byte-arrival counter. Part of the load id, so a
+    /// tile that rendered before its media existed reloads the instant
+    /// the file lands rather than holding a placeholder until relaunch.
+    let mediaRevision: Int
 
     @State private var image: UIImage?
+    @State private var didAttempt: Bool = false
+
+    /// The bytes are on the server but not on this device — worth a
+    /// spinner, not a broken-file glyph.
+    private var isPending: Bool {
+        guard image == nil, didAttempt, item.mediaPath != nil else { return false }
+        guard let url = item.url else { return false }
+        return !FileManager.default.fileExists(atPath: url.path)
+    }
 
     var body: some View {
         ZStack {
@@ -311,19 +360,27 @@ private struct ProofLibraryThumb: View {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+            } else if isPending {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Color.white.opacity(0.7))
             } else {
                 Image(systemName: item.kind == .video ? "video" : "photo")
                     .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(Color.white.opacity(0.5))
             }
         }
-        .task(id: item.filename) {
-            image = await load()
+        .task(id: "\(item.filename)#\(mediaRevision)") {
+            let loaded = await load()
+            guard !Task.isCancelled else { return }
+            didAttempt = true
+            if loaded != nil || image == nil { image = loaded }
         }
     }
 
     private func load() async -> UIImage? {
-        guard let url = item.url else { return nil }
+        guard let url = item.url,
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
         if item.kind == .video {
             return await VideoThumbnailService.thumbnail(for: url, maxDimension: 360)
         }
@@ -340,6 +397,16 @@ private struct ProofLibraryThumb: View {
 struct ProofLibraryViewerView: View {
     let item: ProofLibraryItem
     @Environment(\.dismiss) private var dismiss
+    @Environment(ProofLibrarySyncService.self) private var proofSync: ProofLibrarySyncService?
+
+    @State private var image: UIImage?
+    @State private var didAttempt: Bool = false
+
+    /// On the server, not yet on this device.
+    private var isPending: Bool {
+        guard item.mediaPath != nil, let url = item.url else { return false }
+        return !FileManager.default.fileExists(atPath: url.path)
+    }
 
     var body: some View {
         ZStack {
@@ -399,17 +466,40 @@ struct ProofLibraryViewerView: View {
             }
         }
         .statusBarHidden(true)
+        // Pull the bytes on demand rather than declaring the proof gone.
+        // "Proof unavailable" over a file that was simply waiting for
+        // Wi-Fi is the cruellest possible sentence to show someone about
+        // their own archive.
+        .task(id: "\(item.filename)#\(proofSync?.mediaRevision ?? 0)") {
+            if isPending {
+                await proofSync?.fetchMissingMedia(force: true)
+            }
+            guard !Task.isCancelled else { return }
+            image = await loadImage()
+            didAttempt = true
+        }
     }
 
     @ViewBuilder
     private var media: some View {
-        if item.kind == .video, let url = item.url {
+        if item.kind == .video, let url = item.url,
+           FileManager.default.fileExists(atPath: url.path) {
             VideoLoopView(url: url, gravity: .resizeAspect)
                 .id(url)
-        } else if let url = item.url, let image = UIImage(contentsOfFile: url.path) {
+        } else if let image {
             Image(uiImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
+        } else if isPending || !didAttempt {
+            VStack(spacing: 12) {
+                ProgressView()
+                    .tint(Color.white.opacity(0.8))
+                Text("Bringing this proof back from your account…")
+                    .font(.sans(13, weight: .medium))
+                    .multilineTextAlignment(.center)
+            }
+            .foregroundStyle(Color.white.opacity(0.7))
+            .padding(.horizontal, 40)
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "photo")
@@ -419,6 +509,15 @@ struct ProofLibraryViewerView: View {
             }
             .foregroundStyle(Color.white.opacity(0.6))
         }
+    }
+
+    private func loadImage() async -> UIImage? {
+        guard item.kind != .video,
+              let url = item.url,
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return await Task.detached(priority: .userInitiated) {
+            UIImage(contentsOfFile: url.path)
+        }.value
     }
 
     private var fullDate: String {

@@ -176,16 +176,25 @@ struct HomeView: View {
         return messageGraph.totalUnread(myUserId: myId)
     }
 
-    /// How far the sun zone's header row (share button + profile avatar)
-    /// reaches below the safe-area top: a 38pt row plus its 12pt bottom
-    /// padding. The pinned glance chips offset by this so they sit under
+    /// How far the sun zone's header row (library + camera + profile
+    /// avatar) reaches below the safe-area top: the avatar's real 44pt
+    /// tap frame, its 12pt bottom padding, and 6pt of breathing room.
+    /// Anything layered over the home offsets by this so it sits UNDER
     /// the avatar rather than on top of it.
     ///
+    /// This was 50, written when the row was 38pt tall. The avatar was
+    /// then grown to a 44pt tap target (Apple's minimum) and nothing
+    /// updated this number — leaving the activity chip's top edge
+    /// sitting 2pt inside the avatar's bottom edge. A 2pt strip is
+    /// enough: the chip is drawn later, so it wins the hit test, and
+    /// thumbs arriving at the top-right corner land low on the disc.
+    /// Reported (again) as "I can't open my profile".
+    ///
     /// Kept as one named number because the two are laid out by
-    /// different views — SunZoneView positions the avatar, HomeView
-    /// positions the chips — and nothing else would catch them drifting
-    /// back into each other.
-    static let sunHeaderBandHeight: CGFloat = 50
+    /// different views — SunZoneView positions the avatar, HomeView and
+    /// ContentView position what floats over it — and nothing else would
+    /// catch them drifting back into each other.
+    static let sunHeaderBandHeight: CGFloat = 62
 
     @ViewBuilder
     private var home: some View {

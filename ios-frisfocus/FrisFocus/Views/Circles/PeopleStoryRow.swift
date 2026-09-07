@@ -38,7 +38,17 @@ struct PeopleStoryRow: View {
     var onAddFriendTap: (() -> Void)? = nil
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        // ONE pass over the active stories for the whole row.
+        //
+        // Every bubble used to ask the Store four separate questions
+        // (unviewed? any? thumb? caption?) and the ordering comparator
+        // asked two more — and each of those recomputed
+        // `activeFriendStories`, which filters AND sorts every story
+        // post the device knows about. With a handful of friends that is
+        // dozens of full re-sorts on the main thread, all of it landing
+        // exactly as the page is being pushed on screen.
+        let glances = friendGlances
+        return ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 14) {
                 YourStoryBubble(
                     initials: userInitials,
@@ -57,18 +67,19 @@ struct PeopleStoryRow: View {
                 )
                 .zoomSource(id: "mystory", in: zoomNamespace)
 
-                ForEach(orderedFriends) { friend in
+                ForEach(orderedFriends(using: glances)) { friend in
+                    let glance = glances[friend.id] ?? FriendStoryGlance()
                     FriendStoryBubble(
                         friend: friend,
-                        state: ringState(for: friend),
-                        thumbMedia: isMuted(friend) ? nil : store.storyThumbMedia(forFriendId: friend.id),
-                        thumbCaption: isMuted(friend) ? nil : store.storyThumbCaption(forFriendId: friend.id)
+                        state: glance.state,
+                        thumbMedia: glance.thumbMedia,
+                        thumbCaption: glance.thumbCaption
                     ) {
                         // A muted friend keeps their place in the row —
                         // they are still a person you can open — but the
                         // tap lands on their profile instead of dropping
                         // you into a tape you asked not to be shown.
-                        onFriendTap(friend, !isMuted(friend) && store.hasAnyActiveStories(forFriendId: friend.id))
+                        onFriendTap(friend, glance.hasStories)
                     }
                     .zoomSource(id: "story-\(friend.id.uuidString)", in: zoomNamespace)
                 }
@@ -82,35 +93,75 @@ struct PeopleStoryRow: View {
         }
     }
 
+    /// Everything one bubble needs to draw itself, resolved in the same
+    /// pass as every other bubble's.
+    private struct FriendStoryGlance {
+        var state: StoryRingState = .none
+        var thumbMedia: MediaAsset? = nil
+        var thumbCaption: String? = nil
+        var hasStories: Bool = false
+    }
+
+    /// Bucket the active general stories by author once, then answer
+    /// every bubble's questions off that.
+    private var friendGlances: [UUID: FriendStoryGlance] {
+        let friends = store.friends
+        guard !friends.isEmpty else { return [:] }
+
+        // Newest first, so `first` below is the story to preview.
+        var byAuthor: [UUID: [StoryPost]] = [:]
+        for post in store.activeFriendStories {
+            byAuthor[post.authorId, default: []].append(post)
+        }
+
+        let viewed = store.viewedStoryPostIds
+        var result: [UUID: FriendStoryGlance] = [:]
+        result.reserveCapacity(friends.count)
+
+        for friend in friends {
+            // Muted people read as ring-less: no bright ring calling for
+            // a watch, no thumbnail, and a seat at the quiet end of the
+            // row. Nothing is removed, only turned down.
+            guard !isMuted(friend) else {
+                result[friend.id] = FriendStoryGlance()
+                continue
+            }
+            let posts = byAuthor[friend.id] ?? []
+            guard !posts.isEmpty else {
+                result[friend.id] = FriendStoryGlance()
+                continue
+            }
+            let unwatched = posts.first { !viewed.contains($0.id) }
+            let pick = unwatched ?? posts.first
+            result[friend.id] = FriendStoryGlance(
+                state: unwatched != nil ? .fresh : .seen,
+                thumbMedia: pick?.mediaId.flatMap { store.media(by: $0) },
+                thumbCaption: pick?.caption,
+                hasStories: true
+            )
+        }
+        return result
+    }
+
     /// Unwatched stories lead, watched follow, story-less friends close
     /// the row — stable within each band so the order doesn't shuffle.
-    private var orderedFriends: [Friend] {
-        let ranked = store.friends.map { (friend: $0, rank: rankValue(for: $0)) }
-        return ranked
+    private func orderedFriends(using glances: [UUID: FriendStoryGlance]) -> [Friend] {
+        func rank(_ friend: Friend) -> Int {
+            switch glances[friend.id]?.state ?? .none {
+            case .fresh: return 0
+            case .seen:  return 1
+            case .none:  return 2
+            }
+        }
+        return store.friends
             .enumerated()
             .sorted { lhs, rhs in
-                if lhs.element.rank != rhs.element.rank { return lhs.element.rank < rhs.element.rank }
+                let lr = rank(lhs.element)
+                let rr = rank(rhs.element)
+                if lr != rr { return lr < rr }
                 return lhs.offset < rhs.offset
             }
-            .map { $0.element.friend }
-    }
-
-    private func rankValue(for friend: Friend) -> Int {
-        switch ringState(for: friend) {
-        case .fresh: return 0
-        case .seen:  return 1
-        case .none:  return 2
-        }
-    }
-
-    private func ringState(for friend: Friend) -> StoryRingState {
-        // Muted people read as ring-less: no bright ring calling for a
-        // watch, no thumbnail, and — through `rankValue` — a seat at the
-        // quiet end of the row. Nothing is removed, only turned down.
-        if isMuted(friend) { return .none }
-        if store.hasUnviewedStories(forFriendId: friend.id) { return .fresh }
-        if store.hasAnyActiveStories(forFriendId: friend.id) { return .seen }
-        return .none
+            .map(\.element)
     }
 
     private func isMuted(_ friend: Friend) -> Bool {
