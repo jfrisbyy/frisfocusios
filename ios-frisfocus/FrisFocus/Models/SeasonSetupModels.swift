@@ -507,8 +507,11 @@ nonisolated struct RubricDraft: Equatable, Codable, Sendable {
             return DraftBooster(
                 name: $0.name,
                 referenceName: manual ? "" : named,
-                metric: $0.metric == "sum" ? .sum : .days,
-                threshold: max(1, $0.threshold ?? 3),
+                // A manual goal counts nothing, so it carries the plain
+                // day metric rather than a second, contradicting answer
+                // to the same question. `isManual` is the one fact.
+                metric: (!manual && $0.metric == "sum") ? .sum : .days,
+                threshold: manual ? 1 : max(1, $0.threshold ?? 3),
                 value: max(1, $0.value),
                 isManual: manual
             )
