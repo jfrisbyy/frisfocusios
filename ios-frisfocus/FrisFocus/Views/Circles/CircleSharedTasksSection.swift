@@ -150,6 +150,12 @@ private struct SharedTaskRow: View {
                 .strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 0.5)
         )
         .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
+        // Tapping anywhere on the row toggles it, the same as a task on
+        // the homepage. It used to do nothing at all unless the finger
+        // found the 24 pt circle, while a plain tap on the subline did
+        // something entirely different — opened the link picker — so the
+        // same gesture in two parts of one row meant two things.
+        .onTapGesture { toggle() }
         .contextMenu {
             Button {
                 onAddToStory()
@@ -167,12 +173,18 @@ private struct SharedTaskRow: View {
         }
     }
 
+    /// The row's single action, shared by the tap and the checkbox so
+    /// they can never drift apart.
+    private func toggle() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.easeInOut(duration: 0.18)) {
+            store.toggleCircleTaskCompletion(circleId: circleId, task: task)
+        }
+    }
+
     private var checkbox: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.easeInOut(duration: 0.18)) {
-                store.toggleCircleTaskCompletion(circleId: circleId, task: task)
-            }
+            toggle()
         } label: {
             ZStack {
                 Circle()
@@ -210,21 +222,19 @@ private struct SharedTaskRow: View {
             }
             .foregroundStyle(Theme.alertGreen)
         } else {
-            Button(action: {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                onLinkTap()
-            }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "link.badge.plus")
-                        .font(.sans(10, weight: .semibold))
-                    Text("circle only · tap to link")
-                        .font(.sans(12, weight: .regular))
-                }
-                .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                .contentShape(Rectangle())
+            // Not a button any more. Linking is a rare, deliberate act
+            // and it was sitting on the same tap that people reach for
+            // fifty times a day to tick something off — so the common
+            // gesture has the row, and linking lives on the hold, where
+            // "Add to story" already lived.
+            HStack(spacing: 5) {
+                Image(systemName: "link.badge.plus")
+                    .font(.sans(10, weight: .semibold))
+                Text("circle only · hold to link")
+                    .font(.sans(12, weight: .regular))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Link to a personal task")
+            .foregroundStyle(Theme.textPrimary.opacity(0.5))
+            .accessibilityHint("Press and hold the row to link it to one of your own tasks")
         }
     }
 

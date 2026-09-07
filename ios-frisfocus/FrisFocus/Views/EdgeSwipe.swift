@@ -12,8 +12,12 @@
 //     works identically for pushed pages and full-screen covers.
 //
 //   • `edgeSwipeCamera()` — the two root pages (homepage and the
-//     Friends room) have nothing to go back to, so the same edge swipe
-//     opens the proof camera full screen instead.
+//     Friends room) have nothing to go back to, so an edge swipe opens
+//     the proof camera instead. It reads from EITHER edge: a leftward
+//     swipe from the right edge, which is the direction people reach
+//     for when they expect a camera to arrive from that side, and the
+//     original rightward swipe from the left edge, kept because it is
+//     the gesture the page already had.
 //
 //  Both claim only drags that *start* in a thin strip at the very
 //  edge and move predominantly rightward, attached as simultaneous
@@ -115,39 +119,68 @@ private struct EdgeSwipeCameraModifier: ViewModifier {
     @State private var showCamera = false
     /// Prevents re-triggering within one continuous drag.
     @State private var firedThisDrag = false
+    /// True once a drag has qualified, so the page can lean toward the
+    /// camera while the finger is still down instead of sitting still
+    /// and then cutting to a modal.
+    @State private var dragX: CGFloat = 0
 
     private let edgeWidth: CGFloat = 36
     private let triggerDistance: CGFloat = 70
 
     func body(content: Content) -> some View {
         content
+            // The page follows the finger a little way before the
+            // camera takes over. Without this the swipe has no visible
+            // effect until the instant it fires, which is what makes
+            // the transition read as a jump rather than a movement.
+            .offset(x: dragX)
             .simultaneousGesture(cameraGesture)
-            .fullScreenCover(isPresented: $showCamera) {
+            .fullScreenCover(isPresented: $showCamera, onDismiss: { dragX = 0 }) {
                 // Opens on the clean, overlay-free page — swipe on the
                 // viewfinder to reach the season and milestone cards.
                 ShareCameraView(subject: .blank)
             }
     }
 
+    /// Which way this drag is going, if it qualifies at all.
+    ///
+    /// A leftward swipe has to START at the right edge rather than
+    /// anywhere on the page: the homepage carries horizontal rows, and
+    /// a page-wide leftward drag would fight every one of them.
+    private func qualifies(start: CGPoint, translation: CGSize, width: CGFloat) -> Bool {
+        guard abs(translation.width) > abs(translation.height) else { return false }
+        let fromLeft = start.x <= edgeWidth && translation.width > 0
+        let fromRight = start.x >= width - edgeWidth && translation.width < 0
+        return fromLeft || fromRight
+    }
+
     private var cameraGesture: some Gesture {
         DragGesture(minimumDistance: 10, coordinateSpace: .global)
             .onChanged { value in
+                let width = UIScreen.main.bounds.width
                 guard !firedThisDrag, !showCamera,
-                      value.startLocation.x <= edgeWidth,
-                      value.translation.width > 0,
-                      value.translation.width > abs(value.translation.height)
+                      qualifies(start: value.startLocation, translation: value.translation, width: width)
                 else { return }
                 // Pre-warm the shared camera the instant the swipe
                 // begins — by the time the cover presents, the session
                 // is already delivering frames (no warming beat).
                 CameraService.shared.prewarm()
-                guard value.translation.width > triggerDistance else { return }
+
+                // A damped follow, capped well short of the trigger, so
+                // the page never travels far enough to look like it is
+                // going somewhere it isn't.
+                let travel = value.translation.width
+                dragX = max(-24, min(24, travel * 0.25))
+
+                guard abs(travel) > triggerDistance else { return }
                 firedThisDrag = true
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                withAnimation(.easeOut(duration: 0.12)) { dragX = 0 }
                 showCamera = true
             }
             .onEnded { _ in
                 firedThisDrag = false
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragX = 0 }
             }
     }
 }
@@ -162,8 +195,10 @@ extension View {
         modifier(EdgeSwipeBackModifier())
     }
 
-    /// Left-edge swipe on root pages: opens the proof camera full
-    /// screen with all its destinations (story, send, save, attach).
+    /// Edge swipe on root pages: opens the proof camera full screen
+    /// with all its destinations (story, send, save, attach). Reads a
+    /// leftward swipe from the right edge or a rightward one from the
+    /// left.
     func edgeSwipeCamera() -> some View {
         modifier(EdgeSwipeCameraModifier())
     }

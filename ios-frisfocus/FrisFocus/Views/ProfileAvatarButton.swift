@@ -21,12 +21,22 @@ struct ProfileAvatarButton: View {
     var showDot: Bool = false
     let action: () -> Void
 
-    /// Expands the tap target to ~50 pt — well past Apple's 44 pt
-    /// minimum — without disturbing layout. The disc stays 32 pt; the
-    /// matching negative padding on the button keeps neighbouring
-    /// content in place. This is what stops taps from missing or being
-    /// swallowed by the surrounding scroll view.
-    private let hitSlop: CGFloat = 9
+    /// The disc people see.
+    private let discSize: CGFloat = 32
+    /// The frame that actually receives touches. Apple's minimum is
+    /// 44 pt and this button sits in the top-right corner, where a
+    /// thumb arrives at an angle and misses are cheapest to cause.
+    ///
+    /// This used to be a 32 pt disc padded by +9 and then un-padded by
+    /// -9, on the theory that negative padding buys a bigger tap target
+    /// for free. It does not. Negative padding shrinks the view's
+    /// LAYOUT frame while leaving the content drawn outside it, and
+    /// SwiftUI's containers hit-test their children by layout frame —
+    /// so every touch in that 9 pt ring landed on the HStack, not on
+    /// the button. The real target was the 32 pt disc, twelve points
+    /// under the minimum, in the hardest corner of the screen to hit.
+    /// Reported twice as "I can't click the profile".
+    private let tapSize: CGFloat = 44
 
     var body: some View {
         Button {
@@ -46,7 +56,7 @@ struct ProfileAvatarButton: View {
                     placeholderDisc
                 }
             }
-            .frame(width: 32, height: 32)
+            .frame(width: discSize, height: discSize)
             .clipShape(Circle())
             .overlay(
                 Circle()
@@ -62,11 +72,13 @@ struct ProfileAvatarButton: View {
                 }
             }
             .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
-            .padding(hitSlop)
+            // The touch area lives INSIDE the layout frame, which is
+            // the whole point: every ancestor hit-tests this button by
+            // the 44 pt frame it actually reports.
+            .frame(width: tapSize, height: tapSize)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(-hitSlop)
         .accessibilityLabel(showDot ? "Profile, new friend requests waiting" : "Profile")
         .accessibilityHint("Open profile, settings, and season management")
     }

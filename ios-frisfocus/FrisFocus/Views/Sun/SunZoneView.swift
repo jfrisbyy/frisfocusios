@@ -58,6 +58,7 @@ struct SunZoneView: View {
     @State private var showDaySheet: Bool = false
     @State private var daySheetDate: Date = Date()
     @State private var showShareCamera: Bool = false
+    @State private var showProofLibrary: Bool = false
     /// Which face of the expanded season detail is showing. The score
     /// band always opens Tasks; the header week score opens Stats.
     @State private var seasonDetailTab: SeasonDetailTab = .tasks
@@ -84,6 +85,23 @@ struct SunZoneView: View {
         }
         .fullScreenCover(isPresented: $showShareCamera) {
             ShareCameraView(context: store.dayShareContext())
+        }
+        .sheet(isPresented: $showProofLibrary) {
+            // A sheet, not a cover: the library is somewhere you dip
+            // into and come back from, and the swipe-down that closes
+            // it is the gesture people already expect from a grid.
+            NavigationStack {
+                ProofLibraryView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showProofLibrary = false }
+                                .foregroundStyle(Theme.textPrimary.opacity(0.7))
+                        }
+                    }
+            }
+            .environment(store)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -328,8 +346,9 @@ struct SunZoneView: View {
             // Right column starts with the share button + profile avatar
             // at the top corner, then drops into the week peek below.
             VStack(alignment: .trailing, spacing: 0) {
-                HStack(spacing: 10) {
-                    shareButton
+                HStack(spacing: 6) {
+                    libraryButton
+                    cameraButton
 
                     ProfileAvatarButton(
                         initials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
@@ -386,15 +405,22 @@ struct SunZoneView: View {
     /// The discreet share entry — always the same place, never a popup.
     /// When the day is FULL (goal reached) it gains a soft amber glow
     /// ring: an invitation, not an interruption.
-    private var shareButton: some View {
+    /// Opens the proof camera. This was a share glyph, which named the
+    /// destination rather than the action — you tap it to take
+    /// something, and sharing is one of several things you can then do
+    /// with what you took.
+    private var cameraButton: some View {
         let dayIsFull = store.currentSeason.dailyGoal > 0
             && store.todayScore >= store.currentSeason.dailyGoal
 
         return Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // Warm the session while the cover animates in, so the
+            // viewfinder is already delivering frames when it lands.
+            CameraService.shared.prewarm()
             showShareCamera = true
         } label: {
-            Image(systemName: "square.and.arrow.up")
+            Image(systemName: "camera.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textCream)
                 .frame(width: 38, height: 38)
@@ -412,10 +438,34 @@ struct SunZoneView: View {
                     radius: dayIsFull ? 9 : 0
                 )
                 .animation(.easeInOut(duration: 0.6), value: dayIsFull)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Share your day")
-        .accessibilityHint("Opens the share camera with your day's sun on the viewfinder")
+        .accessibilityLabel("Camera")
+        .accessibilityHint("Take a proof — keep it, send it, or add it to your story")
+    }
+
+    /// Everything already captured. The library existed with its only
+    /// door inside the profile card, three taps from here, so proofs
+    /// were easy to make and hard to look at.
+    private var libraryButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showProofLibrary = true
+        } label: {
+            Image(systemName: "photo.stack")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textCream)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(Color.white.opacity(0.12)))
+                .overlay(
+                    Circle().strokeBorder(Theme.textCream.opacity(0.35), lineWidth: 1)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Proof library")
+        .accessibilityHint("Everything you've captured, filterable by what it's attached to")
     }
 
     // MARK: - Helpers
