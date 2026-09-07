@@ -25,7 +25,32 @@ extension Store {
     ///
     /// Idempotent: at most one `.penalty` log entry tagged with this
     /// task lives in the current week interval at any time.
+    /// Which pass is running.
+    ///
+    /// A `.lessThan` floor asks "did a whole week pass without this?" —
+    /// a question only the end of the week can answer. Charging it live
+    /// meant the deduction landed on Monday morning for a week that had
+    /// not happened yet, and was then quietly revoked once the person
+    /// got round to it. That is the shame dynamic this app exists to
+    /// refuse, so during the week a neglect floor can only be REVOKED,
+    /// never applied; it is charged once, when the week closes.
+    enum PenaltyPass {
+        /// Mid-week, on completing or un-completing the task.
+        case live
+        /// The week is over and can be judged.
+        case weekClose
+    }
+
     func evaluatePenaltyForTask(_ task: FFTask) {
+        evaluatePenaltyForTask(task, within: currentWeekInterval(), pass: .live, chargeDate: Date())
+    }
+
+    func evaluatePenaltyForTask(
+        _ task: FFTask,
+        within interval: DateInterval,
+        pass: PenaltyPass,
+        chargeDate: Date
+    ) {
         let rules = task.allPenalties
         guard !rules.isEmpty else {
             // Every rule was removed — sweep any lingering penalty entry
@@ -35,7 +60,6 @@ extension Store {
             return
         }
 
-        let interval = currentWeekInterval()
         // A floor whose rule is gone leaves its charge behind otherwise.
         let liveIds = Set(rules.map(\.id))
         logEntries.removeAll { entry in
@@ -75,10 +99,12 @@ extension Store {
             }
 
             let hasEntry = logEntries.contains(where: matches)
-            if breached && !hasEntry {
+            // Mid-week, a neglect floor may only let go, never bite.
+            let mayCharge = pass == .weekClose || rule.condition == .moreThan
+            if breached && !hasEntry && mayCharge {
                 logEntries.append(
                     LogEntry(
-                        date: Date(),
+                        date: chargeDate,
                         taskId: task.id,
                         todoId: nil,
                         penaltyRuleId: rule.id,
@@ -103,9 +129,58 @@ extension Store {
     /// prior day, so any `.penalty` whose date is today (and inside
     /// the current week) is one of ours. We use that as the test.
     private func isWeeklyLimitPenaltyEntry(_ entry: LogEntry, taskId: UUID, interval: DateInterval) -> Bool {
+        // A rule id is only ever written by this evaluator, so it is a
+        // definitive marker — and the only one that survives the
+        // week-close charge, which is deliberately dated to the last day
+        // of the week it judges rather than to today.
+        if entry.penaltyRuleId != nil { return true }
         let cal = Calendar.current
         return cal.isDateInToday(entry.date) || entry.date >= cal.startOfDay(for: Date())
     }
+
+    // MARK: - Week close
+
+    /// Judge every task's neglect floors against the week that just
+    /// ended, once, at the first rollover of a new week.
+    ///
+    /// Nothing did this before. `evaluatePenaltyForTask` ran only from
+    /// `completeTask` and `uncompleteTask`, and a floor of "fewer than
+    /// one session this week" breaches at a count of ZERO — a state the
+    /// evaluator could never observe, because it only ever ran on the
+    /// completion that made the count one. So every weekly floor the
+    /// setup conversation asked the person to confirm out loud — the
+    /// mechanism the prompt calls the breadth of the season — was dead
+    /// on arrival. Nothing was ever charged for a week that quietly
+    /// went by.
+    func sweepClosedWeekPenalties(asOf today: Date) {
+        let cal = Calendar.current
+        guard let lastWeekDay = cal.date(byAdding: .day, value: -1, to: currentWeekInterval().start) else { return }
+        let closed = currentWeekInterval(reference: lastWeekDay)
+
+        let marker = UserDefaults.standard.object(forKey: Self.lastWeeklyPenaltySweepKey) as? Date
+        if let marker, marker >= closed.end { return }
+
+        // Only judge a week the season was live for the whole of. A
+        // season begun on Thursday has not "let a week go by" when
+        // Monday arrives, and a fresh install must never open on a
+        // deduction for days it did not exist.
+        guard let startedAt = currentSeason.startedAt, startedAt <= closed.start else {
+            UserDefaults.standard.set(today, forKey: Self.lastWeeklyPenaltySweepKey)
+            return
+        }
+
+        // Dated to the last day of the week it judges, so the charge sits
+        // in the week it belongs to rather than landing on a fresh one.
+        let chargeDate = min(lastWeekDay, closed.end.addingTimeInterval(-1))
+        for task in tasks where !task.allPenalties.isEmpty {
+            evaluatePenaltyForTask(task, within: closed, pass: .weekClose, chargeDate: chargeDate)
+        }
+        UserDefaults.standard.set(today, forKey: Self.lastWeeklyPenaltySweepKey)
+    }
+
+    /// Marker for the once-per-week close above. Local to this file
+    /// because `Store.Keys` is private to `Store.swift`.
+    fileprivate static var lastWeeklyPenaltySweepKey: String { "lastWeeklyPenaltySweep" }
 
     /// Remove every weekly-limit penalty entry for `taskId`, optionally
     /// restricted to a specific interval. Used when the rule is
@@ -125,9 +200,30 @@ extension Store {
         -> (count: Int, threshold: Int, condition: PenaltyCondition,
             penaltyPoints: Int, breached: Bool)?
     {
-        guard let rule = task.penalty, rule.enabled else { return nil }
+        // Was `task.penalty` alone, so a task carrying more than one
+        // floor showed only the first — and always as a day count, so a
+        // `.sum` floor ("fewer than 400 pushups") reported how many DAYS
+        // it happened, a different question with a different number.
+        // The evaluator has handled both since floors became plural;
+        // this readout is what the person actually sees.
+        let rules = task.allPenalties.filter(\.enabled)
+        guard !rules.isEmpty else { return nil }
         let interval = currentWeekInterval(reference: reference)
-        let count = completionCount(taskId: task.id, within: interval)
+        let counts: [UUID: Int] = Dictionary(uniqueKeysWithValues: rules.map { rule in
+            (rule.id, rule.resolvedMetric == .sum
+                ? quantitySum(taskIds: [task.id], within: interval)
+                : completionCount(taskId: task.id, within: interval))
+        })
+        let isBreached: (PenaltyRule) -> Bool = { rule in
+            let n = counts[rule.id] ?? 0
+            switch rule.condition {
+            case .moreThan: return n > rule.timesThreshold
+            case .lessThan: return n < rule.timesThreshold
+            }
+        }
+        // Show the one that is biting; otherwise the primary.
+        let rule = rules.first(where: isBreached) ?? rules[0]
+        let count = counts[rule.id] ?? 0
         let breached: Bool = {
             switch rule.condition {
             case .moreThan: return count > rule.timesThreshold

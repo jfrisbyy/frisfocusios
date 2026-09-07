@@ -41,12 +41,21 @@ struct SetupBeginsView: View {
                     .opacity(revealed || reduceMotion ? 1 : 0)
                     .padding(.bottom, 14)
 
-                Text("Your season's begun. Go live a strong day — not a perfect one.")
-                    .font(.serifItalic(15, weight: .regular))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(Theme.textPrimary.opacity(0.65))
-                    .padding(.horizontal, 56)
-                    .opacity(revealed || reduceMotion ? 1 : 0)
+                // The second line is the only place the app ever says
+                // what the board does next. Everything is on today, and
+                // nothing here is a promise to do all of it — without
+                // that, a full board reads as a full obligation.
+                VStack(spacing: 10) {
+                    Text("Your season's begun. Go live a strong day — not a perfect one.")
+                    Text("It's all on today. Clear what isn't happening — a day you don't reach isn't a day you failed.")
+                        .font(.sans(13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                }
+                .font(.serifItalic(15, weight: .regular))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.textPrimary.opacity(0.65))
+                .padding(.horizontal, 44)
+                .opacity(revealed || reduceMotion ? 1 : 0)
 
                 HStack(spacing: 28) {
                     countBlock(value: taskCount, label: taskCount == 1 ? "TASK" : "TASKS")

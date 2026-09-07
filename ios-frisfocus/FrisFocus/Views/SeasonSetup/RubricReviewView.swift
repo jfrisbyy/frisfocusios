@@ -22,6 +22,7 @@ struct RubricReviewView: View {
     @State private var editingBooster: DraftBooster?
     @State private var editingPenalty: DraftWeeklyPenalty?
     @State private var editingMilestone: DraftMilestone?
+    @State private var editingCategory: DraftCategory?
 
     @State private var collapsedCategories: Set<UUID> = []
     @State private var showBoosters: Bool = true
@@ -53,6 +54,17 @@ struct RubricReviewView: View {
                     ForEach(draft.categories) { category in
                         categorySection(category)
                             .padding(.top, 18)
+                    }
+
+                    // Every other element on this screen could be added
+                    // back if the conversation missed it — a task, a
+                    // negative, a booster, a floor, a destination. An
+                    // AREA could not, so a whole part of a life the
+                    // conversation never reached had nowhere to go until
+                    // after the season was locked in.
+                    if draft.categories.count < 8 {
+                        addAreaButton
+                            .padding(.top, 16)
                     }
 
                     negativesSection
@@ -97,6 +109,29 @@ struct RubricReviewView: View {
             .presentationDragIndicator(.visible)
             .presentationContentInteraction(.scrolls)
         }
+        .sheet(item: $editingCategory) { category in
+            SetupCategoryEditSheet(
+                category: category,
+                canRemove: draft.tasks(in: category).isEmpty && draft.categories.count > 1,
+                onSave: { updated in
+                    viewModel.updateDraft { d in
+                        if let idx = d.categories.firstIndex(where: { $0.id == updated.id }) {
+                            d.categories[idx] = updated
+                        }
+                    }
+                },
+                onRemove: { removed in
+                    viewModel.updateDraft { d in
+                        d.categories.removeAll { $0.id == removed.id }
+                        // Belt and braces: an area is only removable
+                        // while empty, but never orphan a task.
+                        d.tasks.removeAll { $0.categoryId == removed.id }
+                    }
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(item: $editingNegative) { negative in
             SetupNegativeEditSheet(
                 negative: negative,
@@ -129,16 +164,14 @@ struct RubricReviewView: View {
                 value: booster.value,
                 valueLabel: "Bonus points",
                 taskNames: draft.tasks.map(\.name),
-                onSave: { name, reference, threshold, value in
+                allowsManual: true,
+                isManual: booster.isManual,
+                onSave: { name, reference, threshold, value, metric in
                     viewModel.updateDraft { d in
-                        // Carry the metric through. The sheet edits name,
-                        // reference, threshold and value; rebuilding the
-                        // whole value without it would silently turn a
-                        // weekly TOTAL back into a day count.
                         let rebuilt = DraftBooster(
                             id: booster.id, name: name, referenceName: reference,
-                            metric: booster.metric, threshold: threshold, value: value,
-                            isManual: booster.isManual
+                            metric: metric, threshold: threshold, value: value,
+                            isManual: reference.isEmpty
                         )
                         if let idx = d.boosters.firstIndex(where: { $0.id == booster.id }) {
                             d.boosters[idx] = rebuilt
@@ -167,11 +200,14 @@ struct RubricReviewView: View {
                 value: penalty.value,
                 valueLabel: "Deduction",
                 taskNames: draft.tasks.map(\.name),
-                onSave: { name, reference, threshold, value in
+                // A floor attaches to a task; there is no manual shape.
+                allowsManual: false,
+                isManual: false,
+                onSave: { name, reference, threshold, value, metric in
                     viewModel.updateDraft { d in
                         let rebuilt = DraftWeeklyPenalty(
                             id: penalty.id, name: name, referenceName: reference,
-                            metric: penalty.metric, threshold: threshold, value: value
+                            metric: metric, threshold: threshold, value: value
                         )
                         if let idx = d.weeklyPenalties.firstIndex(where: { $0.id == penalty.id }) {
                             d.weeklyPenalties[idx] = rebuilt
@@ -307,14 +343,56 @@ struct RubricReviewView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.sunShadow)
                 .padding(.top, 2)
-            Text("A strong day lands near \(draft.dailyTarget) — not everything, just a good day.")
-                .font(.sans(12.5, weight: .regular))
-                .foregroundStyle(Theme.textPrimary.opacity(0.7))
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // The weekly number sat in a bare stepper next to this one
+            // with nothing said about it, on the only screen that shows
+            // both — so the single most confusing thing about the
+            // scoring ("why isn't it seven times the daily?") was
+            // explained once, in a recap that never comes back.
+            VStack(alignment: .leading, spacing: 4) {
+                Text("A strong day lands near \(draft.dailyTarget) — not everything, just a good day.")
+                Text("The week asks for \(draft.weeklyTarget), which is more than \(draft.dailyTarget) × 7 — the end-of-week bonuses make up the difference.")
+            }
+            .font(.sans(12.5, weight: .regular))
+            .foregroundStyle(Theme.textPrimary.opacity(0.7))
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(12)
         .background(Theme.sunWarm.opacity(0.16))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// The palette a new area is coloured from — the same hex values
+    /// the conversation is allowed to choose, so a hand-added area sits
+    /// beside the others rather than announcing itself.
+    private static let areaSwatches: [String] = [
+        "#7F77DD", "#D85A30", "#639922", "#185FA5",
+        "#993556", "#C2922F", "#3F8E8E", "#B89A75"
+    ]
+
+    private var addAreaButton: some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            let used = Set(draft.categories.map { $0.colorHex.lowercased() })
+            let hex = Self.areaSwatches.first { !used.contains($0.lowercased()) }
+                ?? Self.areaSwatches[draft.categories.count % Self.areaSwatches.count]
+            let fresh = DraftCategory(name: "New area", colorHex: hex)
+            viewModel.updateDraft { $0.categories.append(fresh) }
+            // Straight into the editor: an area called "New area" is not
+            // an area, it is a prompt to name one.
+            editingCategory = fresh
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 12, weight: .medium))
+                Text("ADD AN AREA")
+                    .font(.sans(10.5, weight: .semibold))
+                    .tracking(1.6)
+                Spacer()
+            }
+            .foregroundStyle(Theme.textPrimary.opacity(0.45))
+            .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Category sections (daily tasks)
@@ -350,6 +428,21 @@ struct RubricReviewView: View {
                 .padding(.vertical, 6)
             }
             .buttonStyle(.plain)
+            .overlay(alignment: .trailing) {
+                // An area's name and colour were fixed the moment the
+                // conversation chose them. Everything else on this
+                // screen could be corrected.
+                Button { editingCategory = category } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.35))
+                        .padding(.leading, 14)
+                        .padding(.trailing, 2)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: 26)
+            }
 
             if !collapsed {
                 VStack(spacing: 6) {
@@ -464,6 +557,22 @@ struct RubricReviewView: View {
         }
     }
 
+    /// The one-line cost, phrased for the shape.
+    private func negativeDetail(_ negative: DraftNegative) -> String {
+        switch negative.shape {
+        case .perInstance:
+            return "each time · −\(negative.value)"
+        case .frequencyThreshold:
+            return "−\(negative.value) past \(negative.freeCount)"
+        case .tiered:
+            let steps = negative.tiers.sorted { $0.threshold < $1.threshold }
+            guard let first = steps.first, let last = steps.last else {
+                return "each time · −\(negative.value)"
+            }
+            return "−\(first.points) · −\(last.points) at \(last.threshold)"
+        }
+    }
+
     @ViewBuilder
     private func negativeRow(_ negative: DraftNegative) -> some View {
         Button {
@@ -476,7 +585,7 @@ struct RubricReviewView: View {
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Spacer()
-                    Text(negative.shape == .perInstance ? "each time · −\(negative.value)" : "−\(negative.value) past \(negative.freeCount)")
+                    Text(negativeDetail(negative))
                         .font(.sans(11.5, weight: .medium))
                         .foregroundStyle(Theme.alertRed.opacity(0.85))
                 }
@@ -525,7 +634,20 @@ struct RubricReviewView: View {
             tint: Theme.alertGreen,
             isExpanded: $showBoosters,
             count: draft.boosters.count,
-            onAdd: { editingBooster = DraftBooster(name: "", referenceName: draft.tasks.first?.name ?? "") }
+            // A booster with no task to watch is the only shape for an
+            // end-of-week STATE ("the flat is habitable"), and this
+            // always built a task-referencing one — so a manual goal the
+            // conversation missed could never be added back. A board
+            // with no tasks yet has nothing to reference at all, which
+            // used to produce a booster pointing at "".
+            onAdd: {
+                let firstTask = draft.tasks.first?.name ?? ""
+                editingBooster = DraftBooster(
+                    name: "",
+                    referenceName: firstTask,
+                    isManual: firstTask.isEmpty
+                )
+            }
         ) {
             ForEach(draft.boosters) { booster in
                 ruleRow(

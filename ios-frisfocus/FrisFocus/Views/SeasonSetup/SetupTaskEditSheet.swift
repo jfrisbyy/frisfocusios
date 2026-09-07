@@ -229,8 +229,17 @@ struct SetupNegativeEditSheet: View {
     @State private var value: Int = 3
     @State private var window: NegativeWindow = .weekly
     @State private var freeCount: Int = 2
+    @State private var tiers: [NegativeTier] = []
 
     private var isNew: Bool { negative.name.isEmpty }
+
+    /// The steps a tiered negative starts from when the shape is first
+    /// chosen — the shape people describe out loud ("one is a small
+    /// thing, two is not").
+    private static let starterTiers: [NegativeTier] = [
+        NegativeTier(threshold: 1, points: 3),
+        NegativeTier(threshold: 2, points: 12)
+    ]
 
     var body: some View {
         NavigationStack {
@@ -241,19 +250,70 @@ struct SetupNegativeEditSheet: View {
                 }
 
                 Section {
+                    // The third shape existed in the model, the scorer,
+                    // the tests and the settings editor, and this picker
+                    // offered two — so the season the conversation built
+                    // could not hold "one is minus three, two in a night
+                    // is minus fifteen", and neither could this screen.
                     Picker("Shape", selection: $shape) {
                         Text("Every time").tag(NegativeType.perInstance)
                         Text("In excess").tag(NegativeType.frequencyThreshold)
+                        Text("Steps").tag(NegativeType.tiered)
                     }
                     .pickerStyle(.segmented)
+                    .onChange(of: shape) { _, newShape in
+                        if newShape == .tiered && tiers.count < 2 {
+                            tiers = Self.starterTiers
+                        }
+                    }
 
-                    Stepper(value: $value, in: 1...30) {
-                        HStack {
-                            Text("Costs")
-                            Spacer()
-                            Text("−\(value)")
-                                .font(.serif(17, weight: .medium))
-                                .foregroundStyle(Theme.alertRed)
+                    if shape != .tiered {
+                        Stepper(value: $value, in: 1...30) {
+                            HStack {
+                                Text("Costs")
+                                Spacer()
+                                Text("−\(value)")
+                                    .font(.serif(17, weight: .medium))
+                                    .foregroundStyle(Theme.alertRed)
+                            }
+                        }
+                    }
+
+                    if shape == .tiered {
+                        ForEach(Array(tiers.enumerated()), id: \.offset) { index, tier in
+                            Stepper(
+                                value: Binding(
+                                    get: { tiers[index].points },
+                                    set: { tiers[index].points = max(1, $0) }
+                                ),
+                                in: 1...40
+                            ) {
+                                HStack {
+                                    Text(tier.threshold == 1
+                                         ? "The first one"
+                                         : "\(tier.threshold) or more")
+                                    Spacer()
+                                    Text("−\(tiers[index].points)")
+                                        .font(.serif(16, weight: .medium))
+                                        .foregroundStyle(Theme.alertRed)
+                                }
+                            }
+                        }
+                        if tiers.count < 4 {
+                            Button {
+                                let next = (tiers.last?.threshold ?? 0) + 1
+                                let jump = max(1, (tiers.last?.points ?? 3) * 2)
+                                tiers.append(NegativeTier(threshold: next, points: jump))
+                            } label: {
+                                Label("Add a step", systemImage: "plus.circle")
+                            }
+                        }
+                        if tiers.count > 2 {
+                            Button(role: .destructive) {
+                                tiers.removeLast()
+                            } label: {
+                                Label("Remove the last step", systemImage: "minus.circle")
+                            }
                         }
                     }
 
@@ -272,9 +332,16 @@ struct SetupNegativeEditSheet: View {
                         }
                     }
                 } footer: {
-                    Text(shape == .perInstance
-                         ? "Bad every time — each one costs points."
-                         : "Fine in moderation — free up to the line, then each one counts. You see it coming.")
+                    switch shape {
+                    case .perInstance:
+                        Text("Bad every time — each one costs points.")
+                    case .frequencyThreshold:
+                        Text("Fine in moderation — free up to the line, then each one counts. You see it coming.")
+                    case .tiered:
+                        // Totals, not additions: two on one day costs the
+                        // second number, not the sum of both.
+                        Text("The cost climbs within a single day. Each number is what that whole day costs once you reach it — not something added on top.")
+                    }
                 }
 
                 if !isNew {
@@ -305,6 +372,13 @@ struct SetupNegativeEditSheet: View {
                         updated.value = max(1, value)
                         updated.window = window
                         updated.freeCount = max(0, freeCount)
+                        let sortedTiers = tiers.sorted { $0.threshold < $1.threshold }
+                        updated.tiers = shape == .tiered ? sortedTiers : []
+                        if shape == .tiered {
+                            // The headline value is the worst a day can
+                            // cost, so the row and the season agree.
+                            updated.value = max(1, sortedTiers.last?.points ?? value)
+                        }
                         onSave(updated)
                         dismiss()
                     }
@@ -319,6 +393,7 @@ struct SetupNegativeEditSheet: View {
             value = negative.value
             window = negative.window
             freeCount = negative.freeCount
+            tiers = negative.tiers.isEmpty ? Self.starterTiers : negative.tiers
         }
     }
 }
@@ -338,7 +413,13 @@ struct SetupRuleEditSheet: View {
     let value: Int
     let valueLabel: String
     let taskNames: [String]
-    let onSave: (String, String, Int, Int) -> Void
+    /// True for boosters, which may watch nothing and be ticked by hand.
+    /// A floor cannot: a penalty rule lives ON a task in the season.
+    let allowsManual: Bool
+    /// Whether this rule currently watches nothing.
+    let isManual: Bool
+    /// name, watched task ("" when manual), threshold, value, metric
+    let onSave: (String, String, Int, Int, BoosterMetric) -> Void
     let onRemove: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -347,6 +428,15 @@ struct SetupRuleEditSheet: View {
     @State private var editedReference: String = ""
     @State private var editedThreshold: Int = 3
     @State private var editedValue: Int = 10
+    /// What the rule watches, as one choice. `metric` used to be a `let`
+    /// the sheet could only read, so a booster the conversation built as
+    /// a day count could never be corrected to a weekly total, in either
+    /// direction — and a manual booster opened showing a "Watches" picker
+    /// seeded with the first task on the board and a "Days per week"
+    /// stepper, both of them decorative, both contradicting the row the
+    /// person had just tapped.
+    @State private var editedMetric: BoosterMetric = .days
+    @State private var editedManual: Bool = false
 
     private var isNew: Bool { name.isEmpty }
 
@@ -356,10 +446,23 @@ struct SetupRuleEditSheet: View {
                 Section {
                     TextField("Name", text: $editedName)
                         .font(.sans(16, weight: .regular))
-                    Picker("Watches", selection: $editedReference) {
-                        ForEach(taskNames, id: \.self) { taskName in
-                            Text(taskName).tag(taskName)
+
+                    if allowsManual {
+                        Toggle("I'll tick this myself", isOn: $editedManual)
+                            .disabled(taskNames.isEmpty)
+                    }
+
+                    if !editedManual {
+                        Picker("Watches", selection: $editedReference) {
+                            ForEach(taskNames, id: \.self) { taskName in
+                                Text(taskName).tag(taskName)
+                            }
                         }
+                        Picker("Counts", selection: $editedMetric) {
+                            Text("Days in the week").tag(BoosterMetric.days)
+                            Text("A weekly total").tag(BoosterMetric.sum)
+                        }
+                        .pickerStyle(.segmented)
                     }
                     // A day count lives in 1...7; a weekly TOTAL does
                     // not. This stepper was pinned to 1...7 and labelled
@@ -367,7 +470,9 @@ struct SetupRuleEditSheet: View {
                     // as "150,000 steps" could not be seen, let alone
                     // edited — the first tap would have silently rewritten
                     // it to 7.
-                    if metric == .sum {
+                    if editedManual {
+                        EmptyView()
+                    } else if editedMetric == .sum {
                         HStack {
                             Text("Weekly total")
                             Spacer()
@@ -396,7 +501,9 @@ struct SetupRuleEditSheet: View {
                         }
                     }
                 } footer: {
-                    Text(helper)
+                    Text(editedManual
+                         ? "A weekly goal nothing can count — you tick it at week's end and the bonus lands."
+                         : helper)
                 }
 
                 if !isNew {
@@ -423,9 +530,10 @@ struct SetupRuleEditSheet: View {
                     Button("Save") {
                         onSave(
                             editedName.trimmingCharacters(in: .whitespacesAndNewlines),
-                            editedReference,
-                            editedThreshold,
-                            editedValue
+                            editedManual ? "" : editedReference,
+                            editedManual ? 1 : editedThreshold,
+                            editedValue,
+                            editedManual ? .days : editedMetric
                         )
                         dismiss()
                     }
@@ -436,9 +544,16 @@ struct SetupRuleEditSheet: View {
         }
         .onAppear {
             editedName = name
-            editedReference = reference.isEmpty ? (taskNames.first ?? "") : reference
+            editedManual = isManual || (allowsManual && taskNames.isEmpty)
+            // Only fall back to the first task for a rule that is
+            // supposed to watch one. Seeding a manual booster with it is
+            // what made the editor describe the wrong thing.
+            editedReference = (!reference.isEmpty || editedManual)
+                ? reference
+                : (taskNames.first ?? "")
             editedThreshold = threshold
             editedValue = value
+            editedMetric = metric
         }
     }
 }
@@ -583,5 +698,108 @@ struct SetupMilestoneEditSheet: View {
         guard !trimmed.isEmpty else { return }
         steps.append(DraftMilestoneStep(name: trimmed))
         newStepName = ""
+    }
+}
+
+// MARK: - Area editor
+
+/// Rename and recolour one of the season's areas, or remove an empty one.
+///
+/// The review screen could edit every element of a season except the
+/// areas holding them: a name the conversation guessed wrong ("Health &
+/// Sleep" for what the person calls "Recovery") was fixed for the whole
+/// season, and an area added by hand arrived called "New area" with no
+/// way to say otherwise.
+struct SetupCategoryEditSheet: View {
+    let category: DraftCategory
+    /// Only an empty area may be removed, and never the last one.
+    let canRemove: Bool
+    let onSave: (DraftCategory) -> Void
+    let onRemove: (DraftCategory) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name: String = ""
+    @State private var colorHex: String = ""
+
+    /// The same hex values the conversation may choose from.
+    private static let swatches: [String] = [
+        "#7F77DD", "#D85A30", "#639922", "#185FA5",
+        "#993556", "#C2922F", "#3F8E8E", "#B89A75"
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Area name", text: $name)
+                        .font(.sans(16, weight: .regular))
+                } footer: {
+                    Text("Your words for this part of your life.")
+                }
+
+                Section {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 14) {
+                        ForEach(Self.swatches, id: \.self) { hex in
+                            Button {
+                                colorHex = hex
+                            } label: {
+                                Circle()
+                                    .fill(Color(hex: hex))
+                                    .frame(width: 34, height: 34)
+                                    .overlay(
+                                        Circle().strokeBorder(
+                                            Theme.textPrimary.opacity(
+                                                colorHex.caseInsensitiveCompare(hex) == .orderedSame ? 0.9 : 0
+                                            ),
+                                            lineWidth: 2
+                                        )
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                } header: {
+                    Text("Colour")
+                }
+
+                if canRemove {
+                    Section {
+                        Button(role: .destructive) {
+                            onRemove(category)
+                            dismiss()
+                        } label: {
+                            Label("Remove this area", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Theme.warmWheat)
+            .navigationTitle("Area")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundStyle(Theme.textPrimary.opacity(0.6))
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Save") {
+                        var updated = category
+                        updated.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        updated.colorHex = colorHex
+                        onSave(updated)
+                        dismiss()
+                    }
+                    .font(.sans(15, weight: .medium))
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .onAppear {
+            name = category.name
+            colorHex = category.colorHex
+        }
     }
 }

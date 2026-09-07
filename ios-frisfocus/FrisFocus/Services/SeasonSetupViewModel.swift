@@ -131,6 +131,7 @@ final class SeasonSetupViewModel {
             suggestedName = snapshot.suggestedName
             suggestedLengthDays = snapshot.suggestedLengthDays ?? 90
             suggestedOpenEnded = snapshot.suggestedOpenEnded ?? false
+            usedStarter = snapshot.usedStarter ?? false
             suggestedEndDate = snapshot.suggestedEndDate
             conversationDone = true
             arcProgress = 1.0
@@ -188,7 +189,12 @@ final class SeasonSetupViewModel {
         // reading one sentence and leaving created a "saved conversation"
         // holding nothing, and the next visit hid the Begin button behind
         // a destructive "Start fresh?" confirmation to protect it.
-        guard userTurns > 0 else { return }
+        // ...or a starter board the person has been editing. `skipToStarter`
+        // never speaks a user turn, so this guard used to swallow every
+        // save on that whole path: someone who tapped Skip and then spent
+        // ten minutes correcting the starter board had nothing on disk,
+        // which is exactly the loss this saving exists to prevent.
+        guard userTurns > 0 || usedStarter else { return }
         let stageName: String
         switch stage {
         case .review: stageName = "review"
@@ -210,7 +216,8 @@ final class SeasonSetupViewModel {
             suggestedName: suggestedName,
             suggestedLengthDays: suggestedLengthDays,
             suggestedEndDate: suggestedEndDate,
-            suggestedOpenEnded: suggestedOpenEnded
+            suggestedOpenEnded: suggestedOpenEnded,
+            usedStarter: usedStarter
         )
         SeasonSetupResumeStore.save(snapshot)
     }

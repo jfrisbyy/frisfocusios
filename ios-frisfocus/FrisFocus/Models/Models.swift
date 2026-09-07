@@ -65,6 +65,64 @@ enum Category: String, Codable, CaseIterable {
     }
 }
 
+/// Matching a season's own area names onto the eight built-in slots.
+extension Category {
+    /// Keywords that mean this slot, lowercased.
+    private var slotKeywords: [String] {
+        switch self {
+        case .spiritual: return ["spirit", "faith", "prayer", "pray", "church", "god", "ministry",
+                                 "meditat", "inner", "soul", "worship", "scripture", "bible", "quiet"]
+        case .fitness:   return ["fitness", "train", "gym", "lift", "run", "workout", "exercise",
+                                 "sport", "body", "strength", "athlet", "movement", "hoop", "basketball"]
+        case .health:    return ["health", "sleep", "food", "eat", "meal", "nutrition", "diet",
+                                 "weight", "hydrat", "water", "recovery", "rest", "wellbeing", "mind"]
+        case .work:      return ["work", "job", "career", "business", "money", "shift", "office",
+                                 "client", "professional", "income"]
+        case .creative:  return ["creativ", "write", "writing", "music", "art", "draw", "paint",
+                                 "design", "film", "video", "photo", "piano", "beat", "make", "craft"]
+        case .apartment: return ["apartment", "home", "house", "flat", "clean", "chore", "upkeep",
+                                 "space", "tidy", "laundry", "admin", "errand", "life"]
+        case .learning:  return ["learn", "study", "school", "class", "course", "exam", "language",
+                                 "read", "french", "spanish", "certif", "skill", "practice", "revision"]
+        case .people:    return ["people", "friend", "family", "relationship", "social", "connect",
+                                 "love", "partner", "call", "community", "mum", "mom", "dad"]
+        }
+    }
+
+    /// The slot that best fits a season area called `name`.
+    ///
+    /// Slots used to be handed out by position — the first area the
+    /// conversation listed took `.spiritual`, the second `.fitness`, and
+    /// so on down `allCases`. The per-season `customName` and
+    /// `customColorHex` covered that everywhere they were consulted, but
+    /// a dozen places read the raw slot instead, so someone whose first
+    /// area was training found their gym session filed under a header
+    /// reading "Spiritual", tinted indigo against an orange season, and
+    /// nudged back to life with "Quiet time has been waiting".
+    ///
+    /// Matching on the name fixes all of those at once for the ordinary
+    /// case. `avoiding` holds the slots already handed out, so two areas
+    /// never collide; when nothing matches, or the best match is taken,
+    /// the first free slot is used exactly as before.
+    static func bestSlot(for name: String, avoiding taken: Set<Category>) -> Category {
+        let needle = name.lowercased()
+        let free = Category.allCases.filter { !taken.contains($0) }
+        guard !free.isEmpty else { return .health }
+
+        // Longest keyword wins, so "reading group" prefers `.learning`
+        // over a stray short match elsewhere.
+        var best: (slot: Category, score: Int)? = nil
+        for slot in free {
+            for keyword in slot.slotKeywords where needle.contains(keyword) {
+                if best == nil || keyword.count > best!.score {
+                    best = (slot, keyword.count)
+                }
+            }
+        }
+        return best?.slot ?? free[0]
+    }
+}
+
 enum CategoryTier: String, Codable {
     case primary, support, quiet
 }

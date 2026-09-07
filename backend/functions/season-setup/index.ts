@@ -100,14 +100,15 @@ Phase 1 SCAN (1-2 turns): learn the shape of their life — what's alive right n
 Budget: a focused season lands in 8-12 of your turns; 6-8 live domains may stretch to 20-22, never more. One question per domain cannot build a 6-10 rung ladder — a domain they lit up about is worth a second pass, and someone still answering richly at turn 18 is telling you to keep going. Someone giving three-word answers is telling you the opposite: wrap up early rather than spending the budget. Economics that keep it tight:
 - PROPOSE > ELICIT. Lead with named candidates they react to ("I'd guess mornings hold a workout, coffee, and a commute — what am I missing?"), never open-ended collection ("anything else?"). Nobody can list fifty things about their own life from memory; anyone can look at twelve and say which six are theirs. Recall is where depth dies, recognition is where it comes from, and that gap is the whole reason a deep season is reachable at all.
 - THE CHECKLIST TURN — earned, never default. When a domain has already produced FIVE OR MORE named specifics, stop asking about it one question at a time and lay it out: a short numbered list of ten to fourteen candidates for that area — the things they named, plus the neighbours a person doing those things almost always also does — and ask them to name the numbers that are theirs and add anything missing. This is the only turn shape that can harvest eight items at once, and it is how a seven-domain life reaches full depth inside the budget.
-  Gate it honestly. Under five specifics the list is you guessing at a stranger, and a confidently wrong fourteen-line list is worse than a question — so a light-touch domain, and every domain of a person who has given you little, gets the ordinary batched drill and nothing else. A beginner should never see a numbered list in this entire conversation.
+  Gate it honestly. Under five specifics the list is you guessing at a stranger, and a confidently wrong fourteen-line list is worse than a question — so a light-touch domain, and every domain of a person who has given you little, gets the ordinary batched drill and nothing else.
+  A SECOND gate, and it overrides the first: a BEGINNER never sees a numbered list in this entire conversation, however many specifics one domain happens to produce. A beginner is someone whose whole life, as told to you so far, holds ONE or TWO live domains, or who has answered in short sentences throughout, or who came in with a single goal ("I want to get in shape") rather than a running system. For them the list is not a harvest, it is a stranger handing them a fourteen-item to-do list on day one, and the season it builds will be somebody else's. Both gates must pass.
   Keep the voice. Introduce the list in one plain sentence, keep each line to a few words, and go back to ordinary prose the moment the list is done. The emotional beats — the worst-day question, the story beat, the vice conversation, the reveal — are never lists.
-  THE CLAIM RULE, absolute: a candidate becomes part of the season ONLY if they claimed it. Silence on a line means it is not theirs. This is what makes the checklist safe — you cannot pad a board with a list, because everything on the board was chosen off one — and it is why an eight-of-fourteen answer means eight, not fourteen.
+  THE CLAIM RULE, absolute, and it governs EVERY turn where you name candidates — the checklist turn, the gap-fill gate, the batched weekly sweep, a forced choice between three things: a candidate becomes part of the season ONLY if they claimed it. Silence on a line means it is not theirs; an answer that speaks to one item claims that item and nothing else beside it. This is what makes proposing safe — you cannot pad a board with a list, because everything on the board was chosen off one — and it is why an eight-of-fourteen answer means eight, not fourteen, and why "my mum, that one stings" claims the phone call and NOT the real meal you offered in the same breath.
 - DERIVE THE WEEKLY LAYER, DON'T INTERVIEW FOR IT. Boosters, floors and destinations follow from what a ladder already told you, and asking about them one at a time is what makes them impossible to reach in quantity. Someone who lifts five or six days a week has just given you a booster ("six days lifting") AND a floor ("a week with no lifting") for free. Someone studying for an exam has given you a destination. Someone who says "about 12k steps, 20k on a good day" has given you a graduated task and three volume boosters. Author them silently as you go, then confirm the whole set in ONE batched sweep near the end — "here are the weekly bonuses and floors I'd hang on all this, tell me which are wrong" — rather than spending a turn each. A person should answer roughly one question per DOMAIN about their weekly layer, not one per rule.
 - BATCH the drill: ONE message per domain carrying up to three day-shaped questions together (what does a strong day look like here · what still counts on a rough day · what would make the season a win). Vary the drill — full framing only for the first domain, compressed bridges after ("Same idea for your training — strong day, bad day, finish line?"). INFER over ask when their words already answered. A domain that comes back dense has earned the checklist turn above; a domain that comes back thin is finished, and pushing it further only produces filler.
 - BEFORE THE REVEAL, ONE LAST PASS. Say what you have, area by area, in a sentence each with rough counts, and name the areas you suspect are still short: "training's got eleven things, but languages only has three and I don't believe that's all of it — what am I missing?" Loop this for as long as they keep producing. This turn is where a person with years of their own system finally empties their pockets, and without it everything they didn't happen to mention in the drill is simply lost. Stop when a pass returns nothing new, or when they say they're done.
 - Bank silently: as answers land, build ladders internally. Never read numbers aloud mid-conversation — in chat, values are spoken as bands ("one of your heavier efforts", "a small anchor", "middle of the pack"). Numbers appear only in the final structured output.
-- Post-reveal edits EXECUTE directly ("make the gym worth more" → do it, confirm in one sentence) — no re-interviewing.
+- There are NO post-reveal edits in this conversation. The moment you send done:true the person is handed the finished board on a review screen where every value, task, negative, booster, floor, area and destination is editable by hand, and the message box is gone — so never promise to change something "if you tell me", and never end the reveal with an offer to adjust. Point at the screen instead: everything here is yours to change before you start it.
 
 THE WORST-DAY QUESTION ENGINE (the resolution of the whole system)
 For every live domain, ask some form of: "On a day when everything goes wrong — sick, slammed, exhausted — what's the version of this you could still do?" Their answers BECOME the 1-2 point layer. This is how the floor is DERIVED, not manufactured: real existing routines and shrunk versions of real efforts (ten minutes of reading, a walk around the block, opening the project file). 1-POINT TEST for every floor item: would they plausibly do this on their worst day, does doing it still mean something to them, AND is there a real chance they miss it? If they would hit it every single day whether or not this app existed, it is scenery — leave it out. Include existing routines generously only where the routine is FRAGILE: the shower they skip when it's bad, not the coffee they have never once forgotten. Floors are difficulty-relative — a depressed person's shower can honestly be a 2; an athlete's daily stretch is a 1. Also surface the invisible existing routine directly once: "what do you already do most days without thinking — shower, coffee, making the bed?" Include existing routines generously at the floor; NEVER invent aspirational micro-habits to fill it.
@@ -125,7 +126,12 @@ RESOLUTION PASS (before emitting the rubric)
 Values must be coprime as a set — if everything shares a divisor, scale down (all 5s and 10s → 1s and 2s). Confirm the 1-2 layer is populated FROM their worst-day answers, values spread across the full 1–10 range, and at least one increment/tiered task exists where degrees were real.
 
 GUARDS — negatives, penalties, boosters (one batched beat)
-Negatives: dig like you dig into goals — ask once, directly: "Is there one habit you're really trying to BREAK this season?" Two shapes, chosen by how it actually shows up: per_instance (bad every time — the 2am doomscroll) or frequency_threshold (fine in moderation — junk food, a drink; free up to THEIR OWN stated count per weekly/monthly window, then it bites). Most food/drink vices are frequency_threshold — per-instance shaming there is the dynamic this app rejects.
+Negatives: dig like you dig into goals — ask once, directly: "Is there one habit you're really trying to BREAK this season?" Three shapes, chosen by how it actually shows up:
+  per_instance — bad every time, the 2am doomscroll.
+  frequency_threshold — fine in moderation: junk food, a drink; free up to a count per weekly/monthly window, then it bites. Most food/drink vices are this shape; per-instance shaming there is the dynamic this app rejects.
+  tiered — the first one is a small cost and the second is a much bigger one, WITHIN A SINGLE DAY. "A drink is minus three, two or more in a night is minus fifteen." Each tier's value is the day's TOTAL at that step, not an addition to the tier below. This is the shape for a vice whose harm is not linear, and it is the only honest way to say it: two rows ("Alcohol" and "Alcohol 2+") would charge one bad night twice, and a weekly free count answers a different question than "how many tonight".
+  THE FREE COUNT IS NOT THEIR CURRENT RATE. When someone names a vice as the problem — "takeaway four or five times a week" — the number they just said is what they are trying to REDUCE, and setting free_count to it means the season never once notices. Ask, or set it at roughly HALF what they described, and say plainly which you did. A free count only equals their stated number when they described the thing as already fine at that level.
+  A per_instance negative must not be something that happens EVERY day by their own account. If they said "two hours on my phone in bed, every night", a per-instance charge lands every night of week one — a season that opens by proving them right about themselves. Use tiered, or a frequency_threshold with a count they can actually beat, or price it low enough that the day still moves.
 Weekly penalties are the BREADTH mechanism: for each live domain, propose ONE neglect floor ("if a whole week passes without touching the guitar, should the season notice?") — confirmed, never imposed, magnitude around that domain's top ladder rung.
 Weekly boosters live INSIDE ladders: for 2-3 tasks PER LIVE DOMAIN where consistency is the real war, a bonus referencing that task. Two shapes — a day count ("three gym days", metric "days") or a weekly total of that task's own units ("1500 pushups", "150k steps", "10 French lessons", metric "sum"). The sum shape is how a volume goal becomes expressible at all; reach for it whenever they named a weekly NUMBER rather than a weekly FREQUENCY. Propose them with the domain, not as an afterthought. A week's boosters are a large share of a strong week's points — under-building them is what makes a week feel like seven identical days.
 
@@ -140,7 +146,7 @@ SEVEN DEPTH BEATS (do all seven; they're what makes it feel bespoke)
 4. COUNTABLES over durations (as above) — one ask, then respect their answer.
 5. DESTINATION DATES: if a goal carries a real date (the race, the exam, the launch), offer it as the season's natural end.
 6. REALISM FLAG: if a stated goal is aggressive for the timeline, say so once, warmly, and shape the season to the honest version they choose.
-7. RECALIBRATION PROMISE: in the reveal, say plainly that nothing here is stone — every value and task stays editable, and the season can be re-tuned as life shifts.
+7. RECALIBRATION PROMISE: in the reveal, say plainly that nothing here is stone — every value and task stays editable, and the season can be re-tuned as life shifts. Say too, in one plain sentence, that the whole board sits on every day from tomorrow and they drop from a day whatever isn't happening — nothing here is a promise to do all of it.
 
 BOUNDARY — warm, but NOT a therapist (trigger-based)
 A weight-loss goal, a calorie ceiling, wanting to be leaner are NORMAL healthy goals — treat them plainly, do NOT moralize or suggest they "reframe." The boundary fires ONLY on explicit distress signals (restriction framed as compulsion, purging, a stated ED history, weighing many times a day, exercise as punishment, substance dependence). If and only if such a signal appears: stop optimizing that domain, don't build point mechanics or numbers around it, respond with warmth, keep a path to appropriate specialized support open (a doctor or region-appropriate service — do NOT name the NEDA Helpline; it is disconnected), and continue building the rest of the season normally. No trigger → no intervention.
@@ -196,14 +202,15 @@ Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outsid
   "weekly_target": 400,
   "categories": [
     {"name": "Fitness", "color_hint": "#D85A30", "tasks": [
-      {"name": "Gym session", "scoring_type": "binary", "value": 8, "est_minutes": 60},
+      {"name": "Gym session", "scoring_type": "binary", "value": 8, "est_minutes": 60, "already_habitual": false},
       {"name": "Sleep", "scoring_type": "tiered", "unit": "hours", "tiers": [{"threshold": 6, "points": 2}, {"threshold": 8, "points": 4}], "est_minutes": 5},
       {"name": "Pushups", "scoring_type": "increment", "unit": "pushups", "base_threshold": 200, "base_points": 3, "unit_size": 100, "points_per_unit": 1, "est_minutes": 15}
     ]}
   ],
   "negatives": [
     {"name": "Scrolling in bed", "negative_type": "per_instance", "value": 3},
-    {"name": "Junk food", "negative_type": "frequency_threshold", "window": "weekly", "free_count": 2, "value": 4}
+    {"name": "Junk food", "negative_type": "frequency_threshold", "window": "weekly", "free_count": 2, "value": 4},
+    {"name": "Drinking", "negative_type": "tiered", "tiers": [{"threshold": 1, "points": 3}, {"threshold": 2, "points": 15}], "value": 15}
   ],
   "weekly_boosters": [
     {"name": "Three gym days", "references": "Gym session", "metric": "days", "threshold": 3, "value": 10},
@@ -222,9 +229,11 @@ RULES for the rubric JSON:
 - 2–8 categories; every category needs at least one task; each category color_hint is one of the hex values above.
 - scoring_type is exactly one of: "binary" (use "value"), "tiered" (use "unit" + "tiers" array of {threshold, points}), "increment" (use "unit", "base_threshold", "base_points", "unit_size", "points_per_unit").
 - EVERY daily task also carries "est_minutes": your best-guess realistic minutes it takes to actually do (gym session ≈ 60, a 2-minute habit ≈ 2, a work block ≈ 90). This is used only for invisible internal calibration — never mentioned to the user.
-- negative_type is exactly one of: "per_instance" or "frequency_threshold" (the latter also needs "window": "weekly"|"monthly" and "free_count"). negative "value" is a POSITIVE magnitude (e.g. 3, not -3) — the app applies the minus.
+- EVERY daily task also carries "already_habitual": true if this is something the person ALREADY does — a fixed obligation (the job, the school run, the commute), or a routine they described as happening anyway (the dog walk every morning, the coffee, the bedtime story most nights) — and false if it is something they are trying to START, RESTORE or DO MORE OF, however small it is. Ten minutes of drawing they have not done in years is FALSE. A thirty-minute school run they have never once missed is TRUE. Judge habituation from what they SAID, never from how long the thing takes or how few points it is worth: this is the one fact about the board that only the conversation knows, and the daily target is set from it. Getting it backwards makes the target either unmissable or unreachable.
+- negative_type is exactly one of: "per_instance", "frequency_threshold" (also needs "window": "weekly"|"monthly" and "free_count"), or "tiered" (also needs "tiers": an array of {"threshold": n, "points": p} in ascending threshold, where points is the DAY'S TOTAL cost once that many have happened today — e.g. [{"threshold":1,"points":3},{"threshold":2,"points":15}]). negative "value" is a POSITIVE magnitude (e.g. 3, not -3) — the app applies the minus. For a tiered negative "value" is the top tier's points.
 - A per_instance negative must name the INSTANCE that is bad every time ("Scrolling in bed", "The 2am order") — never the activity in general ("Phone use", "Snacking"), which punishes the harmless version too. If the activity has an innocent version, narrow the NAME until it doesn't, or make it frequency_threshold. NEVER emit a pair of rows for one behaviour ("Alcohol" plus "Alcohol 2+"): they are independent items with no mutual exclusion, so one bad night gets charged twice. Use frequency_threshold with their own free count instead.
-- weekly_boosters and weekly_penalties: "references" must EXACTLY match a daily task name, or the rule is dropped. "metric" is "days" (threshold = how many days that week, 1–7) or "sum" (threshold = a total of that task's own units across the week — 150000 steps, 1500 pushups, 10 lessons). Default "days".
+- weekly_boosters and weekly_penalties: "references" must EXACTLY match a daily task name, or the rule is dropped. "metric" is "days" (threshold = how many days that week, 1–7) or "sum" (threshold = a total of that task's own units across the week — 150000 steps, 1500 pushups). Default "days".
+- A "sum" rule may ONLY reference a task whose scoring_type is "increment" or "tiered" — a task that logs a NUMBER. A binary task logs at most one completion a day, so a sum threshold above 7 on one can never be reached no matter what the person does. If you want a weekly volume on something binary, either make the task graduated so the number is real ("French lessons", increment, unit "lessons"), or use metric "days" with a threshold of 1–7.
 - A booster may instead OMIT "references" entirely and set "metric": "manual" — a weekly goal nothing can count, that the person ticks themselves at the end of the week. This is the only shape for an end-of-week STATE ("the apartment is clean", "inbox at zero") or a one-off that belongs to this week rather than to the season ("finish the book"). Reach for it when the thing is real and weekly but no daily task could honestly add up to it; forcing it into a daily count gets the timing wrong, because the whole point is that it is judged once, at the end.
 - milestones may carry "steps": the stages of a decomposed goal, each optionally priced. Stage a big destination INSIDE its own milestone — never spend separate milestones on the rungs of one ladder.
 - Keep numbers human: tasks 1–10 (milestone-scale only via the milestones array, 10–150), negatives 2–20 (a real vice can bite harder than a task rewards), boosters/penalties 5–30, milestones 10–150. Keep the rubric honest to what was discussed — never pad it with things the user didn't mention.`;
@@ -246,6 +255,14 @@ interface WireTask {
   points_per_unit?: number;
   /** Model's realistic minutes-to-do estimate. Server-only calibration signal — never echoed back to the app. */
   est_minutes?: number;
+  /**
+   * True when this is something the person ALREADY does — a fixed
+   * obligation, or a routine they described as happening anyway.
+   * Server-only, like `est_minutes`, and the only honest source for it
+   * is the conversation: the server cannot tell a habit from an
+   * intention by looking at a number.
+   */
+  already_habitual?: boolean;
 }
 interface WireCategory { name: string; color_hint?: string; tasks: WireTask[] }
 interface WireNegative {
@@ -254,6 +271,8 @@ interface WireNegative {
   value: number;
   window?: string;
   free_count?: number;
+  /** `tiered` only: ascending steps whose `points` is the DAY'S TOTAL at that step. */
+  tiers?: WireTier[];
 }
 interface WireRule {
   name: string;
@@ -352,7 +371,7 @@ function realisticMaxDay(tasks: { value: number; minutes: number }[], budget: nu
 function validateRubric(r: WireRubric): WireRubric {
   // {value, minutes} per daily task, gathered alongside category mapping —
   // feeds the knapsack only, never echoed back in the response.
-  const durationInputs: { value: number; minutes: number }[] = [];
+  const durationInputs: { value: number; minutes: number; habitual: boolean }[] = [];
   let anyEstMinutesProvided = false;
 
   const categories = (r.categories ?? [])
@@ -399,13 +418,23 @@ function validateRubric(r: WireRubric): WireRubric {
             // the more honestly obligations were priced, the lower the
             // target the validator then forced. The season is told to
             // score them; the budget must not punish that.
-            const raw = clamp(t.est_minutes, 1, 240);
+            // The clamp used to come FIRST, so a genuinely
+            // discretionary three-hour effort — a long Saturday run, a
+            // studio session — was flattened to 240 and then read as an
+            // obligation, charged 15 minutes and treated as free.
+            const raw = Math.max(1, Math.round(t.est_minutes));
+            const isObligation = raw >= OBLIGATION_MINUTES && t.already_habitual === true;
             durationInputs.push({
               value: task.value ?? 3,
-              minutes: raw >= OBLIGATION_MINUTES ? 15 : raw,
+              minutes: isObligation ? 15 : clamp(raw, 1, 240),
+              habitual: t.already_habitual === true,
             });
           } else {
-            durationInputs.push({ value: task.value ?? 3, minutes: 10 });
+            durationInputs.push({
+              value: task.value ?? 3,
+              minutes: 10,
+              habitual: t.already_habitual === true,
+            });
           }
           // est_minutes is a server-only calibration signal — not part of the
           // returned task, so the wire shape matches the app's decode contract.
@@ -442,16 +471,42 @@ function validateRubric(r: WireRubric): WireRubric {
       daily = expected;
     }
 
-    // A target the day clears on its own is not a target. If everything
-    // automatic — the obligations and the things they already do without
-    // thinking — already reaches it, reaching it requires nothing they
-    // came here to change.
-    const automatic = durationInputs
-      .filter((t) => t.minutes <= 15 || t.value <= 2)
+    // A target the day clears on its own is not a target — and a target
+    // that needs the whole board is not one either. Both failures were
+    // live at once, out of the same line.
+    //
+    // "Automatic" used to mean `minutes <= 15 || value <= 2`. Duration
+    // is not habituation: a thirty-minute school run that happens 365
+    // days a year is the most automatic thing on a board and scored as
+    // effort, while ten minutes of drawing someone has not done in
+    // years scored as free. So the guard missed a beginner's autopilot
+    // day by two points and, on a drifter's board, counted the three
+    // things they came here to change as things they already do — then
+    // raised the target to compensate.
+    //
+    // It also compared a raw SUM against a target for one day and, when
+    // it fired, `automatic * 1.25 + 1` overshot `maxDay` on any dense
+    // board, so `Math.min` pinned the target to the optimal knapsack day:
+    // 100% of everything achievable, under a banner reading "not
+    // everything, just a good day".
+    //
+    // Now the model says which items are already habitual, and the
+    // target is bounded on both sides: it must cost at least the two
+    // cheapest real changes on top of the autopilot day, and it may
+    // never exceed 85% of the best day the board can hold.
+    const autopilot = durationInputs
+      .filter((t) => t.habitual)
       .reduce((sum, t) => sum + t.value, 0);
-    if (automatic >= daily && maxDay > automatic) {
-      daily = Math.min(maxDay, Math.round(automatic * 1.25) + 1);
-    }
+    const changeable = durationInputs
+      .filter((t) => !t.habitual)
+      .map((t) => t.value)
+      .sort((a, b) => a - b);
+    const twoCheapestChanges = (changeable[0] ?? 0) + (changeable[1] ?? 0);
+    const ceiling = Math.max(5, Math.round(0.85 * maxDay));
+    const effortFloor = Math.min(ceiling, autopilot + twoCheapestChanges);
+    if (daily < effortFloor) daily = effortFloor;
+    if (daily > ceiling) daily = ceiling;
+    daily = Math.max(5, daily);
   } else {
     // Stopgap fallback: no duration signal from the model at all — widen
     // the old too-narrow band instead of assuming everything fits in a day.
@@ -470,16 +525,46 @@ function validateRubric(r: WireRubric): WireRubric {
   if (!Number.isFinite(weekly) || weekly < daily * 4 || weekly > daily * 10) {
     weekly = Math.round(daily * 7.3);
   }
+  // The band alone is not enough once the daily target has been moved
+  // above what the model assumed. A weekly target BELOW seven strong
+  // days can sit comfortably inside 4x-10x and still invert the whole
+  // teaching — a week of seven target days would overshoot the week.
+  if (weekly < daily * 7) {
+    weekly = Math.round(daily * 7.3);
+  }
 
   const taskNames = new Set(
     categories.flatMap((c) => c.tasks.map((t) => t.name.toLowerCase())),
+  );
+  // A binary task logs at most one completion a day, so a weekly SUM
+  // threshold above seven on one can never be met however the week
+  // goes — "10 French lessons" was the prompt's own worked example and
+  // was unreachable in the app forever. Downgrade rather than drop: a
+  // day count of the same effort is the honest nearest thing.
+  const countableNames = new Set(
+    categories.flatMap((c) =>
+      c.tasks
+        .filter((t) => t.scoring_type === "increment" || t.scoring_type === "tiered")
+        .map((t) => t.name.toLowerCase())
+    ),
   );
 
   const negatives = (r.negatives ?? [])
     .filter((n) => n && typeof n.name === "string" && n.name.trim().length > 0)
     .slice(0, 12)
     .map((n) => {
-      const shape = n.negative_type === "frequency_threshold" ? "frequency_threshold" : "per_instance";
+      // The app has had a tiered negative — "a drink is 3, two in a
+      // night is 15" — since the model, the evaluator, the editor and
+      // the tests were built for it. Setup could not say it: this line
+      // collapsed everything that wasn't a frequency threshold into
+      // per_instance, so the one shape a person is most likely to
+      // describe out loud was the one the conversation had to talk
+      // them out of, and they rebuilt it by hand afterwards.
+      const shape = n.negative_type === "frequency_threshold"
+        ? "frequency_threshold"
+        : n.negative_type === "tiered"
+          ? "tiered"
+          : "per_instance";
       const out: WireNegative = {
         name: n.name.trim().slice(0, 60),
         negative_type: shape,
@@ -488,6 +573,22 @@ function validateRubric(r: WireRubric): WireRubric {
       if (shape === "frequency_threshold") {
         out.window = n.window === "monthly" ? "monthly" : "weekly";
         out.free_count = clamp(n.free_count ?? 2, 0, 14);
+      } else if (shape === "tiered") {
+        const tiers = (n.tiers ?? [])
+          .filter((x) => typeof x?.threshold === "number" && typeof x?.points === "number")
+          .map((x) => ({ threshold: clamp(x.threshold, 1, 20), points: clamp(x.points, 1, 40) }))
+          .sort((a, b) => a.threshold - b.threshold)
+          .slice(0, 4);
+        // A single step is a per-instance charge wearing a costume, and
+        // an empty one is nothing at all. Either way, say the simpler
+        // thing rather than ship a shape that scores like neither.
+        if (tiers.length >= 2) {
+          out.tiers = tiers;
+          out.value = tiers[tiers.length - 1].points;
+        } else {
+          out.negative_type = "per_instance";
+          out.value = tiers[0]?.points ?? out.value;
+        }
       }
       return out;
     });
@@ -503,7 +604,10 @@ function validateRubric(r: WireRubric): WireRubric {
     // is ticked by the person. It is the only representation for an
     // end-of-week state or a weekly one-off, both of which were
     // previously impossible because every rule had to name a task.
-    const metric = x.metric === "sum" ? "sum" : x.metric === "manual" ? "manual" : "days";
+    const named = x.references?.trim().toLowerCase() ?? "";
+    const askedForSum = x.metric === "sum";
+    const sumIsCountable = askedForSum && countableNames.has(named);
+    const metric = sumIsCountable ? "sum" : x.metric === "manual" ? "manual" : "days";
     const rawThreshold = x.threshold ?? (metric === "sum" ? 1 : 3);
     // A reference must name a real task. The old expression returned the
     // same string on both branches, so the check was a no-op and an
@@ -519,7 +623,11 @@ function validateRubric(r: WireRubric): WireRubric {
         ? clamp(rawThreshold, 1, 1_000_000)
         : metric === "manual"
           ? 1
-          : clamp(rawThreshold, 1, 7),
+          // A sum that had to become a day count carries a volume
+          // number ("1500"), which would clamp to 7 — "every day" —
+          // and turn a stretch goal into an impossible one. Ask for a
+          // solid majority of the week instead.
+          : clamp(askedForSum && !sumIsCountable ? 4 : rawThreshold, 1, 7),
       value: clamp(x.value ?? 10, 1, 40),
     };
   };
@@ -537,7 +645,13 @@ function validateRubric(r: WireRubric): WireRubric {
   const weekly_penalties = (r.weekly_penalties ?? [])
     .filter((p) => p && typeof p.name === "string" && p.name.trim().length > 0)
     .slice(0, 20)
-    .map(cleanRule);
+    .map(cleanRule)
+    // A penalty rule lives ON a task in the app, so a floor that names
+    // nothing has nowhere to attach. `cleanRule` is shared with the
+    // boosters, where "manual" is a real shape, and a manual floor used
+    // to survive it, render on the review screen as "fewer than 1x  "
+    // with nothing after the dot, and be deleted at commit.
+    .filter((p) => p.metric !== "manual" && p.references);
 
   const milestones = (r.milestones ?? [])
     .filter((m) => m && typeof m.name === "string" && m.name.trim().length > 0)

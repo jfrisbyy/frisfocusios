@@ -123,9 +123,13 @@ nonisolated struct SetupWireNegative: Codable, Sendable {
     let value: Int
     let window: String?
     let freeCount: Int?
+    /// `tiered` only: the steps, lowest first. Each `points` is the
+    /// day's TOTAL cost once that many have happened, not an addition
+    /// to the step below.
+    let tiers: [SetupWireTier]?
 
     enum CodingKeys: String, CodingKey {
-        case name, value, window
+        case name, value, window, tiers
         case negativeType = "negative_type"
         case freeCount = "free_count"
     }
@@ -134,8 +138,10 @@ nonisolated struct SetupWireNegative: Codable, Sendable {
 nonisolated struct SetupWireRule: Codable, Sendable {
     let name: String
     let references: String?
-    /// "days" (a count of days in the week) or "sum" (a weekly total of
-    /// the task's own units). Absent reads as "days".
+    /// "days" (a count of days in the week), "sum" (a weekly total of
+    /// the task's own units), or "manual" (nothing is counted — the
+    /// person ticks it at the end of the week; boosters only). Absent
+    /// reads as "days".
     let metric: String?
     let threshold: Int?
     let value: Int
@@ -193,6 +199,10 @@ nonisolated struct SetupConversationSnapshot: Codable, Sendable {
     var suggestedLengthDays: Int? = nil
     var suggestedEndDate: Date? = nil
     var suggestedOpenEnded: Bool? = nil
+    /// True when this board came from Skip rather than the conversation.
+    /// Without it a resumed skip lost the "back to guided setup" escape
+    /// hatch, which is the only way to undo an accidental Skip.
+    var usedStarter: Bool? = nil
 
     /// How long ago this was put down, phrased for the resume card, or
     /// nil when it was minutes ago and saying so would be noise.
@@ -224,6 +234,18 @@ nonisolated struct SetupConversationSnapshot: Codable, Sendable {
 
     /// A short human hint for the resume card — the last thing discussed.
     var hint: String {
+        // A snapshot saved on the review screen holds the REVEAL as its
+        // current message, so the resume card used to show the first
+        // ninety characters of a closing recap — "here's your season" —
+        // over a board that is one tap from starting. Say where they
+        // actually are instead.
+        switch stage {
+        case "review": return usedStarter == true
+            ? "Your starter board, ready to edit"
+            : "Your season is built \u{2014} review and start it"
+        case "naming": return "Just needs a name"
+        default: break
+        }
         let trimmed = currentMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Picking up where you left off" }
         if trimmed.count <= 90 { return trimmed }
@@ -297,6 +319,44 @@ nonisolated struct DraftNegative: Identifiable, Equatable, Codable, Sendable {
     var value: Int = 3
     var window: NegativeWindow = .weekly
     var freeCount: Int = 2
+    /// `.tiered` only: the day's total cost at each step.
+    var tiers: [NegativeTier] = []
+
+    // Synthesized `Decodable` throws on a missing key for anything that
+    // isn't Optional, so a draft saved before tiers existed would fail
+    // to decode and take the whole resumed conversation with it.
+    enum CodingKeys: String, CodingKey {
+        case id, name, shape, value, window, freeCount, tiers
+    }
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        shape: NegativeType = .perInstance,
+        value: Int = 3,
+        window: NegativeWindow = .weekly,
+        freeCount: Int = 2,
+        tiers: [NegativeTier] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.shape = shape
+        self.value = value
+        self.window = window
+        self.freeCount = freeCount
+        self.tiers = tiers
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.name = try c.decode(String.self, forKey: .name)
+        self.shape = try c.decodeIfPresent(NegativeType.self, forKey: .shape) ?? .perInstance
+        self.value = try c.decodeIfPresent(Int.self, forKey: .value) ?? 3
+        self.window = try c.decodeIfPresent(NegativeWindow.self, forKey: .window) ?? .weekly
+        self.freeCount = try c.decodeIfPresent(Int.self, forKey: .freeCount) ?? 2
+        self.tiers = try c.decodeIfPresent([NegativeTier].self, forKey: .tiers) ?? []
+    }
 }
 
 nonisolated struct DraftBooster: Identifiable, Equatable, Codable, Sendable {
@@ -397,28 +457,57 @@ nonisolated struct RubricDraft: Equatable, Codable, Sendable {
         }
 
         negatives = (wire.negatives ?? []).map { wireNegative in
-            DraftNegative(
+            let tiers = (wireNegative.tiers ?? [])
+                .map { NegativeTier(threshold: max(1, $0.threshold), points: max(1, $0.points)) }
+                .sorted { $0.threshold < $1.threshold }
+            let shape: NegativeType = {
+                switch wireNegative.negativeType {
+                case "frequency_threshold": return .frequencyThreshold
+                // A single step is a per-instance charge in disguise.
+                case "tiered" where tiers.count >= 2: return .tiered
+                default: return .perInstance
+                }
+            }()
+            return DraftNegative(
                 name: wireNegative.name,
-                shape: wireNegative.negativeType == "frequency_threshold" ? .frequencyThreshold : .perInstance,
-                value: max(1, wireNegative.value),
+                shape: shape,
+                value: max(1, shape == .tiered ? (tiers.last?.points ?? wireNegative.value) : wireNegative.value),
                 window: wireNegative.window == "monthly" ? .monthly : .weekly,
-                freeCount: max(0, wireNegative.freeCount ?? 2)
+                freeCount: max(0, wireNegative.freeCount ?? 2),
+                tiers: shape == .tiered ? tiers : []
             )
         }
+        // A rule has to name a task the board actually holds. The server
+        // blanks a reference it cannot match but keeps the rule, so an
+        // orphan used to arrive here, render on the review screen as
+        // "5\u{00D7} \u{00B7} " with nothing after the dot, and then be deleted
+        // without a word at commit. Shown, edited, gone.
+        //
+        // Nothing here is silently lost now. A booster becomes a weekly
+        // goal the person ticks themselves \u{2014} the thing was real, only
+        // the counting was impossible. A floor has no such fallback (a
+        // penalty rule lives ON a task), so it is dropped at the door
+        // rather than after the person has looked at it.
+        let boardNames = Set(tasks.map { $0.name.lowercased() })
         boosters = (wire.weeklyBoosters ?? []).map {
-            DraftBooster(
+            let named = $0.references?.trimmingCharacters(in: .whitespaces) ?? ""
+            let resolves = boardNames.contains(named.lowercased())
+            let manual = $0.metric == "manual" || !resolves
+            return DraftBooster(
                 name: $0.name,
-                referenceName: $0.references ?? "",
+                referenceName: manual ? "" : named,
                 metric: $0.metric == "sum" ? .sum : .days,
                 threshold: max(1, $0.threshold ?? 3),
                 value: max(1, $0.value),
-                isManual: $0.metric == "manual"
+                isManual: manual
             )
         }
-        weeklyPenalties = (wire.weeklyPenalties ?? []).map {
-            DraftWeeklyPenalty(
+        weeklyPenalties = (wire.weeklyPenalties ?? []).compactMap {
+            let named = $0.references?.trimmingCharacters(in: .whitespaces) ?? ""
+            guard boardNames.contains(named.lowercased()) else { return nil }
+            return DraftWeeklyPenalty(
                 name: $0.name,
-                referenceName: $0.references ?? "",
+                referenceName: named,
                 metric: $0.metric == "sum" ? .sum : .days,
                 threshold: max(1, $0.threshold ?? 2),
                 value: max(1, $0.value)

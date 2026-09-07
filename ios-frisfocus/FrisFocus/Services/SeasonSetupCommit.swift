@@ -65,8 +65,10 @@ extension Store {
         // Category slots + per-season name/color overrides.
         var slotByDraftId: [UUID: Category] = [:]
         var seasonCategories: [SeasonCategory] = []
+        var takenSlots: Set<Category> = []
         for (index, draftCategory) in draft.categories.prefix(slots.count).enumerated() {
-            let slot = slots[index]
+            let slot = Category.bestSlot(for: draftCategory.name, avoiding: takenSlots)
+            takenSlots.insert(slot)
             slotByDraftId[draftCategory.id] = slot
             let tier: CategoryTier = index < 2 ? .primary : (index < 4 ? .support : .quiet)
             seasonCategories.append(
@@ -86,12 +88,30 @@ extension Store {
         // random weeks and no target date. The user opts into a target
         // date per milestone from the editor.
         let milestones: [Milestone] = draft.milestones.map { m in
-            Milestone(
+            // The stages of a decomposed goal. The conversation emits
+            // them, the draft carries them, and the review screen shows
+            // and edits them by name and price — and this map used to
+            // build a `Milestone` without them, so every rung the person
+            // had just been looking at was gone the moment they tapped
+            // through. A staged destination arrived as a single boulder.
+            let steps = m.steps.enumerated().map { index, step in
+                MilestoneStep(
+                    title: step.name,
+                    orderIndex: index,
+                    pointValue: max(0, step.value)
+                )
+            }
+            return Milestone(
                 seasonId: seasonId,
                 weekNumber: 1,
                 title: m.name,
                 status: .upcoming,
-                pointValue: m.value
+                pointValue: m.value,
+                steps: steps,
+                // Per-step credit only where a step was actually priced.
+                // Turning it on for progress-only stages would silently
+                // move points off the destination and onto zeroes.
+                pointsPerStep: steps.contains { $0.pointValue > 0 }
             )
         }
 
@@ -143,7 +163,15 @@ extension Store {
                 title: draftTask.name,
                 category: slot,
                 pointValue: max(1, draftTask.value),
-                pinSchedule: .none,
+                // The board the conversation just built IS the daily
+                // board, and every task used to be created unpinned —
+                // so the season opened, the person tapped "See today",
+                // and found an empty plan after fifteen minutes of
+                // being interviewed about their own life. Nothing in
+                // the flow mentions pinning, and the setup prompt is
+                // explicitly forbidden from raising it, so there was
+                // no path from a finished season to a usable day.
+                pinSchedule: .daily,
                 scoring: scoring
             )
             // Weekly floor referencing this task → attached penalty rule.
@@ -176,7 +204,8 @@ extension Store {
                 seasonId: seasonId,
                 negativeType: negative.shape,
                 window: negative.window,
-                freeCount: negative.shape == .frequencyThreshold ? max(0, negative.freeCount) : 0
+                freeCount: negative.shape == .frequencyThreshold ? max(0, negative.freeCount) : 0,
+                tiers: negative.shape == .tiered ? negative.tiers : []
             )
         }
 
@@ -302,8 +331,10 @@ extension Store {
 
         var slotByDraftId: [UUID: Category] = [:]
         var seasonCategories: [SeasonCategory] = []
+        var takenSlots: Set<Category> = []
         for (index, draftCategory) in draft.categories.prefix(slots.count).enumerated() {
-            let slot = slots[index]
+            let slot = Category.bestSlot(for: draftCategory.name, avoiding: takenSlots)
+            takenSlots.insert(slot)
             slotByDraftId[draftCategory.id] = slot
             let tier: CategoryTier = index < 2 ? .primary : (index < 4 ? .support : .quiet)
             seasonCategories.append(
@@ -322,12 +353,30 @@ extension Store {
         }
 
         let milestones: [Milestone] = draft.milestones.map { m in
-            Milestone(
+            // The stages of a decomposed goal. The conversation emits
+            // them, the draft carries them, and the review screen shows
+            // and edits them by name and price — and this map used to
+            // build a `Milestone` without them, so every rung the person
+            // had just been looking at was gone the moment they tapped
+            // through. A staged destination arrived as a single boulder.
+            let steps = m.steps.enumerated().map { index, step in
+                MilestoneStep(
+                    title: step.name,
+                    orderIndex: index,
+                    pointValue: max(0, step.value)
+                )
+            }
+            return Milestone(
                 seasonId: seasonId,
                 weekNumber: 1,
                 title: m.name,
                 status: .upcoming,
-                pointValue: m.value
+                pointValue: m.value,
+                steps: steps,
+                // Per-step credit only where a step was actually priced.
+                // Turning it on for progress-only stages would silently
+                // move points off the destination and onto zeroes.
+                pointsPerStep: steps.contains { $0.pointValue > 0 }
             )
         }
 
@@ -359,7 +408,15 @@ extension Store {
                 title: draftTask.name,
                 category: slot,
                 pointValue: max(1, draftTask.value),
-                pinSchedule: .none,
+                // The board the conversation just built IS the daily
+                // board, and every task used to be created unpinned —
+                // so the season opened, the person tapped "See today",
+                // and found an empty plan after fifteen minutes of
+                // being interviewed about their own life. Nothing in
+                // the flow mentions pinning, and the setup prompt is
+                // explicitly forbidden from raising it, so there was
+                // no path from a finished season to a usable day.
+                pinSchedule: .daily,
                 scoring: scoring
             )
             // Every floor referencing this task, not just the first.
@@ -390,7 +447,8 @@ extension Store {
                 seasonId: seasonId,
                 negativeType: negative.shape,
                 window: negative.window,
-                freeCount: negative.shape == .frequencyThreshold ? max(0, negative.freeCount) : 0
+                freeCount: negative.shape == .frequencyThreshold ? max(0, negative.freeCount) : 0,
+                tiers: negative.shape == .tiered ? negative.tiers : []
             )
         }
 

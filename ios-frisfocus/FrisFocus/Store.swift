@@ -3654,6 +3654,10 @@ extension Store {
         // Buckets follow the same one-off / skip sweep as tasks.
         sweepStaleBucketFlags(asOf: today)
 
+        // 1b. Judge the week that just ended. Neglect floors can only be
+        //     answered once a week is over, and nothing used to ask.
+        sweepClosedWeekPenalties(asOf: today)
+
         // 2. Penalise yesterday's missed Must-Dos. Skipped on first
         //    launch — there's no "yesterday" to evaluate when the app
         //    didn't exist yet.
