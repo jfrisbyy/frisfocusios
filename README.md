@@ -10,8 +10,22 @@ you choose, and never gamified into pressure.
 
 ## Getting the project to build
 
-The project needs a `Config.swift` that is **not** in version control, because
-it carries environment values. Generate it before opening Xcode:
+`ios-frisfocus/FrisFocus/Config.swift` carries the environment values every
+network call needs, and it **is** tracked — the platform that builds this app
+syncs the repository verbatim, so a file it cannot see is a compile error. The
+values are safe to commit only because row-level security is on for every
+Supabase table; the anon key's safety depends entirely on that.
+
+Check what is committed before trusting a build:
+
+```bash
+./scripts/check-config.sh
+```
+
+A blank `Config.swift` compiles and then signs nobody in and reaches no
+backend, so that check is the only thing standing between an empty value and a
+silently dead app. To regenerate the file — for an offline build, or after
+rotating a key:
 
 ```bash
 # Placeholders — compiles and opens, but cannot reach the network.
@@ -51,7 +65,8 @@ fresh clone and CI keep building.
 
 `.github/workflows/ios.yml` runs on every push:
 
-- **Build & test** (macOS): generates `Config.swift` from repository secrets,
+- **Build & test** (macOS): checks the committed `Config.swift`, falling back
+  to repository secrets (with a warning annotation) when it is blank, then
   compiles the `FrisFocus` scheme against the iOS Simulator SDK, and runs the
   unit tests.
 - **Edge functions typecheck** (Ubuntu): `deno check` over every

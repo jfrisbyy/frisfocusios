@@ -49,10 +49,23 @@ jobs:
           swift --version
           xcodebuild -showsdks | grep -i "iphonesimulator" || true
 
-      # Config.swift is git-ignored because it carries environment values.
-      # Repository secrets fill it in when available; otherwise the
-      # placeholders still compile, which is all this job needs.
-      - name: Generate Config.swift
+      # Config.swift is tracked now — the platform that builds this app
+      # syncs the repo verbatim, and a missing file is a compile error
+      # there. So the committed values are what ships. Check them; only
+      # fall back to secrets when the committed file is blank, and say so
+      # loudly, because a blank Config compiles and then does nothing.
+      - name: Check committed Config.swift
+        id: config
+        run: |
+          if ./scripts/check-config.sh; then
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+            echo "::warning file=ios-frisfocus/FrisFocus/Config.swift::Committed Config.swift has empty or placeholder values. This build is compiling against CI secrets, but anything built from this commit elsewhere will sign nobody in and reach no backend."
+          fi
+
+      - name: Generate Config.swift from secrets
+        if: steps.config.outputs.generate == 'true'
         env:
           FRISFOCUS_SUPABASE_URL: ${{ secrets.FRISFOCUS_SUPABASE_URL }}
           FRISFOCUS_SUPABASE_ANON_KEY: ${{ secrets.FRISFOCUS_SUPABASE_ANON_KEY }}
