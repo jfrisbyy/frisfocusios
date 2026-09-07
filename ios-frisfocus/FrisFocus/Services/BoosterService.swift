@@ -61,6 +61,9 @@ extension Store {
         switch booster.reference {
         case .task(let id):       return task.id == id
         case .category(let cat):  return task.category == cat
+        // Nothing a person completes can feed a manual weekly goal —
+        // they decide themselves whether the week met it.
+        case .manual:             return false
         }
     }
 
@@ -107,15 +110,25 @@ extension Store {
         // A `.sum` booster measures volume, not attendance: its threshold
         // is a weekly total of the task's own units, so counting days
         // would answer a completely different question.
+        // A manual goal is not counted, it is claimed. Reading the award
+        // back as its own progress keeps every caller — the status
+        // readout, the day breakdown, the award guard — working off one
+        // notion of "earned" instead of needing a second one.
+        if case .manual = booster.reference {
+            return hasBoosterAward(boosterId: booster.id, within: interval) ? max(1, booster.threshold) : 0
+        }
         if (booster.metric ?? .days) == .sum {
             let ids: Set<UUID>
             switch booster.reference {
             case .task(let id): ids = [id]
             case .category(let cat): ids = Set(tasks.filter { $0.category == cat }.map(\.id))
+            case .manual: ids = []
             }
             return quantitySum(taskIds: ids, within: interval)
         }
         switch booster.reference {
+        case .manual:
+            return 0
         case .task(let id):
             return completionCount(taskId: id, within: interval)
         case .category(let cat):
@@ -213,6 +226,55 @@ extension Store {
         )
         pendingBoosterAward = award
         return award
+    }
+
+    /// Tick (or untick) a manual weekly goal for the current period.
+    ///
+    /// The counted boosters award themselves the moment a completion
+    /// crosses the threshold. A manual goal has nothing to cross, so
+    /// this IS its award — the person judging their own week, which is
+    /// the only thing that can judge "the apartment is clean".
+    @discardableResult
+    func toggleManualBooster(_ booster: WeeklyBooster) -> Bool {
+        guard case .manual = booster.reference else { return false }
+        let interval = boosterPeriodInterval(booster.period)
+        if hasBoosterAward(boosterId: booster.id, within: interval) {
+            logEntries.removeAll {
+                $0.boosterId == booster.id
+                    && $0.entryType == .boosterBonus
+                    && interval.contains($0.date)
+            }
+            persistAll()
+            return false
+        }
+        logEntries.append(
+            LogEntry(
+                date: Date(),
+                taskId: nil,
+                todoId: nil,
+                boosterId: booster.id,
+                pointsEarned: booster.bonusPoints,
+                entryType: .boosterBonus,
+                title: booster.name
+            )
+        )
+        pendingBoosterAward = BoosterAward(
+            taskTitle: booster.name,
+            bonusPoints: booster.bonusPoints,
+            period: booster.period
+        )
+        persistAll()
+        return true
+    }
+
+    /// Every manual weekly goal, with whether it has been ticked for the
+    /// current period. Drives the end-of-week checklist.
+    func manualBoosters(reference: Date = Date()) -> [(booster: WeeklyBooster, claimed: Bool)] {
+        boosters.compactMap { booster in
+            guard case .manual = booster.reference else { return nil }
+            let interval = boosterPeriodInterval(booster.period, reference: reference)
+            return (booster, hasBoosterAward(boosterId: booster.id, within: interval))
+        }
     }
 
     /// Inverse of the awarder. If undoing a completion drops a booster's

@@ -201,7 +201,8 @@ Reply with ONE JSON object and NOTHING else. No markdown fences, no prose outsid
   ],
   "weekly_boosters": [
     {"name": "Three gym days", "references": "Gym session", "metric": "days", "threshold": 3, "value": 10},
-    {"name": "1500 pushups", "references": "Pushups", "metric": "sum", "threshold": 1500, "value": 20}
+    {"name": "1500 pushups", "references": "Pushups", "metric": "sum", "threshold": 1500, "value": 20},
+    {"name": "Apartment clean by Sunday", "metric": "manual", "value": 30}
   ],
   "weekly_penalties": [{"name": "No lifting sessions", "references": "Gym session", "metric": "days", "threshold": 1, "value": 10}],
   "milestones": [
@@ -218,6 +219,7 @@ RULES for the rubric JSON:
 - negative_type is exactly one of: "per_instance" or "frequency_threshold" (the latter also needs "window": "weekly"|"monthly" and "free_count"). negative "value" is a POSITIVE magnitude (e.g. 3, not -3) — the app applies the minus.
 - A per_instance negative must name the INSTANCE that is bad every time ("Scrolling in bed", "The 2am order") — never the activity in general ("Phone use", "Snacking"), which punishes the harmless version too. If the activity has an innocent version, narrow the NAME until it doesn't, or make it frequency_threshold. NEVER emit a pair of rows for one behaviour ("Alcohol" plus "Alcohol 2+"): they are independent items with no mutual exclusion, so one bad night gets charged twice. Use frequency_threshold with their own free count instead.
 - weekly_boosters and weekly_penalties: "references" must EXACTLY match a daily task name, or the rule is dropped. "metric" is "days" (threshold = how many days that week, 1–7) or "sum" (threshold = a total of that task's own units across the week — 150000 steps, 1500 pushups, 10 lessons). Default "days".
+- A booster may instead OMIT "references" entirely and set "metric": "manual" — a weekly goal nothing can count, that the person ticks themselves at the end of the week. This is the only shape for an end-of-week STATE ("the apartment is clean", "inbox at zero") or a one-off that belongs to this week rather than to the season ("finish the book"). Reach for it when the thing is real and weekly but no daily task could honestly add up to it; forcing it into a daily count gets the timing wrong, because the whole point is that it is judged once, at the end.
 - milestones may carry "steps": the stages of a decomposed goal, each optionally priced. Stage a big destination INSIDE its own milestone — never spend separate milestones on the rungs of one ladder.
 - Keep numbers human: tasks 1–10 (milestone-scale only via the milestones array, 10–150), negatives 2–20 (a real vice can bite harder than a task rewards), boosters/penalties 5–30, milestones 10–150. Keep the rubric honest to what was discussed — never pad it with things the user didn't mention.`;
 
@@ -250,8 +252,8 @@ interface WireNegative {
 interface WireRule {
   name: string;
   references?: string;
-  /** What `threshold` counts: days in the week, or a total of the task's own units. */
-  metric?: "days" | "sum";
+  /** What `threshold` counts: days in the week, a total of the task's own units, or nothing at all (the person ticks it). */
+  metric?: "days" | "sum" | "manual";
   threshold?: number;
   value: number;
 }
@@ -491,7 +493,11 @@ function validateRubric(r: WireRubric): WireRubric {
     // and clamping THAT to 7 is what made every aggregate booster
     // impossible to express. The default stays "days" so nothing that
     // worked before changes shape.
-    const metric = x.metric === "sum" ? "sum" : "days";
+    // "manual" is a third shape: a weekly goal that watches nothing and
+    // is ticked by the person. It is the only representation for an
+    // end-of-week state or a weekly one-off, both of which were
+    // previously impossible because every rule had to name a task.
+    const metric = x.metric === "sum" ? "sum" : x.metric === "manual" ? "manual" : "days";
     const rawThreshold = x.threshold ?? (metric === "sum" ? 1 : 3);
     // A reference must name a real task. The old expression returned the
     // same string on both branches, so the check was a no-op and an
@@ -500,11 +506,14 @@ function validateRubric(r: WireRubric): WireRubric {
     const matched = x.references && taskNames.has(x.references.trim().toLowerCase());
     return {
       name: x.name.trim().slice(0, 60),
-      references: matched ? x.references!.trim() : undefined,
+      // A manual goal deliberately references nothing.
+      references: metric === "manual" ? undefined : (matched ? x.references!.trim() : undefined),
       metric,
       threshold: metric === "sum"
         ? clamp(rawThreshold, 1, 1_000_000)
-        : clamp(rawThreshold, 1, 7),
+        : metric === "manual"
+          ? 1
+          : clamp(rawThreshold, 1, 7),
       value: clamp(x.value ?? 10, 1, 40),
     };
   };

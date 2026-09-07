@@ -260,6 +260,16 @@ nonisolated enum BoosterMetric: String, Codable, Equatable, Sendable {
 enum BoosterReference: Codable, Equatable, Hashable {
     case task(UUID)
     case category(Category)
+    /// Watches nothing — a weekly goal the person ticks off themselves.
+    ///
+    /// Some of the best weekly rules are not counts of anything the app
+    /// can see. "The apartment is clean at the end of the week" is a
+    /// STATE; "finish the book" is a one-off that happens to belong to
+    /// this week rather than to the season. Both were unrepresentable
+    /// while every weekly rule had to point at a daily task and count
+    /// it, and forcing them into a daily task got the timing wrong —
+    /// the whole point is that it is judged once, at the end.
+    case manual
 }
 
 /// A standalone consistency reward. The referenced target (a task or a

@@ -181,13 +181,22 @@ extension Store {
         // booster nobody can explain is worse than one that isn't there,
         // and the server now drops unmatched references before this.
         let newBoosters: [WeeklyBooster] = draft.boosters.compactMap { booster in
-            guard let taskId = taskIdByName[booster.referenceName.lowercased()] else { return nil }
+            // A manual goal names no task on purpose, so the
+            // resolve-or-drop rule below must not eat it.
+            let reference: BoosterReference
+            if booster.isManual {
+                reference = .manual
+            } else if let taskId = taskIdByName[booster.referenceName.lowercased()] {
+                reference = .task(taskId)
+            } else {
+                return nil
+            }
             return WeeklyBooster(
                 seasonId: seasonId,
                 name: booster.name,
-                reference: .task(taskId),
+                reference: reference,
                 metric: booster.metric,
-                threshold: max(1, booster.threshold),
+                threshold: booster.isManual ? 1 : max(1, booster.threshold),
                 period: .week,
                 bonusPoints: max(1, booster.value)
             )
@@ -380,13 +389,22 @@ extension Store {
         // booster nobody can explain is worse than one that isn't there,
         // and the server now drops unmatched references before this.
         let newBoosters: [WeeklyBooster] = draft.boosters.compactMap { booster in
-            guard let taskId = taskIdByName[booster.referenceName.lowercased()] else { return nil }
+            // A manual goal names no task on purpose, so the
+            // resolve-or-drop rule below must not eat it.
+            let reference: BoosterReference
+            if booster.isManual {
+                reference = .manual
+            } else if let taskId = taskIdByName[booster.referenceName.lowercased()] {
+                reference = .task(taskId)
+            } else {
+                return nil
+            }
             return WeeklyBooster(
                 seasonId: seasonId,
                 name: booster.name,
-                reference: .task(taskId),
+                reference: reference,
                 metric: booster.metric,
-                threshold: max(1, booster.threshold),
+                threshold: booster.isManual ? 1 : max(1, booster.threshold),
                 period: .week,
                 bonusPoints: max(1, booster.value)
             )

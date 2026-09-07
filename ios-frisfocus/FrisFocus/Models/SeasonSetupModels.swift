@@ -297,6 +297,9 @@ struct DraftBooster: Identifiable, Equatable {
     var metric: BoosterMetric = .days
     var threshold: Int = 3
     var value: Int = 10
+    /// A weekly goal that watches nothing and is ticked by hand — the
+    /// only shape for an end-of-week state or a weekly one-off.
+    var isManual: Bool = false
 }
 
 struct DraftWeeklyPenalty: Identifiable, Equatable {
@@ -391,7 +394,8 @@ struct RubricDraft: Equatable {
                 referenceName: $0.references ?? "",
                 metric: $0.metric == "sum" ? .sum : .days,
                 threshold: max(1, $0.threshold ?? 3),
-                value: max(1, $0.value)
+                value: max(1, $0.value),
+                isManual: $0.metric == "manual"
             )
         }
         weeklyPenalties = (wire.weeklyPenalties ?? []).map {

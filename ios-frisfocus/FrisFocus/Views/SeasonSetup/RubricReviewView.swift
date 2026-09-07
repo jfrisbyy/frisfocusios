@@ -137,7 +137,8 @@ struct RubricReviewView: View {
                         // weekly TOTAL back into a day count.
                         let rebuilt = DraftBooster(
                             id: booster.id, name: name, referenceName: reference,
-                            metric: booster.metric, threshold: threshold, value: value
+                            metric: booster.metric, threshold: threshold, value: value,
+                            isManual: booster.isManual
                         )
                         if let idx = d.boosters.firstIndex(where: { $0.id == booster.id }) {
                             d.boosters[idx] = rebuilt
@@ -529,9 +530,11 @@ struct RubricReviewView: View {
             ForEach(draft.boosters) { booster in
                 ruleRow(
                     name: booster.name,
-                    detail: booster.metric == .sum
-                        ? "\(booster.threshold) total · \(booster.referenceName)"
-                        : "\(booster.threshold)× · \(booster.referenceName)",
+                    detail: booster.isManual
+                        ? "you tick it at week's end"
+                        : booster.metric == .sum
+                            ? "\(booster.threshold) total · \(booster.referenceName)"
+                            : "\(booster.threshold)× · \(booster.referenceName)",
                     value: "+\(booster.value)",
                     valueColor: Theme.alertGreen
                 ) {

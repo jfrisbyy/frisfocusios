@@ -168,13 +168,37 @@ private struct BoosterCard: View {
             }
 
             HStack(spacing: 8) {
-                BoosterProgressChip(
-                    progress: status.progress,
-                    required: status.required,
-                    earned: status.earned,
-                    period: status.period,
-                    category: chipCategory
-                )
+                if case .manual = booster.reference {
+                    // The whole point of a manual goal is that nothing
+                    // can count it, so the tick has to live somewhere a
+                    // person will actually find at the end of a week —
+                    // next to the goal itself.
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        store.toggleManualBooster(booster)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: status.earned ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(status.earned ? Theme.alertGreen : Theme.textPrimary.opacity(0.35))
+                            Text(status.earned ? "Met this \(status.period.displayName)" : "Mark it met")
+                                .font(.sans(12.5, weight: .medium))
+                                .foregroundStyle(status.earned ? Theme.alertGreen : Theme.textPrimary.opacity(0.7))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(status.earned
+                        ? "\(booster.name), met this \(status.period.displayName). Double-tap to undo."
+                        : "\(booster.name). Double-tap to mark it met.")
+                } else {
+                    BoosterProgressChip(
+                        progress: status.progress,
+                        required: status.required,
+                        earned: status.earned,
+                        period: status.period,
+                        category: chipCategory
+                    )
+                }
                 Spacer()
                 Text("+\(booster.bonusPoints) pts")
                     .font(.serif(17, weight: .medium))
@@ -196,6 +220,8 @@ private struct BoosterCard: View {
             return store.tasks.first(where: { $0.id == id })?.title ?? "a task"
         case .category(let cat):
             return store.categoryDisplayName(cat)
+        case .manual:
+            return "you"
         }
     }
 
@@ -206,6 +232,12 @@ private struct BoosterCard: View {
             target = referenceName
         case .category:
             target = "\(referenceName) area"
+        case .manual:
+            // Nothing is counted, so there is no "3x per week" to say.
+            return "You decide at the end of the \(booster.period.displayName)"
+        }
+        if (booster.metric ?? .days) == .sum {
+            return "\(target) \u{00B7} \(booster.threshold) total per \(booster.period.displayName)"
         }
         return "\(target) \u{00B7} \(booster.threshold)\u{00D7} per \(booster.period.displayName)"
     }
@@ -218,6 +250,8 @@ private struct BoosterCard: View {
             return store.tasks.first(where: { $0.id == id })?.category
                 ?? store.currentSeason.categories.first?.category
                 ?? .work
+        case .manual:
+            return store.currentSeason.categories.first?.category ?? .work
         }
     }
 }
@@ -230,7 +264,17 @@ private struct BoosterFormView: View {
 
     let editing: WeeklyBooster?
 
-    private enum ReferenceKind: String, CaseIterable { case task, category }
+    private enum ReferenceKind: String, CaseIterable {
+        case task, category, manual
+
+        var label: String {
+            switch self {
+            case .task: return "A task"
+            case .category: return "An area"
+            case .manual: return "I'll decide"
+            }
+        }
+    }
 
     @State private var name: String
     @State private var referenceKind: ReferenceKind
@@ -256,6 +300,10 @@ private struct BoosterFormView: View {
             _referenceKind = State(initialValue: .category)
             _taskId = State(initialValue: nil)
             _category = State(initialValue: cat)
+        case .manual:
+            _referenceKind = State(initialValue: .manual)
+            _taskId = State(initialValue: nil)
+            _category = State(initialValue: .work)
         case nil:
             _referenceKind = State(initialValue: .task)
             _taskId = State(initialValue: nil)
@@ -282,12 +330,15 @@ private struct BoosterFormView: View {
 
                 Section {
                     Picker("Watches", selection: $referenceKind.animation(.easeInOut(duration: 0.2))) {
-                        Text("A task").tag(ReferenceKind.task)
-                        Text("An area").tag(ReferenceKind.category)
+                        ForEach(ReferenceKind.allCases, id: \.self) { kind in
+                            Text(kind.label).tag(kind)
+                        }
                     }
                     .pickerStyle(.segmented)
 
-                    if referenceKind == .task {
+                    if referenceKind == .manual {
+                        EmptyView()
+                    } else if referenceKind == .task {
                         Picker("Task", selection: $taskId) {
                             Text("Choose a task").tag(UUID?.none)
                             ForEach(store.tasks) { task in
@@ -310,19 +361,29 @@ private struct BoosterFormView: View {
                 } header: {
                     Text("Target")
                 } footer: {
-                    Text(referenceKind == .task
-                        ? "Counts completions of one task."
-                        : "Counts completions across every task in this area.")
+                    switch referenceKind {
+                    case .task:
+                        Text("Counts completions of one task.")
+                    case .category:
+                        Text("Counts completions across every task in this area.")
+                    case .manual:
+                        Text("Counts nothing \u{2014} you tick it yourself at the end of the \(period.displayName). For the things only you can judge: the apartment being clean, finishing the book.")
+                    }
                 }
 
                 Section {
-                    Stepper(value: $threshold, in: 1...60) {
+                    // A manual goal is met or it isn't — there is no
+                    // count to require, so asking for one would be a
+                    // control that changes nothing.
+                    if referenceKind != .manual {
+                        Stepper(value: $threshold, in: 1...60) {
                         HStack {
                             Text("Times required")
                             Spacer()
                             Text("\(threshold)\u{00D7}")
                                 .font(.serif(17, weight: .medium))
                                 .foregroundStyle(Theme.textPrimary)
+                        }
                         }
                     }
 
@@ -374,6 +435,9 @@ private struct BoosterFormView: View {
         switch referenceKind {
         case .task:     return taskId != nil
         case .category: return true
+        // A manual goal has nothing to point at, so its name is the
+        // only thing that identifies it.
+        case .manual:   return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -383,6 +447,8 @@ private struct BoosterFormView: View {
             return store.tasks.first(where: { $0.id == taskId })?.title ?? "this task"
         case .category:
             return "\(store.categoryDisplayName(category)) area"
+        case .manual:
+            return "a weekly goal"
         }
     }
 
@@ -397,6 +463,8 @@ private struct BoosterFormView: View {
             return .task(id)
         case .category:
             return .category(category)
+        case .manual:
+            return .manual
         }
     }
 

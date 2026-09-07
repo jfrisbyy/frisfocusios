@@ -619,3 +619,71 @@ struct TieredNegativeTests {
         #expect(perInstance.usesFreeAllowance == false)
     }
 }
+
+// MARK: - Weekly rule shapes
+
+/// Every weekly rule used to have to point at a daily task and count
+/// it, which left three real shapes unrepresentable: a weekly TOTAL
+/// ("150k steps"), an end-of-week STATE ("the apartment is clean"), and
+/// a weekly one-off ("finish the book"). These pin the distinctions
+/// without constructing a Store — the suite stays hermetic.
+@Suite("Weekly rule shapes")
+struct WeeklyRuleShapeTests {
+
+    @Test("Metric is optional so existing boosters still decode")
+    func metricIsOptional() {
+        let booster = WeeklyBooster(name: "Three gym days", reference: .task(UUID()), threshold: 3)
+        // Nil rather than `.days`: synthesized Decodable throws on a
+        // missing key instead of falling back to a property default, so
+        // a non-optional would fail to decode every booster on disk.
+        #expect(booster.metric == nil)
+    }
+
+    @Test("A manual goal watches nothing and is worth its bonus")
+    func manualWatchesNothing() {
+        let booster = WeeklyBooster(name: "Apartment clean", reference: .manual, bonusPoints: 30)
+        #expect(booster.reference == .manual)
+        #expect(booster.bonusPoints == 30)
+    }
+
+    @Test("The three references stay distinct")
+    func referencesAreDistinct() {
+        let id = UUID()
+        #expect(BoosterReference.task(id) != BoosterReference.manual)
+        #expect(BoosterReference.category(.fitness) != BoosterReference.manual)
+        #expect(BoosterReference.task(id) != BoosterReference.task(UUID()))
+        #expect(BoosterReference.category(.fitness) != BoosterReference.category(.learning))
+    }
+
+    @Test("A reference survives a round trip through Codable")
+    func referenceRoundTrips() throws {
+        for reference in [BoosterReference.manual, .category(.people), .task(UUID())] {
+            let data = try JSONEncoder().encode(reference)
+            #expect(try JSONDecoder().decode(BoosterReference.self, from: data) == reference)
+        }
+    }
+
+    @Test("A floor reads its metric, defaulting to days")
+    func penaltyMetric() {
+        let days = PenaltyRule(enabled: true, timesThreshold: 3, condition: .lessThan, penaltyPoints: 10)
+        #expect(days.resolvedMetric == .days)
+        let sum = PenaltyRule(
+            enabled: true, timesThreshold: 400, condition: .lessThan,
+            penaltyPoints: 10, metric: .sum
+        )
+        #expect(sum.resolvedMetric == .sum)
+        // 400 pushups is a total, not four hundred separate days.
+        #expect(sum.timesThreshold == 400)
+    }
+
+    @Test("The two new category slots exist and are stable")
+    func categorySlots() {
+        // The commit path maps the conversation's areas onto
+        // `Category.allCases` by index, so both the count and the raw
+        // values are load-bearing: a reorder would silently re-home
+        // every task in every persisted season.
+        #expect(Category.allCases.count == 8)
+        #expect(Category.learning.rawValue == "learning")
+        #expect(Category.people.rawValue == "people")
+    }
+}

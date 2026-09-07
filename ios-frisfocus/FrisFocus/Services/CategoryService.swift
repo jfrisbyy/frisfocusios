@@ -217,7 +217,9 @@ extension Store {
             guard plan.boosterIds.contains(booster.id) else { return false }
             switch booster.reference {
             case .task(let id): return liveTaskIds.contains(id)
-            case .category: return true
+            // Neither names a task, so neither can be orphaned by one
+            // being left behind.
+            case .category, .manual: return true
             }
         }
         for idx in boosters.indices { boosters[idx].seasonId = newId }
