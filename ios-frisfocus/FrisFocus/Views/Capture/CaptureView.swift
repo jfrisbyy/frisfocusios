@@ -112,6 +112,17 @@ struct CaptureView: View {
     @State private var recordStart: Date?
     @State private var recordElapsed: Double = 0
     @State private var pressTimerTask: Task<Void, Never>?
+    /// A recording that continues with no finger on the shutter. Set by
+    /// dragging up past the lock threshold; cleared when the recording
+    /// ends.
+    @State private var isLocked: Bool = false
+    /// 0…1 travel toward the lock, for the affordance above the shutter.
+    @State private var lockProgress: CGFloat = 0
+    /// The finger is still down after the recording already ended (the
+    /// 30 s cap fired, or a locked recording was stopped). Without this,
+    /// `onEnded` took its not-recording branch and fired a PHOTO that
+    /// overwrote the video the person had just finished recording.
+    @State private var suppressPhotoOnRelease: Bool = false
     @State private var showHint: Bool = true
 
     // Visual effects
@@ -194,6 +205,12 @@ struct CaptureView: View {
             if camera.authorization == .denied {
                 showPermissionDenied = true
             }
+            // Get the microphone question answered while nothing is
+            // recording. It used to be asked inside startRecording,
+            // which put a system alert in the middle of the start
+            // sequence and made the first-ever clip unrecoverable.
+            await camera.primeMicrophonePermission()
+
             // Fade the gesture hint after a beat.
             try? await Task.sleep(for: .seconds(2.4))
             withAnimation(.easeOut(duration: 0.5)) { showHint = false }
@@ -203,6 +220,9 @@ struct CaptureView: View {
             let elapsed = Date().timeIntervalSince(start)
             recordElapsed = min(elapsed, maxRecordSeconds)
             if elapsed >= maxRecordSeconds {
+                // The finger is still down. Whatever release follows is
+                // the end of THIS recording, not a new photo.
+                suppressPhotoOnRelease = true
                 stopRecording()
             }
         }
@@ -455,9 +475,60 @@ struct CaptureView: View {
         }
         .contentShape(Circle())
         .gesture(shutterGesture)
-        .accessibilityLabel(isRecording ? "Recording. Release to stop." : "Tap to photograph, hold to record")
+        // A locked recording has no finger on it, so it needs an
+        // ordinary tap target to stop.
+        .onTapGesture { if isLocked { stopRecording() } }
+        .overlay(alignment: .top) { lockAffordance }
+        .accessibilityLabel(accessibilityShutterLabel)
+        // Hold-to-record was unreachable with VoiceOver: a drag gesture
+        // is not something the rotor can perform. These name both video
+        // actions explicitly.
+        .accessibilityAction(named: isRecording ? "Stop recording" : "Record video") {
+            if isRecording { stopRecording() } else { startRecording() }
+        }
         .opacity(camera.isReady ? 1.0 : 0.45)
     }
+
+    private var accessibilityShutterLabel: String {
+        if isLocked { return "Recording hands-free. Tap to stop." }
+        if isRecording { return "Recording. Release to stop, or slide up to lock." }
+        return "Tap to photograph, hold to record"
+    }
+
+    /// The lock target that rises above the shutter while recording.
+    ///
+    /// Drawn above the shutter rather than in the HUD, because it has to
+    /// appear exactly where the finger is already travelling — the whole
+    /// gesture is "keep going up".
+    @ViewBuilder
+    private var lockAffordance: some View {
+        if isRecording {
+            VStack(spacing: 4) {
+                Image(systemName: isLocked ? "lock.fill" : "lock.open")
+                    .font(.system(size: isLocked ? 15 : 13, weight: .semibold))
+                    .foregroundStyle(
+                        isLocked ? Color(hex: 0xE0454C) : Color.white.opacity(0.55 + 0.45 * lockProgress)
+                    )
+                    .scaleEffect(1 + 0.25 * lockProgress)
+                if !isLocked {
+                    Text("Slide up to lock")
+                        .font(.sans(10, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.35 + 0.5 * lockProgress))
+                        .fixedSize()
+                }
+            }
+            .padding(.bottom, 10)
+            .offset(y: -(lockTravel * 0.62) - 34 * lockProgress)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+            .animation(.easeOut(duration: 0.15), value: lockProgress)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isLocked)
+        }
+    }
+
+    /// How far up the finger must travel to lock a recording hands-free.
+    /// Comfortably past a stray drift, comfortably short of a stretch.
+    private var lockTravel: CGFloat { 90 }
 
     private var shutterGesture: some Gesture {
         // Use a DragGesture with minimumDistance 0 so we get reliable
@@ -467,10 +538,23 @@ struct CaptureView: View {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if isRecording {
-                    // Slide-to-zoom: the finger already holding the
-                    // shutter rides up to zoom in, back down to return.
                     let rise = -value.translation.height
-                    camera.setZoom(recordZoomBase + rise / 110)
+
+                    // The first `lockTravel` points of upward travel now
+                    // mean "lock", not "zoom". Both gestures want the
+                    // same axis, and hands-free recording is the one
+                    // people reach for — zoom simply starts once the
+                    // lock threshold is passed, so nothing is lost.
+                    if !isLocked {
+                        lockProgress = max(0, min(1, rise / lockTravel))
+                        if rise >= lockTravel {
+                            lockRecording()
+                        }
+                        return
+                    }
+
+                    // Past the lock: the remaining travel drives zoom.
+                    camera.setZoom(recordZoomBase + (rise - lockTravel) / 110)
                     return
                 }
                 guard pressTimerTask == nil, camera.isReady else { return }
@@ -482,15 +566,36 @@ struct CaptureView: View {
                 }
             }
             .onEnded { _ in
+                pressTimerTask?.cancel()
+                pressTimerTask = nil
+                lockProgress = 0
+
+                // A locked recording outlives the finger. Releasing is
+                // not a stop and certainly not a photo.
+                if isLocked { return }
+
                 if isRecording {
                     stopRecording()
+                } else if suppressPhotoOnRelease {
+                    // The recording already ended under the finger (the
+                    // 30 s cap). This release closes that recording; it
+                    // is not a request for a photo.
+                    suppressPhotoOnRelease = false
                 } else {
-                    pressTimerTask?.cancel()
-                    pressTimerTask = nil
                     takePhoto()
                 }
-                pressTimerTask = nil
             }
+    }
+
+    /// Hand the recording over to the lock: it keeps running with no
+    /// finger on the shutter, and a tap stops it.
+    private func lockRecording() {
+        guard isRecording, !isLocked else { return }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            isLocked = true
+            lockProgress = 1
+        }
     }
 
     // MARK: - Gestures (canvas)
@@ -563,17 +668,22 @@ struct CaptureView: View {
 
     private func startRecording() {
         guard camera.isReady, !isRecording else { return }
+        // Only show a recording UI for a recording the service actually
+        // accepted. It used to flip isRecording first and ask never —
+        // so a refused start left a ring spinning over nothing.
+        guard camera.startRecording() else { return }
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
         recordElapsed = 0
         recordStart = Date()
         recordZoomBase = camera.currentZoom
         isRecording = true
-        camera.startRecording()
     }
 
     private func stopRecording() {
         guard isRecording else { return }
         isRecording = false
+        isLocked = false
+        lockProgress = 0
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         // The slide-zoom sticks: future pinches continue from here.
         pinchBase = camera.currentZoom
@@ -822,6 +932,30 @@ final class CameraService: NSObject {
     private var pendingCapture: CheckedContinuation<UIImage?, Never>?
     private var pendingRecording: ((URL?) -> Void)?
     private var pendingRecordingURL: URL?
+
+    /// Where the recorder actually is, as opposed to where the UI thinks
+    /// it is.
+    ///
+    /// `movieOutput.isRecording` cannot answer this. It is mutated on
+    /// `sessionQueue` and read on the main actor, and — the part that
+    /// broke every recording — it stays FALSE for the whole window
+    /// between asking to record and AVFoundation actually opening the
+    /// file. Releasing the shutter inside that window made
+    /// `stopRecording(completion:)` take its `else` branch, hand back
+    /// nil, and the view drop the clip on the floor. `.starting` is the
+    /// state that window needed a name for.
+    enum RecordingState: Equatable {
+        case idle
+        /// Asked to record; AVFoundation has not opened the file yet.
+        case starting
+        case recording
+        case stopping
+    }
+    private(set) var recordingState: RecordingState = .idle
+    /// A stop that arrived while still `.starting`. Honoured the instant
+    /// the recording actually begins, so a quick hold yields a short clip
+    /// instead of nothing — and never leaves a recording nobody can stop.
+    private var stopRequestedWhileStarting = false
     private var observersRegistered: Bool = false
 
     var viewState: ViewState {
@@ -934,6 +1068,14 @@ final class CameraService: NSObject {
     }
 
     func stop() {
+        // Readiness has to fall with the session. Leaving `isReady` true
+        // over a stopped session let the next `startRecording` sail past
+        // its guard and record into nothing.
+        isReady = false
+        recordingState = .idle
+        stopRequestedWhileStarting = false
+        pendingRecording?(nil)
+        pendingRecording = nil
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.movieOutput.isRecording {
@@ -1019,37 +1161,67 @@ final class CameraService: NSObject {
         }
     }
 
-    func startRecording() {
-        guard hasCamera, isReady, !movieOutput.isRecording else { return }
+    /// Ask for the microphone ahead of any recording.
+    ///
+    /// This used to live INSIDE `startRecording`, which meant the very
+    /// first video anyone ever recorded put a system permission alert in
+    /// the middle of the start sequence. The user answered it seconds
+    /// after releasing the shutter, by which point the clip had already
+    /// been discarded — so the first recording was not merely racy, it
+    /// was guaranteed to be lost. Asking here costs nothing (the sheet
+    /// is open, no recording is in flight) and takes the alert off the
+    /// critical path for good.
+    ///
+    /// A denied mic is fine and deliberately not surfaced: the recording
+    /// simply has no audio track.
+    func primeMicrophonePermission() async {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined else { return }
+        _ = await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
+    /// Begin recording. Returns false when the recorder refused, so the
+    /// caller never shows a recording UI for a recording that is not
+    /// happening.
+    @discardableResult
+    func startRecording() -> Bool {
+        guard hasCamera, isReady, recordingState == .idle else { return false }
         let dir = FileManager.default.temporaryDirectory
         let url = dir.appendingPathComponent("frisfocus-clip-\(UUID().uuidString).mov")
         pendingRecordingURL = url
-        Task { @MainActor in
-            // Just-in-time microphone: ask only when a recording actually
-            // begins, and attach the input for the recording's duration.
-            // Photos never touch the mic; a denied mic still records
-            // silent video instead of failing.
-            if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-                _ = await AVCaptureDevice.requestAccess(for: .audio)
-            }
-            sessionQueue.async { [weak self] in
-                guard let self else { return }
-                self.attachAudioInput()
-                if let connection = self.movieOutput.connection(with: .video) {
-                    if connection.isVideoOrientationSupported {
-                        connection.videoOrientation = .portrait
-                    }
-                    // Mirror front-camera clips so the recording matches
-                    // the mirrored viewfinder and the saved front-camera
-                    // photos; back camera stays true.
-                    if connection.isVideoMirroringSupported {
-                        connection.automaticallyAdjustsVideoMirroring = false
-                        connection.isVideoMirrored = self.currentInput?.device.position == .front
-                    }
+        recordingState = .starting
+        stopRequestedWhileStarting = false
+
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.attachAudioInput()
+            if let connection = self.movieOutput.connection(with: .video) {
+                if connection.isVideoOrientationSupported {
+                    connection.videoOrientation = .portrait
                 }
-                self.movieOutput.startRecording(to: url, recordingDelegate: self)
+                // Mirror front-camera clips so the recording matches
+                // the mirrored viewfinder and the saved front-camera
+                // photos; back camera stays true.
+                if connection.isVideoMirroringSupported {
+                    connection.automaticallyAdjustsVideoMirroring = false
+                    connection.isVideoMirrored = self.currentInput?.device.position == .front
+                }
+            }
+            self.movieOutput.startRecording(to: url, recordingDelegate: self)
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.recordingState == .starting else { return }
+                self.recordingState = .recording
+                // The release that arrived before the file was open. Now
+                // that it is, honour it — the person gets the short clip
+                // they actually recorded rather than silence.
+                if self.stopRequestedWhileStarting {
+                    self.stopRequestedWhileStarting = false
+                    self.performStop()
+                }
             }
         }
+        return true
     }
 
     /// Adds the microphone input if authorized and not already attached.
@@ -1084,13 +1256,46 @@ final class CameraService: NSObject {
     }
 
     func stopRecording(completion: @escaping (URL?) -> Void) {
-        guard movieOutput.isRecording else {
+        switch recordingState {
+        case .idle:
+            // Genuinely nothing running.
             completion(nil)
-            return
+
+        case .starting:
+            // THE BUG THIS REPLACES. The old code asked
+            // `movieOutput.isRecording`, which is still false here, took
+            // the else branch and handed back nil — and the view's
+            // `guard let url else { return }` dropped the clip without a
+            // word. Worse, the start already in flight then began a
+            // recording nobody was left to stop.
+            //
+            // Hold the completion and let the start land; it stops
+            // itself the moment the file is open.
+            pendingRecording = completion
+            recordingState = .stopping
+            stopRequestedWhileStarting = true
+
+        case .recording:
+            pendingRecording = completion
+            performStop()
+
+        case .stopping:
+            // A second release for one recording. Never overwrite the
+            // outstanding completion — doing so orphaned the first one
+            // forever and paired the finished file with the wrong
+            // caller.
+            completion(nil)
         }
-        pendingRecording = completion
+    }
+
+    /// Issue the actual stop. Only ever called once per recording.
+    private func performStop() {
+        recordingState = .stopping
         sessionQueue.async { [weak self] in
-            self?.movieOutput.stopRecording()
+            guard let self else { return }
+            if self.movieOutput.isRecording {
+                self.movieOutput.stopRecording()
+            }
         }
     }
 
@@ -1208,10 +1413,28 @@ extension CameraService: @preconcurrency AVCaptureFileOutputRecordingDelegate {
             self?.detachAudioInput()
         }
         Task { @MainActor in
-            let finalURL: URL? = (error == nil) ? outputFileURL : nil
+            // A non-nil error does NOT mean the file is unusable.
+            // AVFoundation reports a "successfully finished" error for
+            // ordinary stops — discarding on `error != nil` alone threw
+            // away perfectly good recordings.
+            let finishedFine = (error as NSError?)?
+                .userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? false
+            let usable = error == nil || finishedFine
+            let finalURL: URL? = usable ? outputFileURL : nil
+
+            self.recordingState = .idle
+            self.stopRequestedWhileStarting = false
             let completion = self.pendingRecording
             self.pendingRecording = nil
             self.pendingRecordingURL = nil
+
+            if completion == nil, usable {
+                // Nobody was waiting — an orphaned recording (a stop that
+                // never reached us, a session interruption). Do not leave
+                // the bytes lying in tmp forever.
+                try? FileManager.default.removeItem(at: outputFileURL)
+                return
+            }
             completion?(finalURL)
         }
     }

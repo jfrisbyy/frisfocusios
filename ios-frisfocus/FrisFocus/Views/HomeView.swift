@@ -177,6 +177,17 @@ struct HomeView: View {
     }
 
     @ViewBuilder
+    /// How far the sun zone's header row (share button + profile avatar)
+    /// reaches below the safe-area top: a 38pt row plus its 12pt bottom
+    /// padding. The pinned glance chips offset by this so they sit under
+    /// the avatar rather than on top of it.
+    ///
+    /// Kept as one named number because the two are laid out by
+    /// different views — SunZoneView positions the avatar, HomeView
+    /// positions the chips — and nothing else would catch them drifting
+    /// back into each other.
+    static let sunHeaderBandHeight: CGFloat = 50
+
     private var home: some View {
         ScrollViewReader { scrollProxy in
             ZStack(alignment: .bottom) {
@@ -391,6 +402,20 @@ struct HomeView: View {
                             }
                         }
                         .padding(.horizontal, Theme.pageHorizontalPadding)
+                        // Clear the sun zone's header row. This overlay is
+                        // layered ABOVE the sun zone, and the activity chip
+                        // is trailing-aligned at the same x as the profile
+                        // avatar (both ~24pt from the right edge) — so at
+                        // the same y the chip silently swallows every tap
+                        // meant for the avatar, and the profile card can
+                        // never open.
+                        //
+                        // This row used to be gated on
+                        // `unseenActivityCount > 0`, which made the
+                        // collision rare enough to look like a flake.
+                        // Making activity always accessible made it
+                        // permanent: the profile button was simply dead.
+                        .padding(.top, Self.sunHeaderBandHeight)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
