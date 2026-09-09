@@ -39,54 +39,66 @@ struct ProfileAvatarButton: View {
     private let tapSize: CGFloat = 44
 
     var body: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            Log.app.debug("profile: avatar tap delivered")
-            action()
-        } label: {
-            ZStack {
-                if let photoURL {
-                    CachedImage(url: photoURL) { image in
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    } placeholder: {
-                        placeholderDisc
-                    }
-                } else {
-                    placeholderDisc
-                }
+        // Two layers, deliberately: the disc is pure picture and takes
+        // no touches at all; the Button on top has a label that is
+        // nothing but a clear 44pt hit surface. Nothing rendered inside
+        // the disc — an image loader, a retry glyph, a gesture it
+        // carries — can ever again stand between a touch and this
+        // button's action.
+        ZStack {
+            disc
+                .allowsHitTesting(false)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Log.app.debug("profile: avatar tap delivered")
+                action()
+            } label: {
+                Color.clear
+                    .frame(width: tapSize, height: tapSize)
+                    .contentShape(Rectangle())
             }
-            .frame(width: discSize, height: discSize)
-            .clipShape(Circle())
-            .overlay(
-                Circle()
-                    .stroke(Theme.sunWarm, lineWidth: 1.5)
-            )
-            .overlay(alignment: .topTrailing) {
-                if showDot {
-                    Circle()
-                        .fill(Theme.alertRed)
-                        .frame(width: 9, height: 9)
-                        .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.9), lineWidth: 1.2))
-                        .offset(x: 1.5, y: -1.5)
-                }
-            }
-            .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
-            // The touch area lives INSIDE the layout frame, which is
-            // the whole point: every ancestor hit-tests this button by
-            // the 44 pt frame it actually reports.
-            .frame(width: tapSize, height: tapSize)
-            .contentShape(Rectangle())
+            .buttonStyle(.pressable)
         }
-        // Pressable, not plain: the disc visibly sinks under a touch, so
-        // even on a streamed simulator you can SEE whether a touch reached
-        // it. If it never sinks, the touch is being taken before it
-        // arrives — and no amount of fixing this button will change that.
-        .buttonStyle(.pressable)
+        .frame(width: tapSize, height: tapSize)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(showDot ? "Profile, new friend requests waiting" : "Profile")
         .accessibilityHint("Open profile, settings, and season management")
         .accessibilityIdentifier("profile.avatar")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// The disc people see: photo or initials, warm ring, alert dot.
+    private var disc: some View {
+        ZStack {
+            if let photoURL {
+                CachedImage(url: photoURL) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } placeholder: {
+                    placeholderDisc
+                }
+            } else {
+                placeholderDisc
+            }
+        }
+        .frame(width: discSize, height: discSize)
+        .clipShape(Circle())
+        .overlay(
+            Circle()
+                .stroke(Theme.sunWarm, lineWidth: 1.5)
+        )
+        .overlay(alignment: .topTrailing) {
+            if showDot {
+                Circle()
+                    .fill(Theme.alertRed)
+                    .frame(width: 9, height: 9)
+                    .overlay(Circle().strokeBorder(Theme.textCream.opacity(0.9), lineWidth: 1.2))
+                    .offset(x: 1.5, y: -1.5)
+            }
+        }
+        .shadow(color: .black.opacity(0.18), radius: 6, x: 0, y: 2)
     }
 
     @ViewBuilder

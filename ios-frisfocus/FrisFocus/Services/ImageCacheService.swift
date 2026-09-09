@@ -137,15 +137,39 @@ struct CachedImage<Content: View, Placeholder: View>: View {
             loaded = image
             failed = (image == nil)
         }
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                // A tap on a failed image re-attempts — simultaneous, so
-                // the row's own tap still fires; a no-op unless failed.
-                if failed {
-                    failed = false
-                    attempt += 1
-                }
-            }
-        )
+        // The retry tap exists ONLY while a load has failed.
+        //
+        // It used to be attached permanently as a "simultaneous" tap, on
+        // the theory that simultaneous gestures never get in anyone's
+        // way. Inside a Button's label they do: SwiftUI resolves a
+        // descendant's tap gesture ahead of the Button's own press, and
+        // the Button never fires — no action, no haptic, nothing. Every
+        // Button whose label is a CachedImage was affected; the profile
+        // avatar in the top-right corner, whose label is exactly that,
+        // was reported dead four times while its photo-less neighbours
+        // worked, and each fix went looking in the button's geometry.
+        // With no photo, the placeholder branch still carried the
+        // gesture, so the bug never depended on a photo being set.
+        .modifier(RetryOnTap(enabled: failed) {
+            failed = false
+            attempt += 1
+        })
+    }
+}
+
+/// A tap gesture that is only ATTACHED while `enabled` — an attached-
+/// but-idle gesture is not free inside a Button (see above), so the
+/// disabled state has to mean "no gesture at all", not "a gesture that
+/// ignores its taps".
+private struct RetryOnTap: ViewModifier {
+    let enabled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.onTapGesture(perform: action)
+        } else {
+            content
+        }
     }
 }
