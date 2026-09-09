@@ -68,10 +68,12 @@ private nonisolated struct StoryLikeRow: Codable, Sendable {
     let id: UUID
     let postId: UUID
     let userId: String
+    let createdAt: String?
     enum CodingKeys: String, CodingKey {
         case id
         case postId = "post_id"
         case userId = "user_id"
+        case createdAt = "created_at"
     }
 }
 
@@ -159,6 +161,10 @@ private nonisolated struct StoryViewInsert: Encodable, Sendable {
     }
 }
 
+private nonisolated struct IdOnlyRow: Codable, Sendable {
+    let id: UUID
+}
+
 // MARK: - Stories sync
 
 extension SocialSyncService {
@@ -195,7 +201,7 @@ extension SocialSyncService {
             if !postIds.isEmpty {
                 async let l: [StoryLikeRow] = supabase
                     .from("story_likes")
-                    .select("id, post_id, user_id")
+                    .select("id, post_id, user_id, created_at")
                     .in("post_id", values: postIds)
                     .execute().value
                 async let c: [StoryCommentRow] = supabase
@@ -292,7 +298,10 @@ extension SocialSyncService {
                     id: row.id,
                     postId: row.postId,
                     fromFriendId: localId(forRemote: row.userId),
-                    fromName: displayName(forRemote: row.userId)
+                    fromName: displayName(forRemote: row.userId),
+                    // The row's real timestamp — stamping Date() here made
+                    // every refresh re-mint old likes as brand new.
+                    createdAt: row.createdAt.map(SyncDates.parse) ?? Date()
                 )
             }
             store.comments = commentRows.map { row in
@@ -332,6 +341,81 @@ extension SocialSyncService {
             sweepExpiredStoriesIfNeeded()
         } catch {
             Log.socialSync.error("stories refresh failed: \(error)")
+        }
+    }
+
+    // MARK: - Engagement history
+
+    /// Pull the last 30 days of likes and comments on MY posts —
+    /// independent of which story rows are still in the live window.
+    ///
+    /// Recent Activity used to derive itself from the live story arrays,
+    /// and general posts leave those after 25 hours — so every
+    /// engagement older than a day silently vanished from the sheet,
+    /// which read as "it only shows new notifications". The sweep
+    /// deliberately keeps the rows (only the media is destroyed), so the
+    /// history is sitting on the server; this fetches it.
+    func refreshMyEngagementHistory() async {
+        guard let store, let myUserId else { return }
+        do {
+            let cutoff = SyncDates.iso(Date().addingTimeInterval(-30 * 24 * 3600))
+            let myPosts: [IdOnlyRow] = try await supabase
+                .from("story_posts")
+                .select("id")
+                .eq("author_id", value: myUserId)
+                .gte("created_at", value: cutoff)
+                .order("created_at", ascending: false)
+                .limit(300)
+                .execute().value
+            let postIds = myPosts.map { $0.id.uuidString }
+            guard !postIds.isEmpty else {
+                store.myEngagementLikes = []
+                store.myEngagementComments = []
+                return
+            }
+
+            async let l: [StoryLikeRow] = supabase
+                .from("story_likes")
+                .select("id, post_id, user_id, created_at")
+                .in("post_id", values: postIds)
+                .execute().value
+            async let c: [StoryCommentRow] = supabase
+                .from("story_comments")
+                .select("id, post_id, user_id, body, created_at")
+                .in("post_id", values: postIds)
+                .execute().value
+            let (likeRows, commentRows) = try await (l, c)
+
+            var involved = Set(likeRows.map { $0.userId })
+            involved.formUnion(commentRows.map { $0.userId })
+            await ensureProfiles(remoteIds: Array(involved))
+
+            store.myEngagementLikes = likeRows
+                .filter { $0.userId != myUserId }
+                .map { row in
+                    Like(
+                        id: row.id,
+                        postId: row.postId,
+                        fromFriendId: localId(forRemote: row.userId),
+                        fromName: displayName(forRemote: row.userId),
+                        createdAt: row.createdAt.map(SyncDates.parse) ?? Date()
+                    )
+                }
+            store.myEngagementComments = commentRows
+                .filter { $0.userId != myUserId }
+                .map { row in
+                    Comment(
+                        id: row.id,
+                        postId: row.postId,
+                        fromFriendId: localId(forRemote: row.userId),
+                        fromName: displayName(forRemote: row.userId),
+                        fromInitials: initials(forRemote: row.userId),
+                        text: row.body,
+                        createdAt: SyncDates.parse(row.createdAt)
+                    )
+                }
+        } catch {
+            Log.socialSync.error("engagement history refresh failed: \(error)")
         }
     }
 

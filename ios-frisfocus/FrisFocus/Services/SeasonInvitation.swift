@@ -29,9 +29,20 @@ enum SeasonInvitationKind: String, Codable, CaseIterable {
 /// A concrete, ready-to-show invitation: which observation, and the exact
 /// templated copy (filled from local stats).
 struct SeasonInvitation: Equatable {
+    /// Where "talk it through" actually goes. Neglect and momentum are
+    /// about ONE thing, so they open the scoped tune-up for that thing;
+    /// only the custom-heavy pitch still earns the full conversation —
+    /// repricing a hand-built board genuinely is season work.
+    enum Target: Equatable {
+        case season
+        case task(UUID)
+        case milestone(UUID)
+    }
+
     let kind: SeasonInvitationKind
     let headline: String
     let cta: String
+    let target: Target
 }
 
 /// Per-season persistence for the card: which observations have been

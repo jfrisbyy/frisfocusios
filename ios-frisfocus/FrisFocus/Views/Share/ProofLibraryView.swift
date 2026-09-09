@@ -87,6 +87,35 @@ struct ProofLibraryView: View {
         store.proofLibraryNewestFirst.filter { filter.admits($0) }
     }
 
+    /// The visible proofs grouped into month shelves, newest month
+    /// first — the way a camera roll remembers. Items inside a month
+    /// keep their newest-first order.
+    private var monthSections: [(id: String, title: String, items: [ProofLibraryItem])] {
+        let calendar = Calendar.current
+        var order: [String] = []
+        var buckets: [String: [ProofLibraryItem]] = [:]
+        for item in visibleItems {
+            let comps = calendar.dateComponents([.year, .month], from: item.createdAt)
+            let key = String(format: "%04d-%02d", comps.year ?? 0, comps.month ?? 0)
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(item)
+        }
+        let now = Date()
+        return order.map { key in
+            let items = buckets[key] ?? []
+            let date = items.first?.createdAt ?? now
+            let title: String
+            if calendar.isDate(date, equalTo: now, toGranularity: .month) {
+                title = "This month"
+            } else if calendar.isDate(date, equalTo: now, toGranularity: .year) {
+                title = date.formatted(.dateTime.month(.wide))
+            } else {
+                title = date.formatted(.dateTime.month(.wide).year())
+            }
+            return (id: key, title: title, items: items)
+        }
+    }
+
     /// The filters worth offering: the fixed ones, plus one per thing
     /// that actually HAS proofs. A filter for a task with nothing
     /// attached is a dead end, so it isn't built.
@@ -161,6 +190,23 @@ struct ProofLibraryView: View {
         }
     }
 
+    /// One month shelf's pinned label — quiet, but stays put while its
+    /// grid scrolls under it, so "where am I in time" is always answered.
+    private func monthHeader(_ title: String, count: Int) -> some View {
+        HStack(alignment: .lastTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.serif(17, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
+            Text("\(count)")
+                .font(.sans(11.5, weight: .medium))
+                .foregroundStyle(Theme.textPrimary.opacity(0.4))
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Theme.paperCream.opacity(0.96))
+    }
+
     private let columns = [
         GridItem(.flexible(), spacing: 6),
         GridItem(.flexible(), spacing: 6),
@@ -180,13 +226,22 @@ struct ProofLibraryView: View {
                         noMatchesState
                     } else {
                         ScrollView {
-                            LazyVGrid(columns: columns, spacing: 6) {
-                                ForEach(visibleItems) { item in
-                                    tile(item)
+                            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                                ForEach(monthSections, id: \.id) { section in
+                                    Section {
+                                        LazyVGrid(columns: columns, spacing: 6) {
+                                            ForEach(section.items) { item in
+                                                tile(item)
+                                            }
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.bottom, 18)
+                                    } header: {
+                                        monthHeader(section.title, count: section.items.count)
+                                    }
                                 }
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.top, 10)
+                            .padding(.top, 4)
                             .padding(.bottom, 40)
                         }
                         .refreshable { await proofSync?.refresh(forceMedia: true) }

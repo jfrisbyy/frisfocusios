@@ -21,14 +21,62 @@ extension Store {
         guard dismissed.count < SeasonInvitationStore.retireAfterDismissals else { return nil }
         guard currentSeasonDay < SeasonInvitationStore.retireAfterDays else { return nil }
 
-        let cta = "Talk it through · about 15 min"
         // North star wins ties; the data-driven observations outrank the
         // always-available custom-heavy fallback so copy sharpens over time.
         for kind in [SeasonInvitationKind.northStar, .consistency, .gap, .customHeavy] {
             guard !dismissed.contains(kind), let headline = invitationHeadline(for: kind) else { continue }
-            return SeasonInvitation(kind: kind, headline: headline, cta: cta)
+            let target = invitationTarget(for: kind)
+            // The scoped conversations take two minutes about one thing;
+            // only the full season conversation costs fifteen. Say which.
+            let cta: String
+            switch target {
+            case .season: cta = "Talk it through · about 15 min"
+            case .task, .milestone: cta = "Talk it through · a couple of minutes"
+            }
+            return SeasonInvitation(kind: kind, headline: headline, cta: cta, target: target)
         }
         return nil
+    }
+
+    /// The one thing each observation is actually about. Neglect (`gap`)
+    /// and momentum (`consistency`) are about a task; the north star is
+    /// about a milestone; only the custom-heavy pitch is season work.
+    private func invitationTarget(for kind: SeasonInvitationKind) -> SeasonInvitation.Target {
+        switch kind {
+        case .northStar:
+            if let milestone = currentSeason.milestones.first(where: {
+                !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }) {
+                return .milestone(milestone.id)
+            }
+            return .season
+        case .consistency:
+            if let run = longestCompletionRun,
+               let task = tasks.first(where: { $0.title == run.task }) {
+                return .task(task.id)
+            }
+            return .season
+        case .gap:
+            if let task = gapAnchorTask {
+                return .task(task.id)
+            }
+            return .season
+        case .customHeavy:
+            return .season
+        }
+    }
+
+    /// The highest-value task in the first untouched area — the concrete
+    /// thing the gap observation is pointing at.
+    private var gapAnchorTask: FFTask? {
+        guard let area = firstUntouchedArea else { return nil }
+        let candidates = tasks.filter { task in
+            let seasonCategory = currentSeason.categories.first { $0.category == task.category }
+            let custom = seasonCategory?.customName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let display = (custom?.isEmpty == false) ? custom! : task.category.displayName
+            return display == area
+        }
+        return candidates.max { $0.nominalValue < $1.nominalValue }
     }
 
     // MARK: - Templated copy (filled from local stats)

@@ -100,6 +100,12 @@ final class Store {
     var storyPosts: [StoryPost] = [] { didSet { markDirty(.storyPosts) } }
     var likes: [Like] = [] { didSet { markDirty(.likes) } }
     var comments: [Comment] = [] { didSet { markDirty(.comments) } }
+    /// Engagement on MY posts across the last 30 days, fetched durably —
+    /// unlike `likes`/`comments`, these survive a story leaving the live
+    /// window, so Recent Activity keeps its history. Session-scoped:
+    /// refreshed with every social sync, never persisted.
+    var myEngagementLikes: [Like] = []
+    var myEngagementComments: [Comment] = []
     var mediaAssets: [MediaAsset] = [] { didSet { markDirty(.mediaAssets) } }
 
     /// Privately-sent photos/videos (the counterpart to the public

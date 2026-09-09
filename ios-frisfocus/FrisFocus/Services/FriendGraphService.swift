@@ -313,6 +313,25 @@ final class FriendGraphService {
         }
     }
 
+    /// Stateless people lookup — same RPC as `searchPeople`, but the
+    /// results are returned to the caller instead of replacing the
+    /// shared `searchResults`. Discover uses this so its people strip
+    /// can't clobber the Friends screen's live search state.
+    func lookupPeople(query rawQuery: String, myUserId: String) async -> [RemoteProfile] {
+        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return [] }
+        do {
+            let results: [RemoteProfile] = try await supabase
+                .rpc("search_people", params: ["q": trimmed])
+                .execute()
+                .value
+            return results.filter { $0.id != myUserId }
+        } catch {
+            Log.friendGraph.error("people lookup failed: \(error)")
+            return []
+        }
+    }
+
     /// Resolve a single profile by id — used to render an invite link's
     /// target before any relationship exists.
     func fetchProfile(id: String) async -> RemoteProfile? {

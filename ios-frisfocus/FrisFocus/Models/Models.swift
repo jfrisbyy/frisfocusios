@@ -1054,6 +1054,11 @@ struct FFTask: Codable, Identifiable {
     /// without touching its repeat pattern. Set by "Clear today's plan";
     /// day rollover sweeps stale values so the task returns on schedule.
     var skipDate: Date? = nil
+    /// A negotiated rest: the task stays on the board with its schedule
+    /// intact, but does not surface on the plan (or in Needs You) until
+    /// this date passes. Set from the scoped "talk it through" — a pause
+    /// someone chose out loud, not a silent skip.
+    var pausedUntil: Date? = nil
     /// Optional daily time window ("7:00–8:00 AM") applied to every
     /// day this task is pinned. Drives the card's time chip and the
     /// weekly schedule's agenda ordering.
@@ -1484,6 +1489,12 @@ extension FFTask {
     /// "pin to today" never erases a recurring weekly pattern.
     func isPinnedFor(_ date: Date) -> Bool {
         let cal = Calendar.current
+        // A negotiated pause wins over everything: the person asked for
+        // silence until a date, and a plan row during it would be the
+        // app going back on its word.
+        if let paused = pausedUntil, date < paused {
+            return false
+        }
         // A per-day skip (from "Clear today's plan") suppresses the task
         // for that one day, overriding both the one-off pin and the
         // recurring schedule. The repeat pattern itself is untouched.

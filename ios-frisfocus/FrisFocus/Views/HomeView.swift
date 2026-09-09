@@ -47,6 +47,9 @@ struct HomeView: View {
     /// True while the warm-started season conversation is presented from
     /// the invitation card (opened with the FULL season envelope).
     @State private var showSeasonConversation: Bool = false
+    /// The scoped "talk it through" — one task or milestone, not a new
+    /// season. Set by the invitation card's neglect/momentum kinds.
+    @State private var talkSubject: TaskTalkSubject?
 
     // Continuous scrub support: bind the scroll view's position so the
     // rail can drive it to an arbitrary offset. Content vs. viewport
@@ -67,8 +70,6 @@ struct HomeView: View {
     @State private var undoMessage: String?
     /// The Recent Activity sheet (likes, comments, cheers on me).
     @State private var showActivity: Bool = false
-    /// The "How FrisFocus moves" gesture-rediscovery sheet.
-    @State private var showHowItMoves: Bool = false
     /// Story tap captured inside the Activity sheet — held while the
     /// sheet dismisses, then presented, so the player never stacks on
     /// top of the sheet.
@@ -121,6 +122,33 @@ struct HomeView: View {
             scrollTracker.prepareHaptics()
             refreshTopSafeInset()
         }
+        // The imperative inset read can race the key window (it returns 0
+        // until one exists, and "once at onAppear" never asked again).
+        // With 0, the sun zone's header row is laid out inside the
+        // status-bar band, where the system swallows every tap — the
+        // avatar, camera, and library buttons all go quietly dead. Retry
+        // briefly until a real value lands.
+        .task {
+            for _ in 0..<12 where topSafeInset <= 0 {
+                try? await Task.sleep(for: .milliseconds(150))
+                refreshTopSafeInset()
+            }
+            if topSafeInset <= 0 {
+                Log.app.error("layout: top safe inset unresolved; forcing floor")
+                topSafeInset = 24
+            }
+        }
+        // Second, declarative source for the same number: the stack itself
+        // respects the safe area, so its reported inset is trustworthy even
+        // in hosting shells where the key-window walk finds nothing.
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.safeAreaInsets.top
+        } action: { inset in
+            if inset > topSafeInset {
+                Log.app.debug("layout: topSafeInset ← geometry \(inset)")
+                topSafeInset = inset
+            }
+        }
         .fullScreenCover(item: $notifications.pendingRoute) { route in
             NotificationRouteHost(route: route, myUserId: auth.user?.id ?? "")
         }
@@ -156,10 +184,9 @@ struct HomeView: View {
             SeasonSetupFlowView(coldStartContext: store.makeSeasonSetupContext())
                 .environment(store)
         }
-        .sheet(isPresented: $showHowItMoves) {
-            HowItMovesSheet()
+        .sheet(item: $talkSubject) { subject in
+            TaskTalkSheet(subject: subject)
                 .environment(store)
-                .environment(walkthrough)
         }
         .onAppear {
             store.refreshRecurringEvents()
@@ -203,7 +230,10 @@ struct HomeView: View {
                     VStack(spacing: 0) {
                         SunZoneView(
                             topSafeInset: topSafeInset,
-                            onProfileTap: { showProfileSheet = true },
+                            onProfileTap: {
+                                Log.app.debug("profile: quick card requested from home")
+                                showProfileSheet = true
+                            },
                             onStatsOpened: {
                                 // Let the detail unfold first, then glide
                                 // the page down so the stats (with the
@@ -398,12 +428,10 @@ struct HomeView: View {
                     // a quiet bell otherwise. Tap opens Recent Activity.
                     if store.viewingDay == nil {
                         HStack {
-                            // "?" — every taught-once gesture, findable
-                            // forever. Quiet chrome, matching the bell.
-                            HelpGlanceChip {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                showHowItMoves = true
-                            }
+                            // The "?" used to sit here; help now lives on
+                            // the profile quick card with the rest of the
+                            // me-shaped surfaces, so the sky keeps one
+                            // control per corner.
                             Spacer()
                             ActivityGlanceChip(count: store.unseenActivityCount) {
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -467,7 +495,14 @@ struct HomeView: View {
                             invitation: invitation,
                             onTap: {
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                showSeasonConversation = true
+                                switch invitation.target {
+                                case .season:
+                                    showSeasonConversation = true
+                                case .task(let id):
+                                    talkSubject = .task(id)
+                                case .milestone(let id):
+                                    talkSubject = .milestone(id)
+                                }
                             },
                             onDismiss: { dismissInvitation(invitation) }
                         )
@@ -502,7 +537,8 @@ struct HomeView: View {
             .flatMap { $0.windows }
             .first(where: { $0.isKeyWindow })?
             .safeAreaInsets.top ?? 0
-        if inset > 0 {
+        if inset > topSafeInset {
+            Log.app.debug("layout: topSafeInset ← key window \(inset)")
             topSafeInset = inset
         }
     }
@@ -735,34 +771,6 @@ private struct ActivityGlanceChip: View {
 
     private var label: String {
         count == 1 ? "1 new for you" : "\(count) new for you"
-    }
-}
-
-// MARK: - Help glance chip
-
-/// The quiet "?" on the home header — opens "How FrisFocus moves".
-/// Mirrors the activity bell's resting chrome so the pair reads as one
-/// family.
-private struct HelpGlanceChip: View {
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            Image(systemName: "questionmark")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary.opacity(0.5))
-                .frame(width: 34, height: 34)
-                .background(
-                    Circle().fill(.ultraThinMaterial)
-                )
-                .overlay(
-                    Circle().strokeBorder(Theme.textPrimary.opacity(0.14), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.pressable)
-        .accessibilityLabel("How FrisFocus moves — gestures and the guided tour")
     }
 }
 

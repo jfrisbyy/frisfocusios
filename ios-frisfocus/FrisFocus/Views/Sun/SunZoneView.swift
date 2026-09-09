@@ -358,6 +358,14 @@ struct SunZoneView: View {
                     )
                 }
                 .padding(.bottom, 12)
+                // Diagnostic only: proves in the console whether touches
+                // reach this row at all. If a tap logs here but never in
+                // ProfileAvatarButton, something inside the row is
+                // misrouting; if it logs nowhere, the row itself is being
+                // covered or laid out under the status bar.
+                .simultaneousGesture(TapGesture().onEnded {
+                    Log.app.debug("sun header: tap reached the control row")
+                })
 
                 // The whole week peek — label, score, stripe — is one
                 // button that unfolds the season detail on its inline

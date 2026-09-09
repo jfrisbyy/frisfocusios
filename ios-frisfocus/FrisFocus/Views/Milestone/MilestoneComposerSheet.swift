@@ -22,8 +22,30 @@ struct MilestoneComposerSheet: View {
     @State private var targetDate: Date
     @State private var pointValue: Int
     @State private var pointsPerStep: Bool
+    /// Steps drafted right in the composer — a milestone's shape is its
+    /// steps, and having to save first and add them from the detail page
+    /// meant most milestones were born shapeless.
+    @State private var draftSteps: [DraftStep]
+    @State private var newStepTitle: String = ""
 
     @FocusState private var titleFocused: Bool
+    @FocusState private var newStepFocused: Bool
+
+    /// One step being drafted. Carries the original id while editing so
+    /// saving can update in place without disturbing checked-off steps.
+    struct DraftStep: Identifiable, Equatable {
+        let id: UUID
+        var title: String
+        var points: Int
+        let existing: Bool
+
+        init(id: UUID = UUID(), title: String, points: Int = 0, existing: Bool = false) {
+            self.id = id
+            self.title = title
+            self.points = points
+            self.existing = existing
+        }
+    }
 
     init(editing: Milestone?) {
         self.editing = editing
@@ -36,6 +58,9 @@ struct MilestoneComposerSheet: View {
         )
         _pointValue = State(initialValue: editing?.pointValue ?? 50)
         _pointsPerStep = State(initialValue: editing?.pointsPerStep ?? false)
+        _draftSteps = State(initialValue: (editing?.sortedSteps ?? []).map {
+            DraftStep(id: $0.id, title: $0.title, points: $0.pointValue, existing: true)
+        })
     }
 
     private var canSave: Bool {
@@ -50,6 +75,7 @@ struct MilestoneComposerSheet: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         titleCard
+                        stepsCard
                         whenCard
                         rewardCard
                         stepPointsCard
@@ -162,6 +188,84 @@ struct MilestoneComposerSheet: View {
         }
     }
 
+    private var stepsCard: some View {
+        card {
+            EyebrowText(text: "Steps along the way", opacity: 0.5)
+
+            if draftSteps.isEmpty {
+                Text("Break the win into checkable pieces — each one you tick moves the progress bar.")
+                    .font(.serifItalic(11, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach($draftSteps) { $step in
+                HStack(spacing: 10) {
+                    Image(systemName: "circle.dotted")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.35))
+
+                    TextField("Step", text: $step.title)
+                        .font(.sans(14, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary)
+
+                    if pointsPerStep {
+                        Stepper(value: $step.points, in: 0...200, step: 5) {
+                            Text("\(step.points)")
+                                .font(.sans(12.5, weight: .semibold))
+                                .foregroundStyle(step.points > 0 ? Theme.alertGreen : Theme.textPrimary.opacity(0.4))
+                                .frame(minWidth: 26, alignment: .trailing)
+                        }
+                        .fixedSize()
+                    }
+
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            draftSteps.removeAll { $0.id == step.id }
+                        }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary.opacity(0.35))
+                            .frame(width: 26, height: 26)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.4))
+                TextField("Add a step…", text: $newStepTitle)
+                    .font(.sans(14, weight: .regular))
+                    .foregroundStyle(Theme.textPrimary)
+                    .focused($newStepFocused)
+                    .submitLabel(.next)
+                    .onSubmit(commitNewStep)
+                if !newStepTitle.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Button("Add", action: commitNewStep)
+                        .font(.sans(13, weight: .semibold))
+                        .foregroundStyle(Theme.alertGreen)
+                        .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// Append the in-progress step draft and keep the keyboard up for
+    /// the next one — building a list should feel like typing a list.
+    private func commitNewStep() {
+        let trimmed = newStepTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        withAnimation(.easeOut(duration: 0.18)) {
+            draftSteps.append(DraftStep(title: trimmed))
+        }
+        newStepTitle = ""
+        newStepFocused = true
+    }
+
     @ViewBuilder
     private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -183,6 +287,13 @@ struct MilestoneComposerSheet: View {
         guard canSave else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let chosenDate: Date? = hasTargetDate ? targetDate : nil
+        // A title typed into the add row but never submitted still counts —
+        // losing it to a missing return-key press would feel like theft.
+        commitNewStep()
+        let keptSteps = draftSteps.filter {
+            !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
         if let editing {
             var updated = editing
             updated.title = title
@@ -190,15 +301,40 @@ struct MilestoneComposerSheet: View {
             updated.pointValue = pointValue
             updated.pointsPerStep = pointsPerStep
             store.updateMilestone(updated)
+            reconcileSteps(keptSteps, against: editing)
         } else {
-            store.addMilestone(
+            let created = store.addMilestone(
                 title: title,
                 targetDate: chosenDate,
                 pointValue: pointValue,
                 pointsPerStep: pointsPerStep
             )
+            for draft in keptSteps {
+                store.addMilestoneStep(to: created.id, title: draft.title, pointValue: draft.points)
+            }
         }
         dismiss()
+    }
+
+    /// Bring the stored steps in line with the drafts: update the kept,
+    /// remove the dropped, append the new — checked-off steps keep their
+    /// identity (and any credited points) because ids never change.
+    private func reconcileSteps(_ drafts: [DraftStep], against milestone: Milestone) {
+        let draftIds = Set(drafts.filter(\.existing).map(\.id))
+        for step in milestone.steps where !draftIds.contains(step.id) {
+            store.deleteMilestoneStep(step, from: milestone.id)
+        }
+        for draft in drafts {
+            if draft.existing, var step = milestone.steps.first(where: { $0.id == draft.id }) {
+                if step.title != draft.title || step.pointValue != draft.points {
+                    step.title = draft.title
+                    step.pointValue = draft.points
+                    store.updateMilestoneStep(step, in: milestone.id)
+                }
+            } else if !draft.existing {
+                store.addMilestoneStep(to: milestone.id, title: draft.title, pointValue: draft.points)
+            }
+        }
     }
 }
 

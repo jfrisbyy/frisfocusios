@@ -218,11 +218,22 @@ struct FriendsView: View {
                 .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || service.isSearching)
             }
 
-            ForEach(service.searchResults.filter { !moderation.isBlocked($0.id) }) { profile in
+            // Friends you already have, matched locally — these appear the
+            // instant a character lands, no round-trip, so typing always
+            // answers with SOMETHING while the server search catches up.
+            let localHits = localSuggestions
+            ForEach(localHits) { profile in
                 personRow(profile) { searchResultTrailing(profile) }
             }
 
-            if hasSearched, !service.isSearching, service.searchResults.isEmpty {
+            let localIds = Set(localHits.map(\.id))
+            ForEach(service.searchResults.filter {
+                !moderation.isBlocked($0.id) && !localIds.contains($0.id)
+            }) { profile in
+                personRow(profile) { searchResultTrailing(profile) }
+            }
+
+            if hasSearched, !service.isSearching, service.searchResults.isEmpty, localHits.isEmpty {
                 Text("No one found. Try a different @username, name, or email.")
                     .font(.sans(13, weight: .regular))
                     .foregroundStyle(Theme.textTertiary)
@@ -564,6 +575,21 @@ struct FriendsView: View {
         }
     }
 
+    /// Friends whose name or @username matches what's typed so far —
+    /// zero-latency suggestions from people already in the graph.
+    private var localSuggestions: [RemoteProfile] {
+        let needle = query.trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            .lowercased()
+        guard !needle.isEmpty else { return [] }
+        return service.friends.filter { profile in
+            guard !moderation.isBlocked(profile.id) else { return false }
+            let name = (profile.name ?? "").lowercased()
+            let username = (profile.username ?? "").lowercased()
+            return name.contains(needle) || username.contains(needle)
+        }
+    }
+
     private func runSearch() async {
         guard let myId else { return }
         searchFocused = false
@@ -577,12 +603,16 @@ struct FriendsView: View {
         hasSearched = false
         searchTask?.cancel()
         let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard trimmed.count >= 2 else {
+        guard !trimmed.isEmpty else {
             service.searchResults = []
             return
         }
+        // The server needs two characters; one character still gets the
+        // instant local suggestions (friends you already have), so the
+        // list starts answering on the very first keystroke.
+        guard trimmed.count >= 2 else { return }
         searchTask = Task {
-            try? await Task.sleep(for: .milliseconds(350))
+            try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled, let myId else { return }
             await service.searchPeople(query: trimmed, myUserId: myId)
             if !Task.isCancelled { hasSearched = true }

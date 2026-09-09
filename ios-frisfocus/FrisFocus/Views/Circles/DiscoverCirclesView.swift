@@ -19,6 +19,7 @@ import UIKit
 
 struct DiscoverCirclesView: View {
     @Environment(AuthManager.self) private var auth
+    @Environment(FriendGraphService.self) private var friendGraph
     @Environment(\.dismiss) private var dismiss
 
     @State private var service = CircleGraphService()
@@ -27,6 +28,10 @@ struct DiscoverCirclesView: View {
     @State private var joinedCircleId: UUID?
     /// The circle currently mid-join so its button can show a spinner.
     @State private var workingCircleId: UUID?
+    /// People whose name/@username matches the search — Discover finds
+    /// people, not just rooms, because a name is the thing someone
+    /// actually remembers from a conversation.
+    @State private var people: [RemoteProfile] = []
 
     private var myId: String? { auth.user?.id }
 
@@ -69,9 +74,12 @@ struct DiscoverCirclesView: View {
         .task(id: query) {
             // Debounced server-side search — waits for a typing pause.
             guard let myId else { return }
-            try? await Task.sleep(for: .milliseconds(350))
+            try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
-            await service.loadDiscover(search: query, myUserId: myId)
+            async let circles: Void = service.loadDiscover(search: query, myUserId: myId)
+            let found = await friendGraph.lookupPeople(query: query, myUserId: myId)
+            if !Task.isCancelled { people = found }
+            _ = await circles
         }
         .refreshable {
             guard let myId else { return }
@@ -143,19 +151,116 @@ struct DiscoverCirclesView: View {
 
     @ViewBuilder
     private var content: some View {
-        if service.isDiscovering && service.discovered.isEmpty {
-            ProgressView()
-                .tint(Theme.textPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
-        } else if service.discovered.isEmpty {
-            emptyState
-        } else {
-            VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            if !people.isEmpty {
+                Text("PEOPLE")
+                    .font(.sans(10.5, weight: .medium))
+                    .tracking(2.2)
+                    .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                ForEach(people) { profile in
+                    personListing(profile)
+                }
+                if !service.discovered.isEmpty {
+                    Text("CIRCLES")
+                        .font(.sans(10.5, weight: .medium))
+                        .tracking(2.2)
+                        .foregroundStyle(Theme.textPrimary.opacity(0.45))
+                        .padding(.top, 6)
+                }
+            }
+
+            if service.isDiscovering && service.discovered.isEmpty {
+                ProgressView()
+                    .tint(Theme.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+            } else if service.discovered.isEmpty {
+                if people.isEmpty { emptyState }
+            } else {
                 ForEach(service.discovered) { circle in
                     listing(circle)
                 }
             }
+        }
+    }
+
+    /// One found person — identity on the left, the relationship's next
+    /// step on the right. Mirrors the Friends screen's row states.
+    @ViewBuilder
+    private func personListing(_ profile: RemoteProfile) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(Theme.textPrimary)
+                if let url = profile.photoURL {
+                    CachedImage(url: url) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        Text(profile.initials)
+                            .font(.sans(13, weight: .medium))
+                            .foregroundStyle(Theme.textCream)
+                    }
+                } else {
+                    Text(profile.initials)
+                        .font(.sans(13, weight: .medium))
+                        .foregroundStyle(Theme.textCream)
+                }
+            }
+            .frame(width: 40, height: 40)
+            .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(profile.displayName)
+                    .font(.sans(14.5, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if let handle = profile.handle {
+                    Text(handle)
+                        .font(.sans(12, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            personTrailing(profile)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Theme.paperCream)
+        )
+    }
+
+    @ViewBuilder
+    private func personTrailing(_ profile: RemoteProfile) -> some View {
+        switch myId.map({ friendGraph.relationship(to: profile.id, myUserId: $0) }) ?? .none {
+        case .friends:
+            Label("Friends", systemImage: "checkmark")
+                .font(.sans(12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .labelStyle(.titleAndIcon)
+        case .requestSent:
+            Text("Requested")
+                .font(.sans(12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+        case .isMe, .requestReceived:
+            EmptyView()
+        case .none:
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                guard let myId else { return }
+                Task { await friendGraph.sendRequest(to: profile, myUserId: myId) }
+            } label: {
+                Text("Add")
+                    .font(.sans(13, weight: .semibold))
+                    .foregroundStyle(Theme.textCream)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Theme.textPrimary))
+            }
+            .buttonStyle(.plain)
         }
     }
 

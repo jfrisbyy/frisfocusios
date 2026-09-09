@@ -25,7 +25,7 @@ import UIKit
 /// own profile page full-screen; `account` opens the full hub; the rest
 /// open their own focused screen.
 enum ProfileQuickDestination: Int, Identifiable {
-    case myProfile, editProfile, friends, account, proofLibrary
+    case myProfile, editProfile, friends, account, proofLibrary, help
     var id: Int { rawValue }
 }
 
@@ -71,6 +71,7 @@ private struct ProfileQuickCardModifier: ViewModifier {
                             destination = dest
                         }
                     }
+                    .onAppear { Log.app.debug("profile: quick card presented") }
                 }
             }
             .sheet(isPresented: showSignIn) {
@@ -294,6 +295,7 @@ private struct ProfileQuickCardOverlay: View {
             shortcutTile(.myProfile, icon: "person.crop.circle", title: "My profile")
             shortcutTile(.friends, icon: "person.2.fill", title: "Friends", showDot: friendGraph.hasUnseenRequests)
             shortcutTile(.proofLibrary, icon: "photo.stack", title: "Proofs")
+            shortcutTile(.help, icon: "questionmark.circle", title: "Help")
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 12)
@@ -489,6 +491,10 @@ private struct ProfileQuickDestinationSheet: View {
             }
         case .account:
             ProfileSheetView()
+        case .help:
+            // "How FrisFocus moves" — the home header's old "?" chip,
+            // now living where every other me-shaped thing lives.
+            HowItMovesSheet()
         }
     }
 }

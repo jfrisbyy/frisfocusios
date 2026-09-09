@@ -47,7 +47,9 @@ struct ActivityItem: Identifiable {
 extension Store {
     /// Engagements on me from the last 7 days, newest first, capped.
     var activityItems: [ActivityItem] {
-        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+        // A month of history, not a week: the sheet is the record of who
+        // showed up for you, and a record that forgets is just a badge.
+        let cutoff = Date().addingTimeInterval(-30 * 24 * 3600)
         let myPostIds = Set(
             storyPosts
                 .filter { $0.authorId == currentUserId }
@@ -56,10 +58,16 @@ extension Store {
 
         var items: [ActivityItem] = []
 
-        for like in likes
-        where myPostIds.contains(like.postId)
-            && like.fromFriendId != currentUserId
-            && like.createdAt > cutoff {
+        // Durable history first (fetched server-side, already scoped to
+        // my posts), then anything the live/realtime arrays have that the
+        // last history fetch hasn't caught yet — deduped by row id, so a
+        // like never shows twice.
+        var seenLikeIds: Set<UUID> = []
+        let liveLikes = likes.filter { myPostIds.contains($0.postId) }
+        for like in myEngagementLikes + liveLikes
+        where like.fromFriendId != currentUserId
+            && like.createdAt > cutoff
+            && seenLikeIds.insert(like.id).inserted {
             items.append(ActivityItem(
                 id: "like-\(like.id.uuidString)",
                 kind: .like,
@@ -72,10 +80,12 @@ extension Store {
             ))
         }
 
-        for comment in comments
-        where myPostIds.contains(comment.postId)
-            && comment.fromFriendId != currentUserId
-            && comment.createdAt > cutoff {
+        var seenCommentIds: Set<UUID> = []
+        let liveComments = comments.filter { myPostIds.contains($0.postId) }
+        for comment in myEngagementComments + liveComments
+        where comment.fromFriendId != currentUserId
+            && comment.createdAt > cutoff
+            && seenCommentIds.insert(comment.id).inserted {
             items.append(ActivityItem(
                 id: "comment-\(comment.id.uuidString)",
                 kind: .comment,
@@ -101,7 +111,7 @@ extension Store {
             ))
         }
 
-        return Array(items.sorted { $0.date > $1.date }.prefix(60))
+        return Array(items.sorted { $0.date > $1.date }.prefix(200))
     }
 
     /// How many engagements arrived since the person last opened the

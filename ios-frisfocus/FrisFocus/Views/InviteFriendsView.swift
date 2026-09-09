@@ -52,7 +52,7 @@ struct InviteFriendsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Theme.warmWheat, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .task { renderQRIfNeeded() }
+        .task(id: myId) { renderQRIfNeeded() }
     }
 
     // MARK: - Pieces

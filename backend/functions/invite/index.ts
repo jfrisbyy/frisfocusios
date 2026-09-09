@@ -37,12 +37,20 @@ function esc(s: string): string {
 interface Inviter {
   name: string | null;
   avatar: string | null;
+  username: string | null;
 }
+
+/** Optional install link (TestFlight / App Store). While the app has no
+ *  public install path, this stays unset and the page leans on the
+ *  manual @username route instead — the one thing a recipient can act
+ *  on TODAY. The custom-scheme button is useless on a phone without the
+ *  app, which during a private beta is every recipient. */
+const INSTALL_URL = Deno.env.get("INVITE_INSTALL_URL") ?? "";
 
 /** Read the inviter's display name + avatar. Best-effort — a miss just
  *  renders the generic card. */
 async function fetchInviter(userId: string): Promise<Inviter> {
-  if (!SUPABASE_URL || !SERVICE_KEY) return { name: null, avatar: null };
+  if (!SUPABASE_URL || !SERVICE_KEY) return { name: null, avatar: null, username: null };
   try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=name,username,avatar_url&limit=1`,
@@ -53,23 +61,25 @@ async function fetchInviter(userId: string): Promise<Inviter> {
         },
       },
     );
-    if (!res.ok) return { name: null, avatar: null };
+    if (!res.ok) return { name: null, avatar: null, username: null };
     const rows = (await res.json()) as Array<{
       name?: string | null;
       username?: string | null;
       avatar_url?: string | null;
     }>;
     const row = rows?.[0];
-    if (!row) return { name: null, avatar: null };
+    if (!row) return { name: null, avatar: null, username: null };
     const rawName = (row.name ?? row.username ?? "").toString().trim();
     const name = rawName.length > 0 ? rawName.slice(0, 60) : null;
     const avatar =
       typeof row.avatar_url === "string" && /^https:\/\//.test(row.avatar_url)
         ? row.avatar_url
         : null;
-    return { name, avatar };
+    const rawUsername = (row.username ?? "").toString().trim().replace(/^@+/, "");
+    const username = /^[A-Za-z0-9_.]{2,30}$/.test(rawUsername) ? rawUsername : null;
+    return { name, avatar, username };
   } catch {
-    return { name: null, avatar: null };
+    return { name: null, avatar: null, username: null };
   }
 }
 
@@ -78,6 +88,7 @@ function page(userId: string | null, inviter: Inviter, pageURL: string): string 
   const appLink = valid ? `${SCHEME}://${HOST}?u=${userId}` : `${SCHEME}://`;
   const name = valid ? inviter.name : null;
   const avatar = valid ? inviter.avatar : null;
+  const username = valid ? inviter.username : null;
 
   const title = name
     ? `${name} is walking a season — walk with them`
@@ -161,6 +172,36 @@ ${ogImage}
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
   }
   a.open:active { transform: scale(0.98); }
+  a.open.install {
+    margin-top: 10px;
+    background: transparent; color: #2C2C2A;
+    border: 1.5px solid rgba(44, 44, 42, 0.35);
+    box-shadow: none;
+  }
+  .manual {
+    margin-top: 22px; padding: 16px 14px;
+    border-radius: 15px;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(44, 44, 42, 0.10);
+  }
+  .manual-label {
+    font-size: 11px; font-weight: 600; letter-spacing: 1.6px;
+    text-transform: uppercase; color: rgba(44, 44, 42, 0.5);
+    margin-bottom: 8px;
+  }
+  button.handle {
+    font-family: inherit;
+    font-size: 17px; font-weight: 650; color: #2C2C2A;
+    background: none; border: none; cursor: pointer;
+    padding: 4px 8px;
+  }
+  button.handle span {
+    font-size: 12px; font-weight: 500; color: rgba(44, 44, 42, 0.45);
+  }
+  .manual-line {
+    margin-top: 6px; font-size: 12.5px; line-height: 1.5;
+    color: rgba(44, 44, 42, 0.6);
+  }
   p.note {
     margin-top: 18px; font-size: 12.5px; line-height: 1.55;
     color: rgba(44, 44, 42, 0.5);
@@ -184,9 +225,23 @@ ${ogImage}
         : "This invite link is missing its code. Ask your friend to share it again from inside FrisFocus."
     }</p>
     ${valid ? `<a class="open" href="${appLink}">Open FrisFocus</a>` : ""}
+    ${
+      valid && INSTALL_URL
+        ? `<a class="open install" href="${esc(INSTALL_URL)}">Get FrisFocus</a>`
+        : ""
+    }
+    ${
+      valid && username
+        ? `<div class="manual">
+      <div class="manual-label">No app on this phone yet?</div>
+      <button class="handle" type="button" onclick="navigator.clipboard&&navigator.clipboard.writeText('@${esc(username)}');this.querySelector('span').textContent='copied';">@${esc(username)}<span> · tap to copy</span></button>
+      <div class="manual-line">Once you're in FrisFocus: Circles → Friends → search this name.</div>
+    </div>`
+        : ""
+    }
     <p class="note">${
       valid
-        ? "Nothing happened? Install FrisFocus first, then open this link once more — your friend's invite will be waiting, even if you sign in later."
+        ? "Already have FrisFocus? The button above lands on your friend's profile — even if you sign in later."
         : ""
     }</p>
   </main>
@@ -209,7 +264,9 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const raw = url.searchParams.get("u");
   const userId = raw !== null && ID_PATTERN.test(raw) ? raw : null;
-  const inviter = userId ? await fetchInviter(userId) : { name: null, avatar: null };
+  const inviter = userId
+    ? await fetchInviter(userId)
+    : { name: null, avatar: null, username: null };
 
   return new Response(page(userId, inviter, url.toString()), {
     status: 200,

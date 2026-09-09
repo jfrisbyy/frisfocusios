@@ -247,7 +247,8 @@ final class SocialSyncService {
         async let d: Void = refreshCircles()
         async let e: Void = refreshGrove()
         async let f: Void = refreshEvents()
-        _ = await (a, b, c, d, e, f)
+        async let g: Void = refreshMyEngagementHistory()
+        _ = await (a, b, c, d, e, f, g)
     }
 
     /// Batch-resolve profiles into the cache, registering id mappings.
