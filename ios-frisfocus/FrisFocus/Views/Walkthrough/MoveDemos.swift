@@ -817,11 +817,15 @@ private struct SeasonChartScene: View {
     private struct ChartLine: Shape {
         func path(in rect: CGRect) -> Path {
             var p = Path()
-            let pts: [CGPoint] = [
-                .init(x: 0, y: 0.9), .init(x: 0.18, y: 0.65), .init(x: 0.34, y: 0.75),
-                .init(x: 0.52, y: 0.4), .init(x: 0.7, y: 0.5), .init(x: 0.86, y: 0.2),
-                .init(x: 1.0, y: 0.28),
-            ].map { CGPoint(x: $0.x * rect.width, y: $0.y * rect.height) }
+            // Unit-space samples, scaled in a plain loop — the one-liner
+            // literal-plus-map version sent the type-checker past its
+            // time budget.
+            let xs: [CGFloat] = [0, 0.18, 0.34, 0.52, 0.7, 0.86, 1.0]
+            let ys: [CGFloat] = [0.9, 0.65, 0.75, 0.4, 0.5, 0.2, 0.28]
+            var pts: [CGPoint] = []
+            for i in xs.indices {
+                pts.append(CGPoint(x: xs[i] * rect.width, y: ys[i] * rect.height))
+            }
             p.move(to: pts[0])
             for pt in pts.dropFirst() { p.addLine(to: pt) }
             return p
