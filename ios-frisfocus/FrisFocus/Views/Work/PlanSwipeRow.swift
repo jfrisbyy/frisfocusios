@@ -31,11 +31,20 @@ struct PlanSwipeRow<Content: View>: View {
     @ViewBuilder var content: Content
 
     @State private var offsetX: CGFloat = 0
+    /// Per-drag verdict, decided once from the first clear movement and
+    /// then held: `true` follows the finger sideways, `false` leaves the
+    /// whole drag to the scroll view. Nil until the drag has shown its
+    /// direction.
+    @State private var horizontalLock: Bool?
 
     /// Distance the drag must pass to fire an action.
     private let threshold: CGFloat = 78
     /// Soft cap so the card never slides clean off the row.
     private let maxDrag: CGFloat = 130
+    /// How far a drag travels before its direction is judged. Small on
+    /// purpose — the verdict has to land before the scroll view's own
+    /// pan takes the touch for itself.
+    private let decideAfter: CGFloat = 8
 
     private var progress: CGFloat {
         min(1, abs(offsetX) / threshold)
@@ -47,21 +56,37 @@ struct PlanSwipeRow<Content: View>: View {
             content
                 .offset(x: offsetX)
         }
+        .contentShape(Rectangle())
         .animation(.spring(response: 0.32, dampingFraction: 0.8), value: offsetX)
-        .gesture(drag)
+        // Simultaneous, not exclusive. This row lives inside the home's
+        // vertical ScrollView, and `.gesture(DragGesture(minimumDistance:
+        // 22))` never won: the scroll view claims any touch that moves
+        // ~10pt in ANY direction, so by the time 22pt had passed the
+        // drag was already someone else's and the row sat still — the
+        // swipe lesson taught a gesture that did not exist. Running
+        // alongside the scroll, the row decides for itself from the
+        // first few points whether this drag is sideways, and only then
+        // follows it; a vertical drag is judged once and ignored for
+        // the rest of its life, so scrolling stays exactly as it was.
+        .simultaneousGesture(drag)
     }
 
     private var drag: some Gesture {
-        DragGesture(minimumDistance: 22)
+        DragGesture(minimumDistance: decideAfter, coordinateSpace: .local)
             .onChanged { value in
                 let dx = value.translation.width
                 let dy = value.translation.height
-                // Only follow clearly-horizontal drags so the vertical
-                // scroll and the card's tap/long-press are left alone.
-                guard abs(dx) > abs(dy) else { return }
+                if horizontalLock == nil {
+                    // A clearly sideways start — a real swipe, not a
+                    // scroll that happens to wobble.
+                    horizontalLock = abs(dx) > abs(dy) * 1.4
+                }
+                guard horizontalLock == true else { return }
                 offsetX = max(-maxDrag, min(maxDrag, dx))
             }
             .onEnded { value in
+                defer { horizontalLock = nil }
+                guard horizontalLock == true else { return }
                 let dx = value.translation.width
                 if dx > threshold {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()

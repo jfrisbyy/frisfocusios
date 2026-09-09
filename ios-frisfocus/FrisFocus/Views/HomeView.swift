@@ -23,6 +23,7 @@ struct HomeView: View {
     @Environment(MessageGraphService.self) private var messageGraph
     @Environment(GoldenHourService.self) private var goldenHour
     @Environment(FriendGraphService.self) private var friendGraph
+    @Environment(ProfileStore.self) private var profileStore
     @Environment(WalkthroughManager.self) private var walkthrough
     @State private var locationService = LocationService()
     /// The contextual concept lesson currently presented on home
@@ -345,7 +346,14 @@ struct HomeView: View {
                             Log.app.debug("navigation: social tap")
                             showCircles = true
                         },
-                        circlesBadgeCount: unreadMessages
+                        circlesBadgeCount: unreadMessages,
+                        onProfileTap: {
+                            Log.app.debug("profile: quick card requested from sundial")
+                            showProfileSheet = true
+                        },
+                        profileInitials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
+                        profilePhotoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL,
+                        profileDot: friendGraph.hasUnseenRequests
                     )
                     .ignoresSafeArea(edges: .bottom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))

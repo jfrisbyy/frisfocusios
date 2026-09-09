@@ -79,7 +79,11 @@ struct ProfileAvatarButton: View {
             .frame(width: tapSize, height: tapSize)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // Pressable, not plain: the disc visibly sinks under a touch, so
+        // even on a streamed simulator you can SEE whether a touch reached
+        // it. If it never sinks, the touch is being taken before it
+        // arrives — and no amount of fixing this button will change that.
+        .buttonStyle(.pressable)
         .accessibilityLabel(showDot ? "Profile, new friend requests waiting" : "Profile")
         .accessibilityHint("Open profile, settings, and season management")
         .accessibilityIdentifier("profile.avatar")

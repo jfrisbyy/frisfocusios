@@ -43,6 +43,15 @@ struct SundialNavView: View {
     /// Unread direct messages — rendered as a small count badge on the
     /// Friends item so new messages are visible from anywhere.
     var circlesBadgeCount: Int = 0
+    /// Optional third node: the person's own avatar, opening the profile
+    /// quick card. The top-right avatar remains; this is a second door
+    /// to the same room, at the bottom of the screen where a thumb
+    /// already lives — and well away from the corner that has been
+    /// reported dead three times over.
+    var onProfileTap: (() -> Void)? = nil
+    var profileInitials: String = ""
+    var profilePhotoURL: URL? = nil
+    var profileDot: Bool = false
 
     // MARK: - Discreet rest / brighten-on-reach state
 
@@ -81,6 +90,10 @@ struct SundialNavView: View {
                     onCirclesTap()
                 }
             )
+
+            if let onProfileTap {
+                profileNode(action: onProfileTap)
+            }
         }
         .padding(5)
         .background(pillBackground)
@@ -167,6 +180,62 @@ struct SundialNavView: View {
             badge > 0 ? "\(label), \(badge) unread" : label
         )
         .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    // MARK: - Profile node
+
+    /// The avatar as a nav item — same 60×40 slot as its siblings, disc
+    /// inside, dot for waiting friend requests.
+    @ViewBuilder
+    private func profileNode(action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            Log.app.debug("profile: sundial node tap delivered")
+            action()
+        } label: {
+            ZStack {
+                Circle().fill(Theme.textPrimary)
+                if let url = profilePhotoURL {
+                    CachedImage(url: url) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        profileGlyph
+                    }
+                } else {
+                    profileGlyph
+                }
+            }
+            .frame(width: 26, height: 26)
+            .clipShape(Circle())
+            .overlay(Circle().stroke(Theme.sunWarm, lineWidth: 1.2))
+            .overlay(alignment: .topTrailing) {
+                if profileDot {
+                    Circle()
+                        .fill(Theme.alertRed)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().strokeBorder(Theme.warmWheat.opacity(0.9), lineWidth: 1))
+                        .offset(x: 2, y: -2)
+                }
+            }
+            .frame(width: 60, height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressable)
+        .accessibilityLabel(profileDot ? "Profile, new friend requests waiting" : "Profile")
+        .accessibilityHint("Open profile, settings, and help")
+    }
+
+    private var profileGlyph: some View {
+        Group {
+            if profileInitials.isEmpty {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 11, weight: .medium))
+            } else {
+                Text(profileInitials)
+                    .font(.sans(10.5, weight: .medium))
+            }
+        }
+        .foregroundStyle(Theme.textCream)
     }
 
     // MARK: - Touch (brighten-on-reach) gesture

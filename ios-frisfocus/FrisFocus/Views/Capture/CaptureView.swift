@@ -112,6 +112,10 @@ struct CaptureView: View {
 
     // Shutter / gesture state
     @State private var isRecording: Bool = false
+    /// A recording problem worth saying out loud, shown briefly over the
+    /// viewfinder. Nil = nothing to report.
+    @State private var recordingFailureNote: String?
+    @State private var recordingFailureTask: Task<Void, Never>?
     @State private var recordStart: Date?
     @State private var recordElapsed: Double = 0
     @State private var pressTimerTask: Task<Void, Never>?
@@ -184,7 +188,22 @@ struct CaptureView: View {
 
                     Spacer()
 
-                    if isRecording {
+                    if let recordingFailureNote {
+                        // A recording problem, said once, in the place
+                        // the hint normally sits.
+                        HStack(spacing: 7) {
+                            Image(systemName: "video.slash")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(recordingFailureNote)
+                                .font(.sans(12.5, weight: .medium))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(Capsule().fill(Color(hex: 0xE0454C).opacity(0.85)))
+                        .padding(.bottom, 12)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    } else if isRecording {
                         recordingTimer
                             .padding(.bottom, 12)
                     } else if showHint && camera.hasCamera {
@@ -704,12 +723,27 @@ struct CaptureView: View {
         }
     }
 
+    /// Show a recording problem for a few seconds, then let it go.
+    private func showRecordingFailure(_ message: String) {
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+        recordingFailureTask?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) { recordingFailureNote = message }
+        recordingFailureTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.3)) { recordingFailureNote = nil }
+        }
+    }
+
     private func startRecording() {
         guard camera.isReady, !isRecording else { return }
         // Only show a recording UI for a recording the service actually
         // accepted. It used to flip isRecording first and ask never —
         // so a refused start left a ring spinning over nothing.
-        guard camera.startRecording() else { return }
+        guard camera.startRecording() else {
+            showRecordingFailure(camera.lastRecordingFailure ?? "Couldn't start recording.")
+            return
+        }
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
         recordElapsed = 0
         recordStart = Date()
@@ -727,7 +761,14 @@ struct CaptureView: View {
         pinchBase = camera.currentZoom
         let polled = recordElapsed
         camera.stopRecording { url in
-            guard let url else { return }
+            guard let url else {
+                // Silence here was the whole complaint: a clip that
+                // vanished with nothing said. Say what happened.
+                Task { @MainActor in
+                    showRecordingFailure(camera.lastRecordingFailure ?? "That clip couldn't be saved.")
+                }
+                return
+            }
             Task { @MainActor in
                 async let thumb = Self.generateThumbnail(for: url)
                 async let seconds = CameraService.duration(of: url, fallback: polled)
@@ -1296,12 +1337,26 @@ final class CameraService: NSObject {
     /// happening.
     @discardableResult
     func startRecording() -> Bool {
-        guard hasCamera, isReady, recordingState == .idle else { return false }
+        guard hasCamera, isReady, recordingState == .idle else {
+            Log.app.error("camera: record refused — hasCamera=\(self.hasCamera) ready=\(self.isReady) state=\(String(describing: self.recordingState))")
+            return false
+        }
+        // A movie output with no video connection cannot record at all —
+        // the case on cameras bridged in from outside the device (the
+        // cloud simulator's webcam, an external lens). Say so here rather
+        // than handing AVFoundation a start it will fail in silence.
+        guard movieOutput.connection(with: .video) != nil else {
+            Log.app.error("camera: record refused — movie output has no video connection on this camera")
+            lastRecordingFailure = "Video recording isn't available on this camera."
+            return false
+        }
+        lastRecordingFailure = nil
         let dir = FileManager.default.temporaryDirectory
         let url = dir.appendingPathComponent("frisfocus-clip-\(UUID().uuidString).mov")
         pendingRecordingURL = url
         recordingState = .starting
         stopRequestedWhileStarting = false
+        armRecordingWatchdog(for: url, phase: .starting)
 
         sessionQueue.async { [weak self] in
             guard let self else { return }
@@ -1406,11 +1461,53 @@ final class CameraService: NSObject {
     /// Issue the actual stop. Only ever called once per recording.
     private func performStop() {
         recordingState = .stopping
+        if let url = pendingRecordingURL {
+            armRecordingWatchdog(for: url, phase: .stopping)
+        }
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.movieOutput.isRecording {
                 self.movieOutput.stopRecording()
             }
+        }
+    }
+
+    // MARK: - Recording watchdog
+
+    /// The last reason a recording could not happen, for the capture
+    /// screen to show. Nil while things are fine.
+    private(set) var lastRecordingFailure: String?
+
+    @ObservationIgnored private var recordingWatchdog: Task<Void, Never>?
+
+    /// A recording that never reports back is the worst failure this
+    /// service can have: `recordingState` sits in `.starting` or
+    /// `.stopping` forever, the `.idle` guard refuses every later start,
+    /// and hold-to-record is dead for the rest of the session with no
+    /// error anywhere. AVFoundation is allowed a generous window to
+    /// answer; past it, the recording is declared failed, whoever was
+    /// waiting hears so, and the service is usable again.
+    private func armRecordingWatchdog(for url: URL, phase: RecordingState) {
+        recordingWatchdog?.cancel()
+        recordingWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(phase == .starting ? 3 : 5))
+            guard !Task.isCancelled, let self else { return }
+            guard self.pendingRecordingURL == url, self.recordingState == phase else { return }
+            Log.app.error("camera: recording watchdog fired in \(String(describing: phase)) — declaring the clip lost")
+            self.lastRecordingFailure = phase == .starting
+                ? "Video recording isn't available on this camera."
+                : "That clip couldn't be saved."
+            self.recordingState = .idle
+            self.stopRequestedWhileStarting = false
+            let completion = self.pendingRecording
+            self.pendingRecording = nil
+            self.pendingRecordingURL = nil
+            self.sessionQueue.async { [weak self] in
+                guard let self else { return }
+                if self.movieOutput.isRecording { self.movieOutput.stopRecording() }
+                self.detachAudioInput()
+            }
+            completion?(nil)
         }
     }
 
@@ -1549,6 +1646,7 @@ extension CameraService: @preconcurrency AVCaptureFileOutputRecordingDelegate {
     ) {
         Task { @MainActor in
             guard self.pendingRecordingURL == fileURL else { return }
+            self.recordingWatchdog?.cancel()
             if self.stopRequestedWhileStarting || !self.shouldRun {
                 self.stopRequestedWhileStarting = false
                 self.performStop()
@@ -1577,7 +1675,12 @@ extension CameraService: @preconcurrency AVCaptureFileOutputRecordingDelegate {
                 .userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? false
             let usable = error == nil || finishedFine
             let finalURL: URL? = usable ? outputFileURL : nil
+            if !usable {
+                Log.app.error("camera: recording finished unusable: \(String(describing: error))")
+                self.lastRecordingFailure = "That clip couldn't be saved."
+            }
 
+            self.recordingWatchdog?.cancel()
             self.recordingState = .idle
             self.stopRequestedWhileStarting = false
             let completion = self.pendingRecording

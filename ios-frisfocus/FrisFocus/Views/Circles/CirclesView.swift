@@ -175,7 +175,11 @@ struct CirclesView: View {
                         // Already here — light tap, no-op.
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     },
-                    circlesBadgeCount: directUnread
+                    circlesBadgeCount: directUnread,
+                    onProfileTap: { showProfileSheet = true },
+                    profileInitials: profileStore.myProfile?.initials ?? auth.user?.initials ?? "",
+                    profilePhotoURL: profileStore.myProfile?.photoURL ?? auth.user?.photoURL,
+                    profileDot: friendGraph.hasUnseenRequests
                 )
                 .ignoresSafeArea(edges: .bottom)
             }

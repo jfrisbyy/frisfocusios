@@ -33,8 +33,8 @@ enum ProofLibraryFilter: Identifiable, Equatable {
     case shared
     case task(id: UUID, title: String)
     case milestone(id: UUID, title: String)
-    case anyTodo
-    case anyNote
+    case todo(id: UUID, title: String)
+    case note(id: UUID, title: String)
 
     var id: String {
         switch self {
@@ -43,8 +43,8 @@ enum ProofLibraryFilter: Identifiable, Equatable {
         case .shared: return "shared"
         case .task(let id, _): return "task-\(id.uuidString)"
         case .milestone(let id, _): return "milestone-\(id.uuidString)"
-        case .anyTodo: return "todos"
-        case .anyNote: return "notes"
+        case .todo(let id, _): return "todo-\(id.uuidString)"
+        case .note(let id, _): return "note-\(id.uuidString)"
         }
     }
 
@@ -55,8 +55,8 @@ enum ProofLibraryFilter: Identifiable, Equatable {
         case .shared: return "Shared"
         case .task(_, let title): return title
         case .milestone(_, let title): return title
-        case .anyTodo: return "To-dos"
-        case .anyNote: return "Notes"
+        case .todo(_, let title): return title
+        case .note(_, let title): return title
         }
     }
 
@@ -67,8 +67,8 @@ enum ProofLibraryFilter: Identifiable, Equatable {
         case .shared: return !item.isPrivateToMe
         case .task(let id, _): return item.taskId == id
         case .milestone(let id, _): return item.milestoneId == id
-        case .anyTodo: return item.todoId != nil
-        case .anyNote: return item.noteId != nil
+        case .todo(let id, _): return item.todoId == id
+        case .note(let id, _): return item.noteId == id
         }
     }
 }
@@ -81,6 +81,9 @@ struct ProofLibraryView: View {
     @State private var viewerItem: ProofLibraryItem?
     @State private var pendingDelete: ProofLibraryItem?
     @State private var filter: ProofLibraryFilter = .all
+    /// Which family of filters is unfolded beneath the top row — Tasks,
+    /// Milestones, To-dos, or Notes. One at a time; nil = all folded.
+    @State private var openGroup: ProofFilterGroup?
 
     /// The proofs the current filter admits, newest first.
     private var visibleItems: [ProofLibraryItem] {
@@ -116,63 +119,212 @@ struct ProofLibraryView: View {
         }
     }
 
-    /// The filters worth offering: the fixed ones, plus one per thing
-    /// that actually HAS proofs. A filter for a task with nothing
-    /// attached is a dead end, so it isn't built.
-    private var availableFilters: [ProofLibraryFilter] {
-        var result: [ProofLibraryFilter] = [.all]
+    /// A family of narrow filters — every task that has proofs, every
+    /// milestone that has proofs — folded under one pill that carries the
+    /// family's total. Twenty task names in a row was a wall; four
+    /// families is a menu.
+    enum ProofFilterGroup: String, Identifiable, CaseIterable {
+        case tasks, milestones, todos, notes
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .tasks: return "Tasks"
+            case .milestones: return "Milestones"
+            case .todos: return "To-dos"
+            case .notes: return "Notes"
+            }
+        }
+    }
+
+    /// One member of a family: the filter it applies and how many proofs
+    /// it would show.
+    struct ProofFilterEntry: Identifiable {
+        let filter: ProofLibraryFilter
+        let count: Int
+        var id: String { filter.id }
+    }
+
+    /// The members of each family, counted, only for things that
+    /// actually HAVE proofs — a filter for a task with nothing attached
+    /// is a dead end, so it isn't built.
+    private var groupEntries: [ProofFilterGroup: [ProofFilterEntry]] {
         let items = store.proofLibraryNewestFirst
-        if items.contains(where: { $0.isPrivateToMe }) { result.append(.keptOnly) }
-        if items.contains(where: { !$0.isPrivateToMe }) { result.append(.shared) }
+        var result: [ProofFilterGroup: [ProofFilterEntry]] = [:]
 
-        var seenTasks: [UUID] = []
+        var taskCounts: [UUID: Int] = [:]
+        var milestoneCounts: [UUID: Int] = [:]
+        var todoCounts: [UUID: Int] = [:]
+        var noteCounts: [UUID: Int] = [:]
         for item in items {
-            if let id = item.taskId, !seenTasks.contains(id) { seenTasks.append(id) }
-        }
-        for id in seenTasks {
-            guard let title = store.tasks.first(where: { $0.id == id })?.title else { continue }
-            result.append(.task(id: id, title: title))
-        }
-
-        var seenMilestones: [UUID] = []
-        for item in items {
-            if let id = item.milestoneId, !seenMilestones.contains(id) { seenMilestones.append(id) }
-        }
-        for id in seenMilestones {
-            guard let title = store.currentSeason.milestones.first(where: { $0.id == id })?.title else { continue }
-            result.append(.milestone(id: id, title: title))
+            if let id = item.taskId { taskCounts[id, default: 0] += 1 }
+            if let id = item.milestoneId { milestoneCounts[id, default: 0] += 1 }
+            if let id = item.todoId { todoCounts[id, default: 0] += 1 }
+            if let id = item.noteId { noteCounts[id, default: 0] += 1 }
         }
 
-        if items.contains(where: { $0.todoId != nil }) { result.append(.anyTodo) }
-        if items.contains(where: { $0.noteId != nil }) { result.append(.anyNote) }
+        result[.tasks] = store.tasks.compactMap { task in
+            guard let count = taskCounts[task.id] else { return nil }
+            return ProofFilterEntry(filter: .task(id: task.id, title: task.title), count: count)
+        }
+        result[.milestones] = store.currentSeason.milestones.compactMap { milestone in
+            guard let count = milestoneCounts[milestone.id] else { return nil }
+            return ProofFilterEntry(filter: .milestone(id: milestone.id, title: milestone.title), count: count)
+        }
+        result[.todos] = store.todos.compactMap { todo in
+            guard let count = todoCounts[todo.id] else { return nil }
+            return ProofFilterEntry(filter: .todo(id: todo.id, title: todo.title), count: count)
+        }
+        result[.notes] = store.notes.compactMap { note in
+            guard let count = noteCounts[note.id] else { return nil }
+            return ProofFilterEntry(filter: .note(id: note.id, title: Self.noteTitle(note)), count: count)
+        }
         return result
     }
 
+    /// A note has no title field; its first line stands in.
+    private static func noteTitle(_ note: Note) -> String {
+        let firstLine = (note.body ?? "")
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        if firstLine.isEmpty {
+            return note.createdAt.formatted(.dateTime.month(.abbreviated).day())
+        }
+        return firstLine.count > 28 ? String(firstLine.prefix(28)) + "…" : firstLine
+    }
+
+    /// Total proofs across a family, for its pill.
+    private func groupTotal(_ group: ProofFilterGroup, entries: [ProofFilterGroup: [ProofFilterEntry]]) -> Int {
+        (entries[group] ?? []).reduce(0) { $0 + $1.count }
+    }
+
+    /// The family a narrow filter belongs to, so its pill reads selected
+    /// while one of its members is active.
+    private func group(of filter: ProofLibraryFilter) -> ProofFilterGroup? {
+        switch filter {
+        case .task: return .tasks
+        case .milestone: return .milestones
+        case .todo: return .todos
+        case .note: return .notes
+        case .all, .keptOnly, .shared: return nil
+        }
+    }
+
     private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 7) {
-                ForEach(availableFilters) { option in
-                    Button {
-                        UISelectionFeedbackGenerator().selectionChanged()
-                        withAnimation(.easeOut(duration: 0.18)) { filter = option }
-                    } label: {
-                        Text(option.label)
-                            .font(.sans(12.5, weight: filter == option ? .semibold : .regular))
-                            .foregroundStyle(filter == option ? Theme.paperCream : Theme.textPrimary.opacity(0.75))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(filter == option ? Theme.textPrimary : Theme.textPrimary.opacity(0.07))
-                            )
+        let entries = groupEntries
+        let items = store.proofLibraryNewestFirst
+        return VStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    filterPill(label: "All", count: nil, selected: filter == .all) {
+                        select(.all)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(filter == option ? [.isSelected] : [])
+                    if items.contains(where: { $0.isPrivateToMe }) {
+                        filterPill(label: "Just for me", count: nil, selected: filter == .keptOnly) {
+                            select(.keptOnly)
+                        }
+                    }
+                    if items.contains(where: { !$0.isPrivateToMe }) {
+                        filterPill(label: "Shared", count: nil, selected: filter == .shared) {
+                            select(.shared)
+                        }
+                    }
+                    ForEach(ProofFilterGroup.allCases) { group in
+                        let total = groupTotal(group, entries: entries)
+                        if total > 0 {
+                            let active = openGroup == group || self.group(of: filter) == group
+                            filterPill(
+                                label: group.label,
+                                count: total,
+                                selected: active,
+                                chevron: openGroup == group ? "chevron.up" : "chevron.down"
+                            ) {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                    openGroup = openGroup == group ? nil : group
+                                }
+                            }
+                        }
+                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+
+            if let openGroup, let members = entries[openGroup], !members.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 7) {
+                        ForEach(members) { entry in
+                            filterPill(
+                                label: entry.filter.label,
+                                count: entry.count,
+                                selected: filter == entry.filter,
+                                subtle: true
+                            ) {
+                                select(entry.filter)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 9)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
         .background(Theme.paperCream)
+    }
+
+    private func select(_ option: ProofLibraryFilter) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        withAnimation(.easeOut(duration: 0.18)) {
+            filter = option
+            // Picking a fixed filter folds whatever family was open —
+            // it no longer describes what is on screen.
+            if group(of: option) == nil { openGroup = nil }
+        }
+    }
+
+    /// One pill. `count` rides as a quiet number after the label; the
+    /// family pills carry a chevron for their fold state; members of an
+    /// open family draw lighter so the two rows read as parent + child.
+    private func filterPill(
+        label: String,
+        count: Int?,
+        selected: Bool,
+        chevron: String? = nil,
+        subtle: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(label)
+                    .font(.sans(12.5, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+                if let count {
+                    Text("\(count)")
+                        .font(.sans(11, weight: .medium))
+                        .opacity(selected ? 0.75 : 0.5)
+                }
+                if let chevron {
+                    Image(systemName: chevron)
+                        .font(.system(size: 8, weight: .bold))
+                        .opacity(0.7)
+                }
+            }
+            .foregroundStyle(selected ? Theme.paperCream : Theme.textPrimary.opacity(subtle ? 0.65 : 0.75))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(
+                    selected
+                        ? Theme.textPrimary
+                        : Theme.textPrimary.opacity(subtle ? 0.05 : 0.07)
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     private var noMatchesState: some View {
@@ -269,7 +421,10 @@ struct ProofLibraryView: View {
             }
         }
         .fullScreenCover(item: $viewerItem) { item in
-            ProofLibraryViewerView(item: item)
+            // A pager over what the grid is currently showing, opened on
+            // the tapped proof: swiping left and right walks the shelf
+            // without coming back out to the grid each time.
+            ProofLibraryPagerView(items: visibleItems, initial: item)
                 .environment(store)
         }
         .confirmationDialog(
@@ -463,12 +618,49 @@ private struct ProofLibraryThumb: View {
     }
 }
 
+// MARK: - Pager
+
+/// Horizontal pages of viewers over a list of proofs. Each page is the
+/// full single-proof viewer, so close, date, and pins travel with it.
+struct ProofLibraryPagerView: View {
+    let items: [ProofLibraryItem]
+    let initial: ProofLibraryItem
+
+    @State private var selection: UUID
+
+    init(items: [ProofLibraryItem], initial: ProofLibraryItem) {
+        self.items = items.isEmpty ? [initial] : items
+        self.initial = initial
+        _selection = State(initialValue: initial.id)
+    }
+
+    var body: some View {
+        TabView(selection: $selection) {
+            ForEach(items) { item in
+                ProofLibraryViewerView(item: item, position: position(of: item))
+                    .tag(item.id)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .ignoresSafeArea()
+        .background(Color.black.ignoresSafeArea())
+    }
+
+    /// "3 of 12" for the header, so a swipe has somewhere to be going.
+    private func position(of item: ProofLibraryItem) -> String? {
+        guard items.count > 1, let index = items.firstIndex(where: { $0.id == item.id }) else { return nil }
+        return "\(index + 1) of \(items.count)"
+    }
+}
+
 // MARK: - Viewer
 
 /// Full-screen viewer for one archived proof — the composed card on a
 /// dark backdrop with its date, source, and everywhere it was pinned.
 struct ProofLibraryViewerView: View {
     let item: ProofLibraryItem
+    /// Where this proof sits in the pager ("3 of 12"), nil when alone.
+    var position: String? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(ProofLibrarySyncService.self) private var proofSync: ProofLibrarySyncService?
 
@@ -495,7 +687,7 @@ struct ProofLibraryViewerView: View {
                         Text(fullDate)
                             .font(.sans(13, weight: .semibold))
                             .foregroundStyle(.white)
-                        Text(sourceLine)
+                        Text(position.map { "\(sourceLine) · \($0)" } ?? sourceLine)
                             .font(.sans(11, weight: .regular))
                             .foregroundStyle(.white.opacity(0.65))
                     }
