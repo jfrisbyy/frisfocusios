@@ -445,7 +445,11 @@ final class SeasonSetupViewModel {
             }
         } catch {
             pendingText = userText
-            errorMessage = (error as? LocalizedError)?.errorDescription
+            // Only this flow's own errors carry copy written for the
+            // person. Anything else (a transport error, a decoding
+            // failure) gets the one plain line rather than whatever the
+            // system or the server happened to say.
+            errorMessage = (error as? SeasonSetupAIError)?.errorDescription
                 ?? "Something interrupted the conversation."
             Log.seasonSetup.error("turn failed: \(error)")
         }

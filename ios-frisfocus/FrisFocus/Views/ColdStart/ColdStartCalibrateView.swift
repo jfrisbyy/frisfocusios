@@ -137,7 +137,7 @@ struct ColdStartCalibrateView: View {
                 }
             }
 
-            Text("A strong day lands near \(target) — not everything, just a good day.")
+            Text("A strong day lands near \(target) points — not everything, just a good day.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(Theme.textCream.opacity(0.72))
                 .multilineTextAlignment(.center)

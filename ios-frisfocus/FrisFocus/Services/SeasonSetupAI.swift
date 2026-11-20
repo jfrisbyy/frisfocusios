@@ -22,8 +22,12 @@ nonisolated enum SeasonSetupAIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notSignedIn: return "You need to be signed in to set up a season."
-        case .server(let message): return message
-        case .badResponse: return "The setup service returned an unexpected response."
+        // The associated string is the server's own error body — written
+        // for whoever reads the logs ("missing OPENROUTER_API_KEY
+        // secret"), never for the person mid-conversation. It is logged
+        // where it is thrown and kept off the screen.
+        case .server: return "The conversation couldn't connect. Try again in a moment."
+        case .badResponse: return "That reply didn't come through. Try again."
         }
     }
 }
@@ -94,8 +98,10 @@ enum SeasonSetupAI {
         guard (200..<300).contains(http.statusCode) else {
             if let decoded = try? JSONDecoder().decode(SetupErrorBody.self, from: data),
                let message = decoded.error, !message.isEmpty {
+                Log.seasonSetupAI.error("setup request failed (\(http.statusCode)): \(message)")
                 throw SeasonSetupAIError.server(message)
             }
+            Log.seasonSetupAI.error("setup request failed (\(http.statusCode))")
             throw SeasonSetupAIError.server("Setup request failed (\(http.statusCode)).")
         }
         do {

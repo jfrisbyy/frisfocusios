@@ -633,7 +633,7 @@ struct SeasonInlineDetailView: View {
         var base: [SeasonOptionItem] = [
             SeasonOptionItem(
                 label: "New task",
-                hint: "Add a task to today",
+                hint: "Add a task to your season",
                 iconName: "plus",
                 haptic: .medium
             ) { showNewTaskForm = true },
@@ -644,12 +644,12 @@ struct SeasonInlineDetailView: View {
             ) { showAvoidanceManager = true },
             SeasonOptionItem(
                 label: "Trains",
-                hint: "Linked habit streaks",
+                hint: "Habits done in a chain",
                 iconName: "circle.hexagongrid"
             ) { showHabitTrains = true },
             SeasonOptionItem(
                 label: "Boosters",
-                hint: "Bonus point multipliers",
+                hint: "Weekly & monthly bonuses",
                 iconName: "sparkles"
             ) { showBoosters = true },
             SeasonOptionItem(

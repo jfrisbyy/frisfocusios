@@ -135,7 +135,7 @@ struct DirectionBoardContainer: View {
                     onNext()
                 } label: {
                     HStack(spacing: 8) {
-                        Text(viewModel.isLastDirection ? "Start tracking" : "Next")
+                        Text(viewModel.isLastDirection ? "Continue" : "Next")
                             .font(.sans(16.5, weight: .semibold))
                         Image(systemName: viewModel.isLastDirection ? "sun.and.horizon.fill" : "arrow.right")
                             .font(.system(size: 14, weight: .semibold))

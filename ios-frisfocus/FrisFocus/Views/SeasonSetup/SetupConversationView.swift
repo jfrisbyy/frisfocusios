@@ -27,7 +27,11 @@ struct SetupConversationView: View {
     var onBuildInAMinute: (() -> Void)? = nil
 
     @State private var speech = SpeechCaptureService()
-    @State private var useKeyboard: Bool = false
+    /// Typing is the default. Voice-first meant the very first answer
+    /// raised two system alerts in a row (speech recognition, then the
+    /// microphone) before the person had said a word; now those only
+    /// appear when they tap the mic themselves.
+    @State private var useKeyboard: Bool = true
     @State private var typedText: String = ""
     /// A finished voice take, editable before sending.
     @State private var transcriptDraft: String = ""
@@ -307,7 +311,7 @@ struct SetupConversationView: View {
             ProgressView()
                 .controlSize(.small)
                 .tint(Theme.textPrimary.opacity(0.4))
-            Text("FrisFocus is listening…")
+            Text("Thinking — this can take a few seconds…")
                 .font(.serifItalic(13, weight: .regular))
                 .foregroundStyle(Theme.textPrimary.opacity(0.45))
         }
@@ -361,7 +365,7 @@ struct SetupConversationView: View {
                 .foregroundStyle(Theme.alertRed)
 
             if onBuildInAMinute != nil {
-                Text("This door needs a connection. You can build your season in about a minute instead, and talk it through any time later.")
+                Text("This door needs a connection. You can build your season in a few minutes instead, and talk it through any time later.")
                     .font(.serifItalic(13, weight: .regular))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(Theme.textPrimary.opacity(0.6))
@@ -390,7 +394,7 @@ struct SetupConversationView: View {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         onBuildInAMinute()
                     } label: {
-                        Text("Build it in about a minute")
+                        Text("Build it in a few minutes")
                             .font(.sans(13, weight: .regular))
                             .foregroundStyle(Theme.textPrimary.opacity(0.65))
                             .padding(.horizontal, 14)

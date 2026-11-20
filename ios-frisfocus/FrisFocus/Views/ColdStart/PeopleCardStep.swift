@@ -114,7 +114,7 @@ struct PeopleCardStep: View {
     }
 
     private var bodyCopy: some View {
-        Text("Friends you choose see the shape of your days — the sun, the showing up, the proof. Your numbers stay yours unless you decide to share them. Nothing is ever public.")
+        Text("Friends you choose see the shape of your days — the sun, the showing up, the proof. Your numbers stay yours unless you decide to share them. Nothing is public unless you choose it.")
             .font(.serifItalic(15.5, weight: .regular))
             .foregroundStyle(Theme.textCream.opacity(0.88))
             .multilineTextAlignment(.center)
@@ -126,7 +126,7 @@ struct PeopleCardStep: View {
         VStack(alignment: .leading, spacing: 9) {
             promiseRow("You choose who's in.")
             promiseRow("Your numbers are private by default.")
-            promiseRow("Nothing is ever public.")
+            promiseRow("Nothing is public unless you choose it.")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)

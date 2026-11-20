@@ -71,8 +71,8 @@ struct ForkView: View {
             VStack(spacing: 14) {
                 doorCard(
                     icon: "square.grid.2x2",
-                    title: "Build it in about a minute",
-                    subtitle: "Pick your directions, drag what counts. The sun starts moving today.",
+                    title: "Build it in a few minutes",
+                    subtitle: "Pick your directions, drag what counts. You'll pick today's few at the end.",
                     prominent: true,
                     action: onQuick
                 )

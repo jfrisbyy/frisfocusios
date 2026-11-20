@@ -465,7 +465,7 @@ private struct WelcomePanel: View {
                     .minimumScaleFactor(0.8)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("An honest record of your life — the sun rises as your day fills. Set up takes about a minute.")
+                Text("An honest record of your life — the sun rises as your day fills. Setup takes a few minutes.")
                     .font(.serifItalic(16.5, weight: .regular))
                     .foregroundStyle(Theme.textCream.opacity(0.85))
                     .multilineTextAlignment(.center)
