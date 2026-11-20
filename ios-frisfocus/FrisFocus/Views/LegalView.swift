@@ -74,7 +74,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
         ),
         LegalSection(
             heading: "What friends can see",
-            body: "Sharing is per-friend and tiered. At the quietest tier a friend sees almost nothing; at the fullest tier they see your day's shape and shared activities. Exact points are never shown to anyone. Stories, proofs, messages, and Golden Hour captures are visible only to the friends or circle members they were shared with, and media is served through short-lived private links."
+            body: "Sharing is per-friend and tiered. At the quietest tier a friend sees almost nothing; at the fullest tier they see your day's shape and shared activities. Exact points are never shown to anyone. Stories, proofs, messages, and Golden Hour captures are visible only to the friends or circle members they were shared with, and media is served through short-lived private links. Stories and Golden Hour captures are deleted when they expire; one that has been reported is kept until the report has been reviewed, for no longer than 14 days."
         ),
         LegalSection(
             heading: "Contacts (optional)",

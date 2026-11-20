@@ -259,7 +259,7 @@ struct GoldenHourWallView: View {
                 .padding(.vertical, 7)
                 .background(Capsule().fill(GoldenTheme.gold.opacity(0.14)))
             }
-            Text("Everything here is deleted when the timer ends. No archive, no replay.")
+            Text("Everything here is deleted when the timer ends. No archive, no replay. A reported capture is kept only until it has been reviewed.")
                 .font(.sans(11, weight: .regular))
                 .foregroundStyle(GoldenTheme.cream.opacity(0.45))
                 .multilineTextAlignment(.center)
