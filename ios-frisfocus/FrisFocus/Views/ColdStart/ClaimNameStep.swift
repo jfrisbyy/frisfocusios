@@ -30,9 +30,15 @@ struct ClaimNameStep: View {
 
     @State private var isSaving: Bool = false
     @State private var shown: Bool = false
+    /// Set once a save has failed for a reason other than the handle
+    /// being taken — the server could not be reached. Opens the quiet
+    /// "Continue for now" way out of this non-dismissible step.
+    @State private var saveFailedUnreachable: Bool = false
 
     private enum Availability: Equatable {
-        case idle, checking, available, taken, invalid
+        /// `unverified`: the availability check itself could not reach
+        /// the server, so the handle is neither confirmed nor taken.
+        case idle, checking, available, taken, invalid, unverified
     }
 
     private var myId: String? { auth.user?.id }
@@ -74,6 +80,12 @@ struct ClaimNameStep: View {
             continueButton
                 .opacity(shown ? 1 : 0)
                 .offset(y: shown ? 0 : 12)
+
+            if canContinueLocally {
+                continueForNow
+                    .padding(.top, 14)
+                    .transition(.opacity)
+            }
 
             Spacer(minLength: 18)
         }
@@ -203,7 +215,7 @@ struct ClaimNameStep: View {
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(Theme.alertAmber)
-        case .idle:
+        case .idle, .unverified:
             EmptyView()
         }
     }
@@ -215,6 +227,7 @@ struct ClaimNameStep: View {
         case .available: return "@\(handle) is available"
         case .taken: return "Taken — try the suggestion below"
         case .invalid: return "Use 3–20 letters, numbers, or _"
+        case .unverified: return "Can't check this name right now"
         }
     }
 
@@ -264,6 +277,43 @@ struct ClaimNameStep: View {
 
     private var canContinue: Bool { availability == .available }
 
+    /// The way out when the server can't be reached: this step sits on a
+    /// cover that cannot be dismissed, so a failed save must never leave
+    /// retrying as the only move. Offered only after the server has
+    /// actually failed us — never as a way round a handle that is taken.
+    private var canContinueLocally: Bool {
+        guard !isSaving, ProfileStore.isValidUsername(handle) else { return false }
+        return saveFailedUnreachable || availability == .unverified
+    }
+
+    private var continueForNow: some View {
+        VStack(spacing: 4) {
+            Text("We can't reach FrisFocus right now.")
+                .font(.sans(12.5, weight: .regular))
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+
+            Button {
+                continueLocally()
+            } label: {
+                Text("Continue for now")
+                    .underline()
+                    .font(.sans(14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.75))
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Text("We'll save @\(handle) for you once you're back online.")
+                .font(.sans(12, weight: .regular))
+                .foregroundStyle(Theme.textTertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     // MARK: Logic
 
     /// Pre-fill the handle with an open suggestion drawn from the name.
@@ -286,6 +336,9 @@ struct ClaimNameStep: View {
     private func firstAvailable(base: String, myUserId: String) async -> String {
         let root = base.isEmpty ? "friend" : base
         if await profileStore.isUsernameAvailable(root, myUserId: myUserId) { return root }
+        // Offline, every candidate "fails" — don't walk twenty of them
+        // and land on a random suffix; keep the plain name.
+        if profileStore.lastUsernameCheckFailed { return root }
         for n in 1...20 {
             let candidate = ProfileStore.sanitizeUsername("\(root)\(n)")
             if await profileStore.isUsernameAvailable(candidate, myUserId: myUserId) {
@@ -324,7 +377,13 @@ struct ClaimNameStep: View {
         defer { watchdog.cancel() }
         let free = await profileStore.isUsernameAvailable(candidate, myUserId: myId)
         if Task.isCancelled || handle != candidate { return }
-        availability = free ? .available : .taken
+        if !free && profileStore.lastUsernameCheckFailed {
+            // The check never reached the server. Saying "Taken" here
+            // would be untrue, and would wall the step while offline.
+            availability = .unverified
+        } else {
+            availability = free ? .available : .taken
+        }
     }
 
     private func loadPicked(_ item: PhotosPickerItem) async {
@@ -356,10 +415,33 @@ struct ClaimNameStep: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             onContinue()
         } else {
+            // Anything but a taken handle means the server couldn't be
+            // reached — open the "Continue for now" way out.
+            if !profileStore.lastSaveHitDuplicate {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                    saveFailedUnreachable = true
+                }
+            }
             // A rare race (handle taken just now) — re-check so the user
             // sees it and can accept a fresh suggestion.
             await checkAvailability()
         }
+    }
+
+    /// Carry on with the handle kept on this device. `ProfileStore`
+    /// shows it locally and retries the save on the next launch (or the
+    /// next time the profile is read); the photo, if one was picked, can
+    /// be added again from the profile once online.
+    private func continueLocally() {
+        guard let myId, ProfileStore.isValidUsername(handle) else { return }
+        let providerName = auth.user?.name?.trimmingCharacters(in: .whitespaces) ?? ""
+        profileStore.stashPendingClaim(
+            name: providerName.isEmpty ? handle : providerName,
+            username: handle,
+            myUserId: myId
+        )
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        onContinue()
     }
 
     private var profileStoreErrorBinding: Binding<Bool> {

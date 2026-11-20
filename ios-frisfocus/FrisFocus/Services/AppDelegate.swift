@@ -29,12 +29,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Fires once as the app finishes launching and again on every
+        // return to the foreground — the two moments the device token is
+        // re-requested, so a reinstall, a restore, a rotated token, or
+        // permission granted later in Settings all reach the server.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationBecameActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
         // Cold launch from a tapped notification: stash the route so the
         // app shell can open it once the UI is up.
         if let userInfo = launchOptions?[.remoteNotification] as? [AnyHashable: Any] {
             notifications.handleTap(userInfo: userInfo)
         }
         return true
+    }
+
+    @objc nonisolated private func applicationBecameActive() {
+        Task { @MainActor in
+            await self.notifications.refreshRemoteRegistration()
+        }
     }
 
     func application(

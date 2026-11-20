@@ -71,9 +71,14 @@ errors:
 `FRISFOCUS_SUPABASE_URL`, `FRISFOCUS_SUPABASE_ANON_KEY`,
 `FRISFOCUS_RORK_AUTH_URL`, `FRISFOCUS_RORK_APP_KEY`, `FRISFOCUS_PROJECT_ID`.
 
+**`Package.resolved` is not committed yet, and it has to be committed
+from Xcode.** Nothing ignores it, but the file only exists once Xcode has
+resolved packages, so it cannot be produced from this repository alone.
 After your first local package resolve, commit the resulting
 `ios-frisfocus/FrisFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
-so dependency versions are pinned for everyone.
+so dependency versions are pinned for everyone. Until then every build —
+CI included — resolves whatever newest versions the package rules allow,
+and the CI package cache key (a hash of that file) never changes.
 
 ## Database
 
@@ -88,6 +93,15 @@ because neither fails loudly:
   A change made through an ad-hoc statement takes effect but records
   nothing, so the repo and the database disagree about what has run.
   `storage_bucket_limits` was live but unrecorded for exactly that reason.
+
+Deploy functions with `./scripts/deploy-functions.sh`, never with a bare
+`supabase functions deploy`. Every function runs with the gateway's JWT
+verification **off** — requests carry a Rork JWT that each function
+verifies itself in `backend/functions/_shared/auth.ts`, and `invite` is a
+public page — and with no `config.toml` here the CLI's default would turn
+verification back on and 401 every request. The script passes
+`--no-verify-jwt` for that reason, and skips the retired
+`test-user-engine` tombstone.
 
 
 Schema changes live in `backend/migrations/` and are applied to the Supabase
@@ -184,20 +198,20 @@ last. Do not read "1160 strings are already keys" as "the app is nearly
 localized" — the 392 and the 265 are where the real work is, and both
 need a translator, not a refactor.
 
-### CI is currently blocked on GitHub billing
+### Keeping CI affordable
 
-Runs stop before any step with:
+CI is running and green again. It was blocked for a while by a GitHub
+billing limit on the account ("The job was not started because recent
+account payments have failed or your spending limit needs to be
+increased") — if runs ever stop before their first step with that
+message, nothing in the repository can fix it; it needs Settings →
+Billing & plans.
 
-> The job was not started because recent account payments have failed or
-> your spending limit needs to be increased.
+CI is also the only compiler some contributors have, and a round trip
+is about 15 minutes, so a red run is expensive in both senses.
 
-Nothing in the repository can fix that — it needs Settings → Billing &
-plans on the account. Until it is lifted, pushes produce no signal at
-all, so treat any commit after `c9107be` as unverified rather than
-passing.
-
-macOS runners bill at **10x** the Linux rate, which is what makes this
-easy to hit. Two changes reduce the burn:
+macOS runners bill at **10x** the Linux rate, which is what makes the
+limit easy to hit. Two changes reduce the burn:
 
 - The workflow no longer runs a separate `xcodebuild build` before
   `xcodebuild test`. `test` builds the whole scheme anyway, so that was
@@ -215,7 +229,7 @@ These cannot be done from the repository and several have long lead times.
 
 | Item | Why it matters | Owner |
 |---|---|---|
-| **Family Controls (Distribution) entitlement** | `FocusBlockingService` uses `FamilyControls` + `ManagedSettings`. Development is auto-granted; **distribution requires Apple's approval**, which can take weeks. Start this first. | Apple Developer account |
+| **Family Controls (Distribution) entitlement** | **Cut from v1.** Screen Time app blocking ships invisible and inert behind the flag `FocusBlockingService.isAvailable` (`false`), and `com.apple.developer.family-controls` is no longer in `FrisFocus.entitlements`, so v1 does not wait on Apple. To bring it back: re-request the distribution entitlement later (approval can take weeks), restore the entitlement key, flip the flag to `true`. | Apple Developer account |
 | `DEVELOPMENT_TEAM` | Currently empty — the project cannot be archived or uploaded. | Xcode signing |
 | Bundle identifier | Moving from the generated `app.rork.…` placeholder to `com.frisfocus.app`. Permanent after first App Store release. | App Store Connect |
 | Hosted Privacy Policy + Terms URLs | App Store Connect requires public URLs. `LegalContact.privacyURL` / `.termsURL` name where the app expects them; the in-app `LegalView` text is the source copy to publish there. | Web host |

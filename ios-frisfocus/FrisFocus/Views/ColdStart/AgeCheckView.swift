@@ -14,6 +14,12 @@
 //  someone we are about to turn away, which is exactly the data we should
 //  never have collected.
 //
+//  The one path that cannot ask first is the Welcome screen's "Sign in"
+//  link: whether the account is new is only known once sign-in resolves.
+//  A returning account (it has a season or a claimed name) skips the gate;
+//  a brand-new one is brought here before it can claim a name, and is
+//  signed back out if the answer is under the minimum.
+//
 //  A date is asked for rather than a yes/no box. A box invites a shrug; a
 //  date makes the answer a deliberate one, and it is the form regulators
 //  treat as a neutral gate.
@@ -62,6 +68,11 @@ enum AgeGate {
 struct AgeCheckView: View {
     /// Old enough — carry on into the account step.
     let onPass: () -> Void
+    /// Answered under the minimum, just now. The gate normally runs
+    /// before any account exists, so there is nothing to undo; the one
+    /// exception is an account created through the Welcome "Sign in"
+    /// link, which the host signs back out of here.
+    var onBlocked: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var birthDate: Date = AgeCheckView.defaultDate
@@ -144,6 +155,7 @@ struct AgeCheckView: View {
                 } else {
                     AgeGate.recordBlock()
                     DiagnosticsService.shared.record(.ageCheckBlocked)
+                    onBlocked()
                     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) {
                         turnedAway = true
                     }

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      FrisFocusWidget privacy manifest.
+
+      The widget extension renders two things: the focus Live Activity,
+      from state the app hands it through ActivityKit, and the sun
+      widget, from a snapshot the app writes to the shared app-group
+      UserDefaults suite. It makes no network requests, collects
+      nothing, and tracks nothing. Everything the app itself collects is
+      declared in FrisFocus/PrivacyInfo.xcprivacy.
+    -->
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <!-- FrisFocusSunWidget reads the day's snapshot the app wrote to
+             the app-group suite (group.com.frisfocus.app). -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>1C8F.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

@@ -122,6 +122,20 @@ private nonisolated struct ContactKeyUpsert: Encodable, Sendable {
     }
 }
 
+/// A handle the person chose while the server could not be reached.
+/// Claim-name lets them carry on ("Continue for now") rather than
+/// trapping them on a cover that cannot be dismissed; the claim waits
+/// on this device and `ProfileStore.load` retries the save on the next
+/// launch, or the next time the profile is read.
+///
+/// Only the account id, display name and handle are kept — no email —
+/// and the claim is ignored for any other account that signs in here.
+private nonisolated struct PendingProfileClaim: Codable, Sendable {
+    let userId: String
+    let name: String
+    let username: String
+}
+
 // MARK: - Store
 
 @Observable
@@ -136,12 +150,21 @@ final class ProfileStore {
     var errorMessage: String?
     var showError = false
 
+    /// True when the most recent @username availability check could not
+    /// reach the server — as opposed to finding the handle taken. Lets
+    /// claim-name say "can't check" instead of a false "Taken".
+    private(set) var lastUsernameCheckFailed = false
+    /// True when the most recent `save` failed because the @username was
+    /// already taken, rather than because the server was unreachable.
+    private(set) var lastSaveHitDuplicate = false
+
     /// The user's own phone number (private, matching-only). Loaded
     /// from `contact_keys` on demand; nil when unset.
     var myPhone: String?
 
     @ObservationIgnored private var loadedForUserId: String?
     @ObservationIgnored private var phoneLoadedForUserId: String?
+    @ObservationIgnored private var isRetryingClaim = false
 
     /// The columns the store reads/writes on `profiles`.
     private static let profileColumns = "id, name, username, avatar_url, header_url, area_key, area_name"
@@ -157,7 +180,10 @@ final class ProfileStore {
     /// Fetch the user's own profile row. Cheap to call repeatedly — it
     /// no-ops if already loaded for this id unless `force` is set.
     func load(myUserId: String, force: Bool = false) async {
-        if !force, loadedForUserId == myUserId, myProfile != nil { return }
+        if !force, loadedForUserId == myUserId, myProfile != nil {
+            await retryPendingClaimIfNeeded(myUserId: myUserId)
+            return
+        }
         isLoading = true
         defer { isLoading = false }
         do {
@@ -170,13 +196,125 @@ final class ProfileStore {
                 .value
             myProfile = rows.first
             loadedForUserId = myUserId
+            await retryPendingClaimIfNeeded(myUserId: myUserId)
         } catch {
             fail("Couldn't load your profile.", error)
+            // Still unreachable: keep showing the handle that is waiting
+            // to be saved rather than forgetting the person chose one.
+            if let claim = pendingClaim(for: myUserId) {
+                showPendingClaimLocally(claim)
+            }
+        }
+    }
+
+    // MARK: Pending handle claim
+
+    private static let pendingClaimKey = "profile.pendingClaim.v1"
+
+    private func pendingClaim(for myUserId: String) -> PendingProfileClaim? {
+        guard let data = UserDefaults.standard.data(forKey: Self.pendingClaimKey) else { return nil }
+        guard let claim = try? JSONDecoder().decode(PendingProfileClaim.self, from: data) else { return nil }
+        return claim.userId == myUserId ? claim : nil
+    }
+
+    private func clearPendingClaim() {
+        UserDefaults.standard.removeObject(forKey: Self.pendingClaimKey)
+    }
+
+    /// Keep a handle the server could not be reached to save: remember it
+    /// on this device, show it locally straight away, and let `load`
+    /// retry the save later. Used by claim-name's "Continue for now".
+    func stashPendingClaim(name: String, username: String, myUserId: String) {
+        let claim = PendingProfileClaim(
+            userId: myUserId,
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            username: Self.sanitizeUsername(username)
+        )
+        if let data = try? JSONEncoder().encode(claim) {
+            UserDefaults.standard.set(data, forKey: Self.pendingClaimKey)
+        }
+        showPendingClaimLocally(claim)
+    }
+
+    /// Lay the waiting handle over whatever profile is in memory, so the
+    /// person sees the name they chose while the save is still pending.
+    private func showPendingClaimLocally(_ claim: PendingProfileClaim) {
+        let current = myProfile
+        let shownName: String? = claim.name.isEmpty ? current?.name : claim.name
+        myProfile = RemoteProfile(
+            id: claim.userId,
+            email: current?.email,
+            name: shownName,
+            username: claim.username,
+            avatarUrl: current?.avatarUrl,
+            headerUrl: current?.headerUrl,
+            areaKey: current?.areaKey,
+            areaName: current?.areaName,
+            seasonCard: current?.seasonCard
+        )
+    }
+
+    /// Try again to save a handle claimed while offline. Quiet on
+    /// purpose — it runs behind `load`, so a failure is logged and left
+    /// for the next attempt instead of raising an alert about something
+    /// the person did not just do.
+    private func retryPendingClaimIfNeeded(myUserId: String) async {
+        guard let claim = pendingClaim(for: myUserId) else { return }
+        // The row already carries a handle that is not this claim (set
+        // from another device, say): the server wins, nothing to retry.
+        if let saved = myProfile?.username, !saved.isEmpty, saved != claim.username {
+            clearPendingClaim()
+            return
+        }
+        guard !isRetryingClaim else {
+            // Another load is already retrying. Keep the chosen handle
+            // in view meanwhile rather than the bare row just fetched.
+            showPendingClaimLocally(claim)
+            return
+        }
+        isRetryingClaim = true
+        defer { isRetryingClaim = false }
+        do {
+            let updated: RemoteProfile = try await supabase
+                .from("profiles")
+                .upsert(ProfileEditUpsert(
+                    id: myUserId,
+                    email: nil,
+                    name: claim.name.isEmpty ? nil : claim.name,
+                    username: claim.username,
+                    avatarUrl: nil,
+                    header: .keep,
+                    updatedAt: Self.iso.string(from: Date())
+                ))
+                .select(Self.profileColumns)
+                .single()
+                .execute()
+                .value
+            myProfile = updated
+            loadedForUserId = myUserId
+            clearPendingClaim()
+        } catch {
+            let text = "\(error)"
+            if text.contains("23505") || text.lowercased().contains("duplicate") || text.contains("profiles_username") {
+                // Someone else took the handle in the meantime. Retrying
+                // can never succeed, so drop the claim; the next load
+                // reads the real row and the person can choose again.
+                Log.profileStore.error("pending handle claim lost to a duplicate: \(error)")
+                clearPendingClaim()
+                loadedForUserId = nil
+            } else {
+                Log.profileStore.error("pending handle claim retry failed: \(error)")
+                showPendingClaimLocally(claim)
+            }
         }
     }
 
     /// Drop cached state on sign-out so the next user starts clean.
     func clear() {
+        // A pending handle claim is deliberately NOT cleared here: this
+        // runs on every cold launch before the session restores, which
+        // would throw the claim away before it could be retried. The
+        // claim carries its account id and is ignored for anyone else.
         myProfile = nil
         loadedForUserId = nil
         myPhone = nil
@@ -212,9 +350,11 @@ final class ProfileStore {
                 .ilike("username", pattern: candidate)
                 .execute()
                 .value
+            lastUsernameCheckFailed = false
             return rows.allSatisfy { $0.id == myUserId }
         } catch {
             Log.profileStore.error("username check failed: \(error)")
+            lastUsernameCheckFailed = true
             return false
         }
     }
@@ -234,6 +374,7 @@ final class ProfileStore {
     ) async -> Bool {
         isSaving = true
         defer { isSaving = false }
+        lastSaveHitDuplicate = false
 
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanUsername = username.map(Self.sanitizeUsername)
@@ -260,6 +401,7 @@ final class ProfileStore {
         } catch {
             let text = "\(error)"
             if text.contains("23505") || text.lowercased().contains("duplicate") || text.contains("profiles_username") {
+                lastSaveHitDuplicate = true
                 fail("That @username is already taken. Try another.", error)
             } else {
                 fail("Couldn't save your profile.", error)

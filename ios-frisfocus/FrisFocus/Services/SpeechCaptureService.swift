@@ -154,14 +154,16 @@ final class SpeechCaptureService {
     }
 
     /// Start (or restart) a recognition task against the still-running audio
-    /// engine. Higher-accuracy server recognition is used when available;
-    /// on-device is the graceful fallback.
+    /// engine. Recognition is kept on the phone whenever the recognizer
+    /// for this language supports it; only a language with no on-device
+    /// model falls back to Apple's server recognition (which is why the
+    /// permission string makes no on-device promise).
     private func startRecognitionTask() {
         guard let recognizer, wantsToListen else { return }
 
         let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         recognitionRequest.shouldReportPartialResults = true
-        recognitionRequest.requiresOnDeviceRecognition = !recognizer.isAvailable && recognizer.supportsOnDeviceRecognition
+        recognitionRequest.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         request = recognitionRequest
 
         task = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in

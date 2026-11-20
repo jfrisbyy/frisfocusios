@@ -20,7 +20,6 @@
 //
 
 import SwiftUI
-import AuthenticationServices
 
 // MARK: - Kill-safe outer phase marker
 
@@ -94,7 +93,20 @@ struct FirstRunIntroView: View {
             case .ageCheck:
                 ZStack {
                     DawnBackdrop(progress: 0.2).ignoresSafeArea()
-                    AgeCheckView(onPass: { advance(to: .account) })
+                    AgeCheckView(
+                        // Normally the gate sits before the account step.
+                        // A brand-new account that came in through the
+                        // Welcome "Sign in" link is already signed in when
+                        // it gets here, so it carries on to claim a name.
+                        onPass: { advance(to: auth.user == nil ? .account : .claimName) },
+                        onBlocked: {
+                            // Turned away after signing in: don't leave a
+                            // live session on a device that can't use it.
+                            if auth.user != nil {
+                                Task { await auth.signOut() }
+                            }
+                        }
+                    )
                         .onAppear { DiagnosticsService.shared.record(.ageCheckShown) }
                 }
                 .transition(stageTransition)
@@ -287,8 +299,13 @@ struct FirstRunIntroView: View {
                 store.restoreFromSignIn()
             } else if hasHandle {
                 advance(to: .fork)
-            } else {
+            } else if AgeGate.hasPassed {
                 advance(to: .claimName)
+            } else {
+                // A brand-new account (no season, no claimed name) that
+                // arrived through the Welcome "Sign in" link never saw the
+                // age gate. It answers before it can claim a name.
+                advance(to: .ageCheck)
             }
         }
     }
@@ -528,14 +545,9 @@ private struct SignInSheet: View {
             .padding(.top, 28)
 
             VStack(spacing: 12) {
-                SignInWithAppleButton(.continue) { request in
-                    request.requestedScopes = [.email, .fullName]
-                } onCompletion: { _ in
+                AppleSignInButton(style: .black, height: 52, cornerRadius: 14) {
                     Task { await auth.signIn(provider: "apple") }
                 }
-                .signInWithAppleButtonStyle(.black)
-                .frame(height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
                 .disabled(auth.isSigningIn)
 
                 googleButton

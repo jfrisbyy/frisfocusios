@@ -182,13 +182,16 @@
 
     <key>NSPrivacyAccessedAPITypes</key>
     <array>
-        <!-- The Store persists every slice of the person's own data here. -->
+        <!-- The Store persists every slice of the person's own data here
+             (CA92.1). WidgetBridge also writes the day's snapshot to the
+             app-group suite the widget extension reads (1C8F.1). -->
         <dict>
             <key>NSPrivacyAccessedAPIType</key>
             <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array>
                 <string>CA92.1</string>
+                <string>1C8F.1</string>
             </array>
         </dict>
 

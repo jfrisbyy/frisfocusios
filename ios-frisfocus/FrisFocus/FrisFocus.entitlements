@@ -15,8 +15,11 @@
 	<array>
 		<string>group.com.frisfocus.app</string>
 	</array>
-	<key>com.apple.developer.family-controls</key>
-	<true/>
+	<!-- com.apple.developer.family-controls is deliberately absent:
+	     Screen Time app blocking is cut from v1 because Apple has not
+	     approved the Family Controls distribution entitlement. Restore
+	     the key here AND flip FocusBlockingService.isAvailable to true
+	     once it is approved. -->
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>

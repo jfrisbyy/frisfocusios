@@ -10,7 +10,6 @@
 
 import SwiftUI
 import UIKit
-import AuthenticationServices
 
 struct AddFriendLinkView: View {
     @Environment(AuthManager.self) private var auth
@@ -212,14 +211,9 @@ struct AddFriendLinkView: View {
                 .padding(.horizontal, 24)
 
             VStack(spacing: 10) {
-                SignInWithAppleButton(.continue) { request in
-                    request.requestedScopes = [.email, .fullName]
-                } onCompletion: { _ in
+                AppleSignInButton(style: .black, height: 50, cornerRadius: 14) {
                     Task { await auth.signIn(provider: "apple") }
                 }
-                .signInWithAppleButtonStyle(.black)
-                .frame(height: 50)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
                 .disabled(auth.isSigningIn)
 
                 Button {

@@ -49,7 +49,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
     }
 
     var updated: String {
-        "Last updated August 2026"
+        "Last updated November 2026"
     }
 
     var sections: [LegalSection] {
@@ -113,7 +113,7 @@ enum LegalDocument: String, Identifiable, CaseIterable {
         ),
         LegalSection(
             heading: "Moderation",
-            body: "You can report any member or piece of shared content, hide content from your view, and block people. We may remove content or suspend accounts that break these terms, and we may act on reports without prior notice when safety requires it."
+            body: "There is no tolerance here for objectionable content or for people who abuse other members — none. You can report any member or piece of shared content, hide content from your view, and block people. Every report is reviewed by a person; content that breaks these terms is removed, and the account behind it is suspended or removed. We may act without prior notice when safety requires it."
         ),
         LegalSection(
             heading: "The service",

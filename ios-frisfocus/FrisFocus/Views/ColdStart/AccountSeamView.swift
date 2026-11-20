@@ -17,7 +17,6 @@
 //
 
 import SwiftUI
-import AuthenticationServices
 
 // MARK: - Two-suns backdrop
 
@@ -125,14 +124,9 @@ struct AccountSignInStep: View {
             Spacer(minLength: 28)
 
             VStack(spacing: 12) {
-                SignInWithAppleButton(.continue) { request in
-                    request.requestedScopes = [.email, .fullName]
-                } onCompletion: { _ in
+                AppleSignInButton(style: .white, height: 54, cornerRadius: 16) {
                     Task { await auth.signIn(provider: "apple") }
                 }
-                .signInWithAppleButtonStyle(.white)
-                .frame(height: 54)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .disabled(auth.isSigningIn || resolving)
 
                 googleButton

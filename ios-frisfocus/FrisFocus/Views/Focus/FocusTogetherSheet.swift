@@ -95,31 +95,35 @@ struct FocusTogetherSheet: View {
                         }
                     }
 
-                    sectionHeader("Silence apps")
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        showBlockList = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: blocking.isEnabled && blocking.hasSelection ? "hand.raised.fill" : "hand.raised")
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(blocking.isEnabled && blocking.hasSelection ? Theme.alertGreen : Theme.textPrimary.opacity(0.45))
-                            Text(blocking.isEnabled ? blocking.summaryLine : "Off")
-                                .font(.serif(15, weight: .regular))
-                                .foregroundStyle(Theme.textPrimary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                    // Hidden entirely while Screen Time blocking is cut
+                    // from the build (FocusBlockingService.isAvailable).
+                    if FocusBlockingService.isAvailable {
+                        sectionHeader("Silence apps")
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            showBlockList = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: blocking.isEnabled && blocking.hasSelection ? "hand.raised.fill" : "hand.raised")
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(blocking.isEnabled && blocking.hasSelection ? Theme.alertGreen : Theme.textPrimary.opacity(0.45))
+                                Text(blocking.isEnabled ? blocking.summaryLine : "Off")
+                                    .font(.serif(15, weight: .regular))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Theme.warmWheat)
+                            )
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Theme.warmWheat)
-                        )
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
 
                     Button(action: start) {
                         Text("Start the grove")

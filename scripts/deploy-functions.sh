@@ -10,8 +10,12 @@
 # still deploys, and quietly makes the product worse in a way nothing
 # catches.
 #
-#   ./scripts/deploy-functions.sh                # every function
+#   ./scripts/deploy-functions.sh                # every live function
 #   ./scripts/deploy-functions.sh season-setup   # just one
+#
+# Functions are always deployed with --no-verify-jwt (see the note above
+# the deploy loop), and the retired test-user-engine tombstone is skipped
+# unless named explicitly.
 #
 # Requires: supabase CLI, and `supabase login` once.
 
@@ -43,13 +47,28 @@ else
     name="$(basename "$dir")"
     # _shared is imported by the others, never deployed on its own.
     [ "$name" = "_shared" ] && continue
+    # test-user-engine is a retired tombstone: it only answers
+    # {"ok":true,"disabled":true} so old builds' best-effort pokes get a
+    # clean 200. It never changes, so a routine deploy leaves it alone.
+    # Name it explicitly if it ever really has to go out again.
+    [ "$name" = "test-user-engine" ] && continue
     TARGETS+=("$name")
   done
 fi
 
+# --no-verify-jwt is NOT optional. Every function on this project runs
+# with the gateway's JWT verification OFF, on purpose: the app signs in
+# through Rork, not Supabase Auth, so requests carry a Rork JWT that the
+# Supabase gateway cannot verify. Each function checks that token itself
+# (backend/functions/_shared/auth.ts), and `invite` is a public HTML page
+# that takes no token at all. There is no supabase/config.toml in this
+# repo to record that per function, so without the flag the CLI falls
+# back to its default (verify_jwt = true) and the gateway answers 401 to
+# every single request before the function ever runs — the whole backend
+# goes dark on one deploy.
 echo "Deploying ${#TARGETS[@]} function(s) to $PROJECT_REF"
 for name in "${TARGETS[@]}"; do
   echo "  → $name"
-  ( cd "$WORKDIR" && supabase functions deploy "$name" --project-ref "$PROJECT_REF" )
+  ( cd "$WORKDIR" && supabase functions deploy "$name" --project-ref "$PROJECT_REF" --no-verify-jwt )
 done
 echo "Done."

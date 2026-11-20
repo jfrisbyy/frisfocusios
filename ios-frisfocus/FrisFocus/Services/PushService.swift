@@ -57,15 +57,32 @@ nonisolated struct PushPayload: Encodable, Sendable {
 }
 
 /// Lenient decode of the function's response — we only fire-and-forget, so
-/// the contents are ignored beyond confirming a 2xx.
+/// the contents are ignored beyond confirming a 2xx and noticing a server
+/// that says it cannot deliver anything at all.
 private nonisolated struct PushResponse: Decodable, Sendable {
     let ok: Bool?
+    /// Why the function chose not to deliver, when it says.
+    let skipped: String?
 }
 
 enum PushService {
+    /// Whether the missing-APNs-key state has been logged this launch.
+    private static var didReportMissingApnsKey = false
+
+    /// The server answers 200 with `skipped: "apns_not_configured"` until
+    /// the Apple push key is set as a secret, which is correct for a
+    /// preview build and invisible in a real one: every push "succeeds"
+    /// and none arrive. Said once per launch, at error level, so it is
+    /// the first thing in the console rather than a silent no-op.
+    private static func reportMissingApnsKeyOnce() {
+        guard !didReportMissingApnsKey else { return }
+        didReportMissingApnsKey = true
+        Log.push.error("send-push is not delivering: the APNs key is not configured on the server (APNS_KEY_ID / APNS_TEAM_ID / APNS_PRIVATE_KEY). No push will arrive until it is.")
+    }
+
     /// Notify `recipientId` about an action. Safe to call from anywhere
     /// (including `@MainActor` services); spins off its own task and
-    /// swallows all errors.
+    /// never throws into the caller — a failure is logged, not surfaced.
     nonisolated static func send(
         to recipientId: String,
         kind: PushKind,
@@ -83,12 +100,19 @@ enum PushService {
         )
         Task {
             do {
-                let _: PushResponse = try await supabase.functions.invoke(
+                let response: PushResponse = try await supabase.functions.invoke(
                     "send-push",
                     options: .init(body: payload)
                 )
+                if response.skipped == "apns_not_configured" {
+                    await PushService.reportMissingApnsKeyOnce()
+                }
             } catch {
-                Log.push.error("send(\(kind.rawValue)) failed: \(error)")
+                // Non-fatal by design — the action itself already landed.
+                // Logged so a refusal (401 expired session, 403 no
+                // relationship for this kind, 429 rate limit) or a
+                // function that isn't deployed shows up in the console.
+                Log.push.error("send(\(kind.rawValue)) failed, push not delivered: \(error)")
             }
         }
     }

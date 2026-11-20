@@ -25,6 +25,29 @@ final class FocusActivityManager {
     private let log = Logger(subsystem: "com.frisfocus.app", category: "FocusActivity")
     private var activity: Activity<FocusActivityAttributes>?
 
+    /// Ends every focus Live Activity left over from a previous run.
+    ///
+    /// The activity reference above lives only in memory, and so does the
+    /// focus session it mirrors (`Store.activeFocusSession` is never
+    /// persisted). If the app is killed mid-block, the system keeps the
+    /// Live Activity on the lock screen with nothing left to end it, and
+    /// its countdown runs out into a stale banner. On a cold launch no
+    /// session can be live, so anything ActivityKit still reports is an
+    /// orphan. Called once at launch (from `FocusBlockingService.init`,
+    /// which the app root creates at startup); a no-op once this run has
+    /// started an activity of its own.
+    func endOrphanedActivities() {
+        guard activity == nil else { return }
+        let orphans = Activity<FocusActivityAttributes>.activities
+        guard !orphans.isEmpty else { return }
+        log.debug("Ending \(orphans.count) orphaned focus Live Activities.")
+        for orphan in orphans {
+            Task {
+                await orphan.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+    }
+
     /// Starts a Live Activity for the given focus session if Live
     /// Activities are enabled. Safe to call when one is already
     /// running — it'll no-op so we don't stack duplicates.

@@ -31,6 +31,21 @@ import ManagedSettings
 final class FocusBlockingService {
     static let shared = FocusBlockingService()
 
+    /// THE one switch for Screen Time app blocking. `false` for v1:
+    /// Apple has not approved the Family Controls distribution
+    /// entitlement, so `com.apple.developer.family-controls` is not in
+    /// FrisFocus.entitlements and the feature ships invisible and inert —
+    /// no "Silence apps" rows or block-list sheets, no authorization
+    /// request, and no ManagedSettingsStore is ever created or touched.
+    /// The rest of Focus (timer, tree, Live Activity, groves) is
+    /// unaffected.
+    ///
+    /// To bring it back once Apple approves: (1) restore the
+    /// `com.apple.developer.family-controls` key in
+    /// FrisFocus.entitlements, (2) flip this to `true`. Nothing else was
+    /// removed.
+    static let isAvailable = false
+
     /// Where authorization currently stands. Drives the explainer /
     /// permission prompt and whether real shielding can take effect.
     enum AuthStatus: Equatable {
@@ -83,11 +98,24 @@ final class FocusBlockingService {
     }
     /// A private named store so our shield never collides with another
     /// app's Screen Time configuration.
-    private let managedStore = ManagedSettingsStore(named: .init("frisfocusFocus"))
+    /// `nil` while `isAvailable` is off, so nothing in ManagedSettings
+    /// is instantiated without the entitlement.
+    private let managedStore: ManagedSettingsStore? = FocusBlockingService.isAvailable
+        ? ManagedSettingsStore(named: .init("frisfocusFocus"))
+        : nil
     #endif
 
     init() {
         isEnabled = defaults.object(forKey: enabledKey) as? Bool ?? true
+        // This service is created once by the app root at launch, which
+        // makes it the launch hook for focus cleanup: a focus session
+        // never survives a relaunch, so any Live Activity still on the
+        // lock screen was orphaned by a kill or crash mid-block.
+        FocusActivityManager.shared.endOrphanedActivities()
+        guard Self.isAvailable else {
+            authStatus = .unavailable
+            return
+        }
         loadSelection()
         refreshAuthStatus()
     }
@@ -96,6 +124,7 @@ final class FocusBlockingService {
 
     /// How many distinct things are currently in the blocklist.
     var blockedItemCount: Int {
+        guard Self.isAvailable else { return 0 }
         #if canImport(FamilyControls)
         return selection.applicationTokens.count
             + selection.categoryTokens.count
@@ -137,6 +166,10 @@ final class FocusBlockingService {
     // MARK: - Authorization
 
     func refreshAuthStatus() {
+        guard Self.isAvailable else {
+            authStatus = .unavailable
+            return
+        }
         #if targetEnvironment(simulator)
         // Apple physically never shows the Screen Time prompt in the
         // simulator / browser preview — detected here properly instead
@@ -160,6 +193,10 @@ final class FocusBlockingService {
     /// - Returns: `true` when approval is held after the request.
     @discardableResult
     func requestAuthorization() async -> Bool {
+        guard Self.isAvailable else {
+            authStatus = .unavailable
+            return false
+        }
         #if targetEnvironment(simulator)
         authStatus = .unavailable
         return false
@@ -271,9 +308,9 @@ final class FocusBlockingService {
     /// disabled, empty, or unauthorized (the running screen still shows
     /// the silenced-apps summary).
     func beginShielding() {
-        guard isEnabled, hasSelection else { return }
+        guard Self.isAvailable, isEnabled, hasSelection else { return }
         #if canImport(FamilyControls)
-        guard canBlockForReal else { return }
+        guard canBlockForReal, let managedStore else { return }
         managedStore.shield.applications = selection.applicationTokens.isEmpty
             ? nil : selection.applicationTokens
         managedStore.shield.applicationCategories = selection.categoryTokens.isEmpty
@@ -289,10 +326,12 @@ final class FocusBlockingService {
     /// is ever left locked by accident.
     func endShielding() {
         #if canImport(FamilyControls)
-        managedStore.shield.applications = nil
-        managedStore.shield.applicationCategories = nil
-        managedStore.shield.webDomains = nil
-        managedStore.clearAllSettings()
+        if let managedStore {
+            managedStore.shield.applications = nil
+            managedStore.shield.applicationCategories = nil
+            managedStore.shield.webDomains = nil
+            managedStore.clearAllSettings()
+        }
         #endif
         isShielding = false
     }
@@ -309,6 +348,7 @@ final class FocusBlockingService {
     }
 
     private func saveSelection() {
+        guard Self.isAvailable else { return }
         #if canImport(FamilyControls)
         if let data = try? JSONEncoder().encode(selection) {
             defaults.set(data, forKey: selectionKey)

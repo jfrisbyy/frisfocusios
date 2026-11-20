@@ -5,17 +5,22 @@
 //  Build-time configuration. THIS FILE IS A TEMPLATE.
 //
 //  The real `Config.swift` lives at `ios-frisfocus/FrisFocus/Config.swift`
-//  and is git-ignored because it carries environment values. Generate it
+//  and IS TRACKED: it is the build platform's own file, committed with
+//  every value an empty string, and the real values are injected at iOS
+//  build time. To build locally against a real backend, overwrite it
 //  with:
 //
 //      scripts/bootstrap-config.sh
 //
 //  which reads the FRISFOCUS_* environment variables (falling back to the
-//  placeholders below) and writes the file into place.
+//  placeholders below) and writes the file into place. That dirties a
+//  tracked file, so discard it before committing:
 //
-//  Never edit the generated file by hand and never commit it — add new
-//  keys HERE and to `scripts/bootstrap-config.sh`, so a fresh clone and CI
-//  both keep building.
+//      git checkout -- ios-frisfocus/FrisFocus/Config.swift
+//
+//  Never commit a generated file carrying real values — add new keys HERE
+//  and to `scripts/bootstrap-config.sh`, so a fresh clone and CI both keep
+//  building.
 //
 //  NOTE: this template deliberately lives OUTSIDE the `FrisFocus/` folder.
 //  That folder is a PBXFileSystemSynchronizedRootGroup, so any `.swift`

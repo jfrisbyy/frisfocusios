@@ -10,7 +10,6 @@
 //
 
 import SwiftUI
-import AuthenticationServices
 
 struct ProfileSheetView: View {
     @Environment(\.dismiss) private var dismiss
@@ -109,14 +108,9 @@ struct ProfileSheetView: View {
             .padding(.top, 22)
 
             VStack(spacing: 12) {
-                SignInWithAppleButton(.continue) { request in
-                    request.requestedScopes = [.email, .fullName]
-                } onCompletion: { _ in
+                AppleSignInButton(style: .black, height: 52, cornerRadius: 14) {
                     Task { await auth.signIn(provider: "apple") }
                 }
-                .signInWithAppleButtonStyle(.black)
-                .frame(height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
                 .disabled(auth.isSigningIn)
 
                 googleButton

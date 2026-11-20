@@ -520,9 +520,9 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Capture a photo to share a moment from your day with friends or your circle.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Find friends from your contacts who are already on FrisFocus. Contacts are matched privately and never stored.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "FrisFocus uses your location to time the sun on your home page to your real sunrise and sunset.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "FrisFocus uses your location to time the sun on your home page to your real sunrise and sunset. If you turn on Near you, only your approximate area is shared to suggest people nearby.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "FrisFocus uses the microphone for the sound in your video proofs, voice memos, and talking through your season setup.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Your speech is transcribed on this device so you can talk through your season setup instead of typing.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Your speech is transcribed to text so you can talk through your season setup instead of typing.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save a photo or video from your day to your camera roll.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Pick a photo from your library for your profile or to share with friends.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
@@ -563,9 +563,9 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Capture a photo to share a moment from your day with friends or your circle.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Find friends from your contacts who are already on FrisFocus. Contacts are matched privately and never stored.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "FrisFocus uses your location to time the sun on your home page to your real sunrise and sunset.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "FrisFocus uses your location to time the sun on your home page to your real sunrise and sunset. If you turn on Near you, only your approximate area is shared to suggest people nearby.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "FrisFocus uses the microphone for the sound in your video proofs, voice memos, and talking through your season setup.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Your speech is transcribed on this device so you can talk through your season setup instead of typing.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Your speech is transcribed to text so you can talk through your season setup instead of typing.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save a photo or video from your day to your camera roll.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Pick a photo from your library for your profile or to share with friends.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
@@ -693,7 +693,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 1.0.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
-				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
+				INFOPLIST_KEY_CFBundleDisplayName = FrisFocus;
 			};
 			name = Release;
 		};
@@ -716,7 +716,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 1.0.0;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
-				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
+				INFOPLIST_KEY_CFBundleDisplayName = FrisFocus;
 			};
 			name = Debug;
 		};

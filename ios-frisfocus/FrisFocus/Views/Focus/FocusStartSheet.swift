@@ -78,13 +78,17 @@ struct FocusStartSheet: View {
 
                     inviteSection
 
-                    sectionHeader("Silence apps")
-                    if blocking.authStatus == .notDetermined {
-                        permissionCard
-                    } else {
-                        silenceRow
-                        if blocking.authStatus == .denied {
-                            deniedNote
+                    // Hidden entirely while Screen Time blocking is cut
+                    // from the build (FocusBlockingService.isAvailable).
+                    if FocusBlockingService.isAvailable {
+                        sectionHeader("Silence apps")
+                        if blocking.authStatus == .notDetermined {
+                            permissionCard
+                        } else {
+                            silenceRow
+                            if blocking.authStatus == .denied {
+                                deniedNote
+                            }
                         }
                     }
 

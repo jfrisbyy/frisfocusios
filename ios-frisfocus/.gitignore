@@ -21,8 +21,12 @@ xcuserdata/
 # Swift Package Manager
 .build/
 .swiftpm/
-# NOTE: Package.resolved is deliberately NOT ignored. Committing it pins
-# dependency versions so CI and every clone build the same thing.
+# NOTE: Package.resolved is deliberately NOT ignored, so that it CAN be
+# committed to pin dependency versions for CI and every clone. It has not
+# been committed yet: it is written by Xcode on the first package resolve
+# (FrisFocus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/) and has
+# to be committed from a machine with Xcode. Until then each build
+# resolves the newest versions the package rules allow.
 
 # macOS
 .DS_Store
