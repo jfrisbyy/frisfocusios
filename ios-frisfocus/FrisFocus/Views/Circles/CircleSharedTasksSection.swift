@@ -10,10 +10,10 @@
 //  "circle only · tap to link"), and a right-aligned done/hollow
 //  glyph.
 //
-//  Parent (CircleDetailView) owns the circle and supplies a closure
-//  for "tap to link", which navigates to the C5 picker once that
-//  lands; until then the closure presents a placeholder so the seam
-//  reads cleanly.
+//  Parent (CircleDetailView) owns the circle and supplies the closures:
+//  "tap to link" opens the task-linking picker (TaskLinkingPickerView)
+//  for that circle task, and press-and-hold starts a story capture for
+//  it.
 //
 
 import SwiftUI

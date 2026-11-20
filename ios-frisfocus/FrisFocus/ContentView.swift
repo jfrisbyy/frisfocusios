@@ -253,6 +253,13 @@ struct ContentView: View {
                     .onAppear { presentedClosingPactID = pact.id }
             }
             .task(id: auth.user?.id) {
+                // Media uploads read the access token straight from the
+                // Keychain, and nothing refreshed it between foregrounds —
+                // an upload started late in a long session went out with
+                // an expired token and came back 401. This hands the
+                // upload client the same refresh the foreground uses.
+                let authManager = auth
+                StorageUploadClient.refreshAuth = { await authManager.refreshSessionIfExpiringSoon() }
                 // Keep the user's own editable profile (custom name,
                 // @username, photo) in sync with who is signed in, and tell
                 // the notification manager who owns this device's token.

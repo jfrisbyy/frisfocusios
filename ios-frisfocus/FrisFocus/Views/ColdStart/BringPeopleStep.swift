@@ -47,7 +47,11 @@ struct BringPeopleStep: View {
 
     private var shareMessage: String {
         let link = inviteURL?.absoluteString ?? ""
-        return "I'm keeping an honest record of my days on FrisFocus. Watch my sun rise — and let me watch yours: \(link)"
+        let base = "I'm keeping an honest record of my days on FrisFocus. Watch my sun rise — and let me watch yours: \(link)"
+        // With a @username claimed, say it: the invite then works even
+        // if the link's landing page doesn't render (InviteLink.addMeLine).
+        guard let handle = profileStore.myProfile?.handle else { return base }
+        return "\(base)\n\(InviteLink.addMeLine(handle: handle))"
     }
 
     private var visibleResults: [RemoteProfile] {

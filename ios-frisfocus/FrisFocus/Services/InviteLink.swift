@@ -14,6 +14,14 @@
 //  lands identically whether the app was cold-launched or foregrounded.
 //  Pure value helpers — safe to call from anywhere.
 //
+//  The link is not the whole invite. The landing page is served from
+//  the project's default Supabase domain, which does not reliably
+//  render HTML (it can arrive as plain text), and a recipient without
+//  the app cannot follow the custom scheme at all. So the words that
+//  travel with the link have to work on their own: `addMeLine` puts the
+//  sender's @username in the message itself, which is the one thing a
+//  recipient can always act on — install, open Friends, search it.
+//
 
 import Foundation
 
@@ -46,6 +54,28 @@ enum InviteLink {
         var components = URLComponents(string: "\(functionsBase)/functions/v1/invite")
         components?.queryItems = [URLQueryItem(name: "u", value: userId)]
         return components?.url
+    }
+
+    /// "Add me on FrisFocus: @username" — the line of an invite that
+    /// still works when the link does not. Accepts the handle with or
+    /// without its "@". With no username claimed yet there is nothing
+    /// to search for, so it falls back to the bare ask and the link
+    /// carries the invite alone.
+    nonisolated static func addMeLine(handle: String?) -> String {
+        let trimmed = (handle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "@" else { return "Add me on FrisFocus" }
+        let tagged = trimmed.hasPrefix("@") ? trimmed : "@\(trimmed)"
+        return "Add me on FrisFocus: \(tagged)"
+    }
+
+    /// The complete invite as text — the add-me line, then the link —
+    /// for surfaces that compose the whole message themselves (a text
+    /// message body, copy-to-clipboard). Share sheets that already
+    /// attach the URL as their item should send `addMeLine` alone.
+    nonisolated static func shareText(handle: String?, userId: String) -> String {
+        let line = addMeLine(handle: handle)
+        guard let link = webURL(forUserId: userId)?.absoluteString else { return line }
+        return "\(line)\n\(link)"
     }
 
     /// Extract the invited account id from an incoming URL, or nil when

@@ -1,0 +1,26 @@
+-- People discovery has been failing since profiles were locked down.
+--
+-- 20260906000001 replaced the table-wide SELECT on `profiles` with an
+-- explicit column allow-list and left `is_test` off it, on the reasoning
+-- that "the iOS client never selects any of them". It does not SELECT
+-- it — but `DiscoverService` FILTERS on it (`.eq("is_test", false)`) in
+-- all three of its direct queries: the newest-members tier, the
+-- friends-of-friends lookup, and "Near you". Postgres requires SELECT on
+-- every column a query references, including in WHERE, so each of those
+-- has been refused outright:
+--
+--     ERROR 42501: permission denied for table profiles
+--
+-- (confirmed against the live database as role `authenticated`). The
+-- service catches the error and logs it — "discovery is an enhancement,
+-- never a blocker" — so the visible symptom is only that suggestions and
+-- "Near you" are always empty. Search still worked, because it goes
+-- through the `search_people` RPC.
+--
+-- The fix is the one column. `is_test` says only that a row is one of
+-- the seeded development accounts, which every discovery surface is
+-- already trying to hide; a member being able to tell which rows those
+-- are gives away nothing about a real person. `email` and `season_card`
+-- stay off the list, which is what the lock-down was actually for.
+
+grant select (is_test) on public.profiles to authenticated;

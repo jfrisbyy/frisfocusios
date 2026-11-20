@@ -189,8 +189,9 @@ $function$;
 
 -- 3. A suspended account is not discoverable ---------------------------
 --
--- The four discovery RPCs, each re-stated from its current definition
--- (20260906000011 and the live `search_people`) with one added filter.
+-- The discovery RPCs, each re-stated from its current definition
+-- (20260906000011, and the live `search_people` / `filter_not_blocked`)
+-- with one added filter.
 -- CREATE OR REPLACE keeps the existing EXECUTE grants from
 -- 20260906000012.
 
@@ -255,6 +256,29 @@ as $function$
     )
   ORDER BY c.created_at DESC
   LIMIT 50;
+$function$;
+
+-- The suggestion lists ("people you may know", "near you") read
+-- `profiles` directly and then pass their candidates through this RPC to
+-- drop anyone with a block in either direction. It is the one server-side
+-- gate those lists already go through, so it is where a suspended
+-- account is dropped from them too — with no client change. Same body as
+-- the live function plus the last condition.
+create or replace function public.filter_not_blocked(candidate_ids text[])
+returns text[]
+language sql
+stable
+security definer
+set search_path to 'public'
+as $function$
+  select coalesce(array_agg(cid), '{}'::text[])
+  from unnest(candidate_ids) as cid
+  where not exists (
+    select 1 from blocks b
+    where (b.blocker_id = cid and b.blocked_id = user_id())
+       or (b.blocker_id = user_id() and b.blocked_id = cid)
+  )
+  and not is_suspended(cid);
 $function$;
 
 create or replace function public.match_contacts(p_emails text[], p_phone_hashes text[])

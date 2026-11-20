@@ -102,14 +102,14 @@ struct MemberListSheet: View {
     @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
 
-    /// The non-friend member picked for "Report or block", if any.
-    @State private var safetyMember: RemoteProfile?
-    @State private var reportTarget: ReportTarget?
-
     var title: String = "Members"
     let memberIds: [UUID]
     /// Called once the sheet has dismissed, with the chosen person.
     let onSelect: (ProfileTarget) -> Void
+
+    /// The non-friend member picked for "Report or block", if any.
+    @State private var safetyMember: RemoteProfile?
+    @State private var reportTarget: ReportTarget?
 
     var body: some View {
         ZStack {

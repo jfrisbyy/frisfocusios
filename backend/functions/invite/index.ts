@@ -14,6 +14,21 @@
 //
 // GET /functions/v1/invite?u=<accountId>
 // Deployed public (no JWT) — it serves plain HTML to logged-out browsers.
+//
+// ON THE DEFAULT *.supabase.co DOMAIN THIS MAY NOT RENDER. Supabase
+// serves edge-function HTML from the project's default domain as
+// text/plain, so a recipient can be shown this document's source
+// instead of the page. Two things keep the invite working anyway:
+//
+//   * The document opens with a short plain-language comment — who the
+//     invite is from, their @username, and how to add them — so the
+//     first thing a person reads in the raw text is the invite itself.
+//   * The app puts "Add me on FrisFocus: @username" in the shared
+//     message (InviteLink.addMeLine), so the words travelling with the
+//     link are enough on their own.
+//
+// A properly rendered page needs a custom domain on the project, or the
+// page hosted somewhere static. See backend/OPERATIONS.md.
 
 const SCHEME = "frisfocus";
 const HOST = "add-friend";
@@ -32,6 +47,13 @@ function esc(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/** Text for inside an HTML comment: nothing that reads as markup, and
+ *  no run of hyphens that could close the comment early. Not `esc()` —
+ *  this is meant to be read as plain text, where entities are noise. */
+function commentSafe(s: string): string {
+  return s.replace(/[<>]/g, "").replace(/-{2,}/g, "-");
 }
 
 interface Inviter {
@@ -111,7 +133,39 @@ function page(userId: string | null, inviter: Inviter, pageURL: string): string 
     ? `<img class="avatar" src="${esc(avatar)}" alt="" />`
     : `<div class="sun" aria-hidden="true"></div>`;
 
-  return `<!doctype html>
+  // What a person reads first if this arrives as text instead of a
+  // page (see the note at the top of the file). A comment ahead of the
+  // doctype is valid HTML and invisible when the page does render.
+  const who = name
+    ? `${name}${username ? ` (@${username})` : ""}`
+    : username
+      ? `@${username}`
+      : "A friend";
+  const plainLines = valid
+    ? [
+        "FrisFocus invite",
+        "",
+        `${who} wants to add you on FrisFocus.`,
+        "",
+        "Reading this as plain text? The page did not load properly, but the invite still works:",
+        username
+          ? `  - Open FrisFocus, go to Circles, then Friends, and search for @${username}.`
+          : "  - Open FrisFocus, go to Circles, then Friends, and search for your friend by name.",
+        INSTALL_URL ? `  - No app yet? Get FrisFocus here: ${INSTALL_URL}` : "",
+      ]
+    : [
+        "FrisFocus invite",
+        "",
+        "This invite link is missing its code. Ask your friend to share it again from inside FrisFocus.",
+      ];
+  const plainPreamble = `<!--\n${
+    plainLines
+      .filter((line, index) => line.length > 0 || index < plainLines.length - 1)
+      .map(commentSafe)
+      .join("\n")
+  }\n-->\n`;
+
+  return `${plainPreamble}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />

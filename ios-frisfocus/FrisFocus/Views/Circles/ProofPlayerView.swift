@@ -496,3 +496,24 @@ private struct ProofVideoLayer: UIViewRepresentable {
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
     }
 }
+
+// MARK: - Shared formatting helpers
+
+/// Elapsed-time copy shared by the proof player and the proofs inbox.
+/// Lived in the old `DirectInboxView` — the local-only inbox this
+/// player and `ProofsInboxView` replaced — and moved here, to its
+/// remaining user, when that screen was removed.
+nonisolated enum DirectShareFormat {
+    /// "just now" / "12 min ago" / "3 hr ago" / "2 d ago" — warmth of
+    /// elapsed time rather than a countdown, matching the story player.
+    static func elapsed(from date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 60 { return "just now" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes) min ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours) hr ago" }
+        let days = hours / 24
+        return days == 1 ? "1 d ago" : "\(days) d ago"
+    }
+}

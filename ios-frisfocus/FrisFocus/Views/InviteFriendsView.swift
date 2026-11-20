@@ -28,11 +28,10 @@ struct InviteFriendsView: View {
     }
     private var handle: String? { profileStore.myProfile?.handle }
 
+    /// Leads with the @username so the invite still works if the link's
+    /// landing page doesn't render — see `InviteLink.addMeLine`.
     private var shareMessage: String {
-        if let handle {
-            return "I'm on FrisFocus as \(handle) — add me and let's keep each other going."
-        }
-        return "I'm on FrisFocus — add me and let's keep each other going."
+        "\(InviteLink.addMeLine(handle: handle)) — let's keep each other going."
     }
 
     var body: some View {

@@ -295,6 +295,22 @@ struct CirclesView: View {
             }
             .onChange(of: someoneElsesStoryIsWatchable) { _, _ in maybeFireStoryLesson() }
             .task { await loadMessages() }
+            // A suspension can land while the app is open, so it is read
+            // again on each visit to the social room, not only at launch.
+            .task {
+                if let myId = auth.user?.id {
+                    await moderation.loadSuspension(myUserId: myId)
+                }
+            }
+            // The server already refuses a suspended account's posts,
+            // messages and requests. This covers the room so that reads
+            // as a stated fact with a way to appeal, rather than as a
+            // page where every action quietly fails.
+            .overlay {
+                if moderation.isSuspended {
+                    AccountSuspendedView(reason: moderation.suspensionReason)
+                }
+            }
         }
     }
 

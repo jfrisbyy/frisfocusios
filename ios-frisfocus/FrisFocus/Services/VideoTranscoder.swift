@@ -20,7 +20,13 @@ nonisolated enum VideoTranscoder {
     /// Hard ceiling for a single proof upload, applied *after*
     /// compression. A clip that still exceeds this is refused with a
     /// friendly message rather than silently burning someone's data plan.
-    static let maxUploadBytes: Int = 60 * 1024 * 1024
+    ///
+    /// 45 MB, not more: Supabase's project-wide upload limit is 50 MB
+    /// on the free plan and it overrides the per-bucket ceilings, so
+    /// anything between that and the old 60 MB cap passed this check,
+    /// uploaded in full, and was then refused by the server. The margin
+    /// below 50 leaves room for request overhead.
+    static let maxUploadBytes: Int = 45 * 1024 * 1024
 
     /// Re-encode the clip at `sourceURL` to capped-quality H.264 .mp4,
     /// optimized for network streaming. Returns the new temporary file

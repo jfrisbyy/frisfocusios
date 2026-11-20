@@ -663,6 +663,11 @@ extension SocialSyncService {
                     )
                 } catch StorageUploadError.badResponse(let status) where status == 409 {
                     // Already in the bucket from a previous attempt.
+                    // Storage reports a duplicate as a plain 409 on some
+                    // releases and as a 400 with "Duplicate" in the body
+                    // on others; the upload client folds both into 409,
+                    // so a retry after a half-finished post lands here
+                    // either way instead of failing forever.
                 }
                 mediaPath = path
                 mediaKind = asset.type.rawValue
