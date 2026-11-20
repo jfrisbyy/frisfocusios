@@ -19,10 +19,22 @@ class AuthManager {
     var isSigningIn = false
     var showError = false
     var errorMessage = ""
+    /// Heading for the error alert. Not every failure is a sign-in: a
+    /// failed account deletion used to appear under "Sign in failed".
+    var errorTitle = "Sign in failed"
     /// True when the session was ended WITHOUT the user asking — the
     /// refresh token was rejected by the auth server. The home shows a
     /// visible "sign back in" banner instead of silently looking empty.
     var sessionExpired = false
+    /// True while a sign-out or account deletion is finishing (pushing
+    /// unsent edits, then clearing the device). Lets the account screen
+    /// disable its buttons instead of accepting a second tap.
+    var isEndingSession = false
+
+    /// Decides — and carries out — what happens to the account data on
+    /// this device when a session begins or ends. The root view attaches
+    /// the Store and sync services to it once they exist.
+    let accountData = AccountDataCoordinator()
 
     private let authURL = Config.EXPO_PUBLIC_RORK_AUTH_URL
     private let appKey = Config.EXPO_PUBLIC_RORK_APP_KEY
@@ -151,6 +163,7 @@ class AuthManager {
 
         if let accessToken = KeychainHelper.get("access_token"),
            let user = userFromToken(accessToken) {
+            accountData.prepareLocalData(forUserId: user.id)
             self.user = user
             Log.auth.sensitive("checkAuth: restored session from access token, user=\(user.id)")
             syncProfile(user)
@@ -345,6 +358,10 @@ class AuthManager {
             KeychainHelper.set("access_token", value: tokenResponse.access_token)
             KeychainHelper.set("refresh_token", value: tokenResponse.refresh_token)
 
+            // Before anything can observe the new session: if this
+            // device is in the demo or holds another account's data,
+            // clear it now, so no sync service ever starts on top of it.
+            accountData.prepareLocalData(forUserId: tokenResponse.user.id)
             user = tokenResponse.user
             sessionExpired = false
             syncProfile(tokenResponse.user)
@@ -379,8 +396,7 @@ class AuthManager {
                     // token — the session is over. Sign out, but say so
                     // visibly instead of silently looking empty.
                     Log.auth.error("refreshToken: refresh rejected (\(code)) — signing out, flagging expiry")
-                    await signOut()
-                    sessionExpired = true
+                    await expireSession()
                 } else {
                     // Server hiccup (5xx) — keep the stored tokens and
                     // retry on the next foreground instead of destroying
@@ -394,6 +410,9 @@ class AuthManager {
             KeychainHelper.set("access_token", value: refreshResponse.access_token)
 
             let refreshedUser = userFromToken(refreshResponse.access_token)
+            if let refreshedUser {
+                accountData.prepareLocalData(forUserId: refreshedUser.id)
+            }
             user = refreshedUser
             if let refreshedUser {
                 Log.auth.sensitive("refreshToken: session refreshed, user=\(refreshedUser.id)")
@@ -444,8 +463,60 @@ class AuthManager {
         await refreshToken()
     }
 
+    /// Sign out because the person asked to.
+    ///
+    /// Unsent edits get one bounded chance to upload first. Then the
+    /// device is wiped back to first-run — the account is the source of
+    /// truth for a signed-in person, and data left behind here was being
+    /// uploaded into the NEXT account to sign in on this phone. If
+    /// something could not be uploaded (offline, a failed request, proof
+    /// media waiting for Wi-Fi), the data is kept on disk behind the
+    /// first-run cover rather than destroyed; see
+    /// `AccountDataCoordinator`.
     @MainActor
     func signOut() async {
+        guard !isEndingSession else { return }
+        isEndingSession = true
+        defer { isEndingSession = false }
+
+        // While the token still works: push what the account is missing
+        // and decide the fate of the on-device data.
+        let disposition = await accountData.sessionWillEnd(.userSignOut)
+
+        // PUSH-TOKEN-CLEANUP-HOOK
+        // (must run here — after the final flush, BEFORE the session
+        // token is cleared below)
+
+        clearSession(disposition)
+    }
+
+    /// End a session the auth server ended for us (refresh token
+    /// rejected). Nobody asked to leave, so nothing on the device is
+    /// touched: the home says "sign back in" and the same person picks
+    /// up where they were. If someone ELSE signs in instead, their
+    /// sign-in wipes the device first.
+    @MainActor
+    private func expireSession() async {
+        guard !isEndingSession else { return }
+        isEndingSession = true
+        defer { isEndingSession = false }
+
+        let disposition = await accountData.sessionWillEnd(.sessionExpired)
+
+        // PUSH-TOKEN-CLEANUP-HOOK
+        // (expired-session path: the access token is already rejected
+        // here, so only cleanup that needs no valid session can work)
+
+        clearSession(disposition)
+        sessionExpired = true
+    }
+
+    /// The part every session ending shares: tokens, onboarding
+    /// residue, the on-device data per `disposition`, then the
+    /// signed-out state itself — in that order, so nothing observing
+    /// `user` ever sees a signed-out app that still shows the data.
+    @MainActor
+    private func clearSession(_ disposition: LocalDataDisposition) {
         KeychainHelper.delete("access_token")
         KeychainHelper.delete("refresh_token")
         UserDefaults.standard.removeObject(forKey: "RORK_AUTH_REFRESH_TOKEN")
@@ -458,28 +529,44 @@ class AuthManager {
         // question the PREVIOUS person had been asked, verbatim.
         SeasonSetupResumeStore.clear()
         OnboardingProgress.clear()
+        accountData.sessionDidEnd(disposition)
         user = nil
         sessionExpired = false
     }
 
     /// Permanently erase all of the user's data via the `delete-account`
-    /// edge function, then sign out locally. Returns true on success.
+    /// edge function, then erase it from this device too and return to
+    /// first-run. Returns true on success. Nothing is uploaded on the
+    /// way out — the account no longer exists to receive it — and
+    /// nothing is left behind to be re-uploaded if the same person
+    /// signs in again.
     @MainActor
     func deleteAccount() async -> Bool {
+        guard !isEndingSession else { return false }
+        isEndingSession = true
+        defer { isEndingSession = false }
         do {
             let _: DeleteAccountResponse = try await supabase.functions.invoke(
                 "delete-account",
                 options: .init(method: .post)
             )
-            await signOut()
-            return true
         } catch {
-            setError("Couldn't delete your account. Please try again.")
+            setError("Couldn't delete your account. Please try again.", title: "Couldn't delete account")
             return false
         }
+
+        let disposition = await accountData.sessionWillEnd(.accountDeleted)
+
+        // PUSH-TOKEN-CLEANUP-HOOK
+        // (must run here — BEFORE the session token is cleared below;
+        // note the account itself is already deleted server-side)
+
+        clearSession(disposition)
+        return true
     }
 
-    private func setError(_ message: String) {
+    private func setError(_ message: String, title: String = "Sign in failed") {
+        errorTitle = title
         errorMessage = message
         showError = true
     }

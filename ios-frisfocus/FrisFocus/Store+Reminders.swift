@@ -64,6 +64,18 @@ extension Store {
         }
     }
 
+    /// Remove every notification this device has queued or already
+    /// shown. All of them are built from account data (the plan,
+    /// milestones, groves, events, what friends sent), so none may
+    /// outlive a wipe or fire while the data is put away signed-out.
+    func cancelAllAccountNotifications() {
+        planReminderRefreshTask?.cancel()
+        planReminderRefreshTask = nil
+        let center = UNUserNotificationCenter.current()
+        center.removeAllPendingNotificationRequests()
+        center.removeAllDeliveredNotifications()
+    }
+
     /// Debounced entry point — safe to call from any mutation path.
     func schedulePlanReminderRefresh() {
         planReminderRefreshTask?.cancel()

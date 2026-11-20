@@ -189,6 +189,11 @@ final class GoldenHourService {
     var uploadProgress: Double?
     var errorMessage: String?
     var showError = false
+    /// True when iOS will not deliver this device's Golden Hour alerts —
+    /// notifications are switched off for the app. The settings sheet
+    /// shows an inline hint while this is set, so "everyone gets pinged"
+    /// is never promised to someone whose phone will stay silent.
+    var alertsBlocked = false
 
     /// Turns-mode picks keyed by "circleId#day".
     @ObservationIgnored private var picks: [String: GoldenHourPick] = [:]
@@ -658,6 +663,35 @@ final class GoldenHourService {
                 await ProofMediaCache.download(from: url, forMediaPath: target.path, kind: target.kind)
             }
         }
+    }
+
+    // MARK: Alert permission
+
+    /// Re-read whether iOS will deliver Golden Hour's alerts.
+    func refreshAlertPermission() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        alertsBlocked = settings.authorizationStatus == .denied
+    }
+
+    /// Called at the moment someone switches Golden Hour on for a circle.
+    ///
+    /// The whole feature is a local alert at one exact instant, and until
+    /// now nothing here ever asked for the permission that alert needs —
+    /// it worked only for people who had happened to accept the home's
+    /// prime card. Turning Golden Hour on is the honest moment to ask: if
+    /// the OS dialog has never been shown, show it now; either way, learn
+    /// the answer so the sheet can say when alerts are off.
+    func ensureAlertPermission() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        if settings.authorizationStatus == .notDetermined {
+            let granted = await NotificationManager.requestSystemAuthorization()
+            if granted {
+                // Anything scheduled before the answer was yes may have
+                // been dropped; lay the alerts down again.
+                rescheduleFireNotifications()
+            }
+        }
+        await refreshAlertPermission()
     }
 
     // MARK: Local notifications

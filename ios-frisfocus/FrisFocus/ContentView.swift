@@ -10,7 +10,15 @@
 //  Presents the ONE onboarding cover (FirstRunIntroView) whenever the
 //  flow needs to run: a brand-new install, resumed post-commit beats,
 //  or the forever fork-landing for any authenticated person with no
-//  season. The real home is unreachable without a session + a season.
+//  season. The home is reachable signed-out in exactly two states: the
+//  clearly-marked demo sandbox, and an EXPIRED session (the person's
+//  data stays, under a "sign back in" banner). A deliberate sign-out or
+//  an account deletion never leaves the home up — the device's account
+//  data is wiped (or put away) and the first-run cover returns.
+//
+//  This is also where the session's data hooks are wired: the Store and
+//  sync services are handed to `auth.accountData`, which makes the
+//  device safe for whoever signs in before any sync starts.
 //
 //  No OS permission dialogs at startup — notifications are offered via
 //  a soft prime card only after something deliverable actually arrives.
@@ -49,15 +57,31 @@ struct ContentView: View {
     @State private var showSeasonSetupFromComplete: Bool = false
     @State private var showExitDemoDialog: Bool = false
 
-    /// True when a signed-in account has finished (or exhausted) its
-    /// cloud restore and still has no season — the fork is the landing,
-    /// forever, for this state.
+    /// True when a signed-in account's cloud restore has SUCCEEDED and
+    /// it still has no season — the fork is the landing, forever, for
+    /// this state. A restore that merely gave up (offline, a slow
+    /// network) does not count: "no season" is not a fact until the
+    /// cloud has answered, and offering "build a new season" on that
+    /// evidence is how a real cloud season used to get replaced.
     private var forkLandingActive: Bool {
         auth.user != nil
             && store.appMode == .clean
             && store.needsSeasonSetup
             && seasonSync.hasAttemptedRestore
             && !seasonSync.isRestoring
+            && seasonSync.restoreSucceeded
+    }
+
+    /// True when a signed-in account has no season on this device and
+    /// the cloud could not be reached to ask — the home offers a retry
+    /// instead of the fork.
+    private var restoreStalled: Bool {
+        auth.user != nil
+            && store.appMode == .clean
+            && store.needsSeasonSetup
+            && seasonSync.hasAttemptedRestore
+            && !seasonSync.isRestoring
+            && !seasonSync.restoreSucceeded
     }
 
     /// True while the onboarding flow should cover the home. The setter
@@ -104,6 +128,12 @@ struct ContentView: View {
                         CloudRestoreBanner()
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
+                    if restoreStalled {
+                        CloudRestoreFailedBanner {
+                            Task { await seasonSync.retryRestore() }
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                     if store.appMode == .demo {
                         DemoModePill { showExitDemoDialog = true }
                             .transition(.move(edge: .top).combined(with: .opacity))
@@ -127,6 +157,12 @@ struct ContentView: View {
             }
             // One presenter above home/social navigation AND root banners.
             .profileQuickCard(isPresented: $showProfileSheet)
+            // A wipe (sign-out, account deletion, leaving the demo, a
+            // different person signing in) rebuilds everything above:
+            // no screen, sheet, or piece of view state made from the
+            // previous data survives it, and any sheet still up over the
+            // home is dismissed so the first-run cover can present.
+            .id(store.accountDataEpoch)
             .animation(.easeInOut(duration: 0.3), value: store.appMode)
             .animation(.easeInOut(duration: 0.3), value: seasonSync.isRestoring)
             .confirmationDialog(
@@ -222,6 +258,25 @@ struct ContentView: View {
                 // the notification manager who owns this device's token.
                 if let myId = auth.user?.id {
                     Log.app.sensitive("startup: signed in as user=\(myId) — loading account data")
+                    // FIRST, before any service below can pull or push:
+                    // make the device safe for this account. Demo sample
+                    // data and another account's leftovers are wiped
+                    // here, so the only local content a sign-in can ever
+                    // upload is content made by nobody (pre-sign-in
+                    // onboarding) or by this same person. Synchronous —
+                    // nothing else runs until it returns. (The auth
+                    // layer already did this for an interactive sign-in;
+                    // this covers a session restored at launch, before
+                    // the Store was attached. It is idempotent.)
+                    attachAccountData()
+                    let modeBefore = store.appMode
+                    auth.accountData.prepareLocalData(forUserId: myId)
+                    if store.appMode != modeBefore {
+                        // The home's state was just wiped out from under
+                        // it — nothing presented over it may linger.
+                        showProfileSheet = false
+                        showExitDemoDialog = false
+                    }
                     notifications.setUserId(myId)
                     // A session exists, so anything the funnel recorded
                     // before sign-in can finally go up.
@@ -293,7 +348,21 @@ struct ContentView: View {
                     await cadence.refresh(myUserId: nil)
                 }
             }
+            .onChange(of: store.accountDataEpoch) { _, _ in
+                // The device's account data was just wiped or put away.
+                // Root-level presentation state belongs to the data that
+                // is gone.
+                showProfileSheet = false
+                showExitDemoDialog = false
+                closingPact = nil
+                presentedClosingPactID = nil
+                pendingInvite = nil
+            }
             .onAppear {
+                // Hand the Store and sync services to the auth layer's
+                // account-data coordinator before anything can sign in,
+                // sign out, or delete an account.
+                attachAccountData()
                 Log.app.debug("Tasks: \(store.tasks.count), To-dos: \(store.todos.count), Notes: \(store.notes.count), LogEntries: \(store.logEntries.count)")
                 // MetricKit hands over the *previous* run's crashes and
                 // hangs, so this has to be subscribed before anything
@@ -392,6 +461,23 @@ struct ContentView: View {
                     }
                 }
             }
+    }
+}
+
+// MARK: - Account data hooks
+
+extension ContentView {
+    /// Give the auth layer's coordinator the objects it acts on. Cheap
+    /// and repeatable — the references never change for the life of
+    /// the app.
+    fileprivate func attachAccountData() {
+        auth.accountData.attach(
+            store: store,
+            seasonSync: seasonSync,
+            notesSync: notesSync,
+            proofLibrarySync: proofLibrarySync,
+            socialSync: socialSync
+        )
     }
 }
 

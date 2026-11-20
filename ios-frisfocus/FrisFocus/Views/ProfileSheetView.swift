@@ -51,7 +51,7 @@ struct ProfileSheetView: View {
             }
             .toolbarBackground(Theme.warmWheat, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
-            .alert("Sign in failed", isPresented: $auth.showError) {
+            .alert(auth.errorTitle, isPresented: $auth.showError) {
                 Button("OK") { }
             } message: {
                 Text(auth.errorMessage)
@@ -414,7 +414,9 @@ struct ProfileSheetView: View {
             Button {
                 Task { await auth.signOut() }
             } label: {
-                Text("Sign out")
+                // Sign-out first pushes any unsent edits, which can take
+                // a few seconds — say so, and don't accept a second tap.
+                Text(auth.isEndingSession ? "Signing out…" : "Sign out")
                     .font(.sans(15, weight: .medium))
                     .foregroundStyle(Theme.alertRed)
                     .frame(maxWidth: .infinity)
@@ -422,6 +424,7 @@ struct ProfileSheetView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(auth.isEndingSession)
 
             Button {
                 UIImpactFeedbackGenerator(style: .rigid).impactOccurred()

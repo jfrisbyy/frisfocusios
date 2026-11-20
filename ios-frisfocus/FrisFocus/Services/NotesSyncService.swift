@@ -129,6 +129,12 @@ final class NotesSyncService {
     /// Begin syncing for the signed-in user. Idempotent per user id.
     func start(myUserId: String, store: Store) async {
         if self.myUserId == myUserId, self.store === store { return }
+        // The demo sandbox's sample notes must never reach an account.
+        // The sign-in path leaves demo first; this is the backstop.
+        guard store.appMode != .demo else {
+            Log.notesSync.error("start refused — demo content never syncs")
+            return
+        }
         self.myUserId = myUserId
         self.store = store
         store.notesSync = self
@@ -141,10 +147,15 @@ final class NotesSyncService {
         // backup before we are ever allowed to upload. Retries on
         // failure so a network hiccup never blanks the journal out.
         await restoreFromCloud()
+        // Signed out (or switched accounts) while the restore was in
+        // flight — nothing below may run for the session that ended.
+        guard self.myUserId == myUserId else { return }
 
         // First sync for this account on this install: queue every
         // local note + folder so existing journal history migrates up.
-        // A fresh install has none, so nothing is queued.
+        // A fresh install has none, so nothing is queued. (Whatever is
+        // on the device at this point is this person's or nobody's —
+        // another account's data is wiped before sync ever starts.)
         if isFirstSync {
             pendingFolderIds.formUnion(store.folders.map(\.id))
             pendingNoteIds.formUnion(store.notes.map(\.id))
@@ -155,12 +166,45 @@ final class NotesSyncService {
         await flushNow()
     }
 
-    /// Stop syncing on sign-out. Local journal data stays put — notes
-    /// existed before sign-in and remain personal to this device.
+    /// Stop syncing when the session ends. What happens to the local
+    /// journal is decided by the caller: a deliberate sign-out or an
+    /// account deletion wipes it, an expired session leaves it.
     func stop() {
         flushDebounce?.cancel()
         flushDebounce = nil
         myUserId = nil
+        restoreConfirmed = false
+    }
+
+    /// Whether the cloud restore has succeeded this session (uploads
+    /// are gated on it).
+    var isRestoreConfirmed: Bool { restoreConfirmed }
+
+    /// Whether this device may hold journal data the account does not
+    /// have yet — queued work, or a session whose restore never
+    /// succeeded (so nothing local has been compared with the cloud).
+    /// Asked before a sign-out wipes the device.
+    var hasUnsyncedChanges: Bool {
+        if !pendingNoteIds.isEmpty || !pendingFolderIds.isEmpty { return true }
+        if !pendingNoteDeletes.isEmpty || !pendingFolderDeletes.isEmpty { return true }
+        if restoreConfirmed { return false }
+        guard let store else { return false }
+        return !store.notes.isEmpty || !store.folders.isEmpty
+    }
+
+    /// Stop, and forget every queue held in memory. Called when the
+    /// device's account data is being wiped, so nothing queued for one
+    /// account can ever be replayed under another. (The persisted
+    /// queues are removed by the Store wipe.)
+    func discardLocalState() {
+        stop()
+        store?.notesSync = nil
+        store = nil
+        pendingNoteIds = []
+        pendingNoteDeletes = [:]
+        pendingFolderIds = []
+        pendingFolderDeletes = []
+        uploadedMedia = []
     }
 
     // MARK: Up-sync hooks (called by Store mutations)
@@ -215,6 +259,8 @@ final class NotesSyncService {
     private func restoreFromCloud() async {
         for attempt in 0..<5 {
             if await pullRemote() { return }
+            // Signed out mid-restore — stop retrying for nobody.
+            guard myUserId != nil else { return }
             try? await Task.sleep(for: .seconds(Double(attempt + 1)))
         }
         Log.notesSync.debug("restore could not reach cloud after retries; uploads stay gated")
@@ -240,6 +286,11 @@ final class NotesSyncService {
                 .eq("user_id", value: myUserId)
                 .execute()
                 .value
+
+            // The session these rows were fetched for ended while the
+            // request was in flight (sign-out, account switch, a device
+            // wipe). They must never land in the Store now.
+            guard self.myUserId == myUserId else { return false }
 
             Log.notesSync.sensitive("pull for user=\(myUserId): \(folderRows.count) folder(s), \(noteRows.count) note(s)")
             var changed = false
@@ -551,6 +602,15 @@ final class NotesSyncService {
     // MARK: Queue persistence
 
     private func loadQueues() {
+        // Fresh in-memory slate first — these queues are not namespaced
+        // per account, so nothing may carry over in memory either.
+        pendingNoteIds = []
+        pendingNoteDeletes = [:]
+        pendingFolderIds = []
+        pendingFolderDeletes = []
+        uploadedMedia = []
+        restoreConfirmed = false
+
         let defaults = UserDefaults.standard
         let decoder = JSONDecoder()
         if let data = defaults.data(forKey: Keys.pendingNotes),

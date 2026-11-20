@@ -59,6 +59,13 @@ final class Store {
     /// sample sandbox. Drives the intro cover and the demo marker.
     var appMode: AppMode = .uninitialized
 
+    /// Bumped every time this device's account data is wiped or put
+    /// away (sign-out, account deletion, leaving the demo, a different
+    /// person signing in). The root view keys the home on it, so every
+    /// screen, sheet, and piece of view state built from the previous
+    /// data is torn down rather than left showing it. Never persisted.
+    var accountDataEpoch: Int = 0
+
     /// True only on a brand-new install that hasn't chosen a path yet —
     /// the welcome intro is shown over the home while this holds.
     var needsFirstRunIntro: Bool { appMode == .uninitialized }
@@ -625,7 +632,11 @@ final class Store {
                     userDefaults.set(storedSeasonData, forKey: "recovery.\(Keys.currentSeason)")
                     Log.store.error("Season decode failed — raw data preserved under 'recovery.\(Keys.currentSeason)'.")
                 }
-                self.currentSeason = Store.seedSeason()
+                // The nameless placeholder, NOT the demo's sample season:
+                // a named sample season here read as real content, so it
+                // blocked the cloud restore and could be uploaded over
+                // the account's actual season on the next edit.
+                self.currentSeason = Store.emptySeason()
             }
             self.pastSeasons = Store.loadArray(Keys.pastSeasons) ?? []
             self.archivedSeasons = Store.loadArray(Keys.archivedSeasons) ?? []
@@ -4207,6 +4218,10 @@ extension Store {
         cadenceLinks = []
         cadenceOutcomeFulfillments = []
         consumedCadenceEventIds = []
+        buckets = []
+        dayTemplates = []
+        weekTemplateAssignments = []
+        daySwaps = []
     }
 
     /// "Start my season": clean slate, nameless placeholder season,
@@ -4225,7 +4240,11 @@ extension Store {
     /// `.demo` mode so the marker shows. Pre-auth by design — nothing
     /// here ever touches the network or a real account.
     func startDemo() {
-        wipeAllData()
+        // A full device wipe first, not just the in-memory collections:
+        // a signed-out install can still be holding a previous person's
+        // un-uploaded data and sync bookkeeping, and sample rows must
+        // never be mistaken for edits to that account.
+        wipeAccountData()
         Store.applyDemoSeed(to: self)
         appMode = .demo
         persistAppMode()
@@ -4238,13 +4257,182 @@ extension Store {
     /// resumes at the account step (or straight at the fork when a
     /// session already exists — the intro resolves that on appear).
     func exitDemoToFlow() {
+        // Everything goes — the sample rows, anything made while
+        // exploring, its files and reminders — and nothing of it is
+        // left on disk to be loaded (or synced) later.
+        wipeAccountData()
+        OnboardingProgress.save(.account)
+    }
+
+    // MARK: Whose data is on this device
+
+    private static let localDataOwnerKey = "account.localDataOwner.v1"
+
+    /// The account id the data on this device belongs to — recorded at
+    /// every sign-in, kept across sign-outs that leave data behind, and
+    /// cleared by a wipe. Nil means the content here was created by
+    /// nobody yet (pre-sign-in onboarding) or predates this record.
+    var localDataOwnerId: String? {
+        get { userDefaults.string(forKey: Store.localDataOwnerKey) }
+        set {
+            if let newValue {
+                userDefaults.set(newValue, forKey: Store.localDataOwnerKey)
+            } else {
+                userDefaults.removeObject(forKey: Store.localDataOwnerKey)
+            }
+        }
+    }
+
+    /// The account ids this device has synced for, read off its
+    /// per-account sync keys — the evidence used when no owner is on
+    /// record.
+    var previouslySyncedUserIds: Set<String> {
+        let keys = Array(userDefaults.dictionaryRepresentation().keys)
+        return SyncIntegrity.syncedUserIds(fromDefaultsKeys: keys)
+    }
+
+    /// Erase every trace of account data from this device and return
+    /// the install to its first-run state: every Store collection and
+    /// setting, the persisted copies, sync queues / stamps / snapshots
+    /// for every account, recovery and backup copies, media files,
+    /// drafts, caches, reminders, and the widget snapshot.
+    ///
+    /// The caller must have stopped the sync services first (see
+    /// `AccountDataCoordinator`). This method cuts the Store's side of
+    /// those bridges before touching anything, so the emptying below
+    /// can never be announced as an edit — an "emptied" slice uploading
+    /// over the account's real data is the one outcome a wipe must
+    /// never have.
+    func wipeAccountData() {
+        pendingFlush?.cancel()
+        pendingFlush = nil
+        seasonSync = nil
+        notesSync = nil
+        proofLibrarySync = nil
+        social = nil
+
+        // In memory.
         wipeAllData()
         currentSeason = Store.emptySeason()
+        cadenceConnected = false
+        cadenceInviteDismissed = false
+        cadenceSurfacePointsSocially = false
+        reminderValueThreshold = 8
+        noteTagsEnabled = false
+        agendaIsDefaultDayView = false
+        resetTransientAccountState()
+        myEngagementLikes = []
+        myEngagementComments = []
+        storyViewerIds = [:]
+        dismissedEventGlanceIds = []
+        activityLastSeenAt = .distantPast
+        if activeFocusSession != nil || activeSharedFocusBlock != nil {
+            activeFocusSession = nil
+            activeSharedFocusBlock = nil
+            FocusBlockingService.shared.endShielding()
+        }
+        focusPresences = []
+        groveSharedTasks = []
+        needsYou.reset()
+
         appMode = .uninitialized
-        userDefaults.removeObject(forKey: Keys.appMode)
-        OnboardingProgress.save(.account)
-        markAllDirty()
+        // Nothing above is written back — the keys are removed instead.
+        dirtyKeys = []
+
+        // On disk.
+        Store.purgeAccountDefaults()
+        Store.purgeAccountFiles()
+        localDataOwnerId = nil
+
+        // Derived surfaces.
+        cancelAllAccountNotifications()
+        WidgetBridge.publish(from: self)
+        accountDataEpoch += 1
+    }
+
+    /// Put this device's account data away WITHOUT erasing it: the
+    /// person signed out while the device still held edits their
+    /// account never received, and destroying those would be silent
+    /// data loss. The data stays on disk, owned by that account, behind
+    /// the first-run cover; it returns when the same person signs back
+    /// in, and is wiped if anyone else does (or starts the demo).
+    func holdAccountDataWhileSignedOut() {
+        seasonSync = nil
+        notesSync = nil
+        proofLibrarySync = nil
+        social = nil
         flushPendingSaves()
+        resetTransientAccountState()
+        appMode = .uninitialized
+        // Written explicitly (not removed): with data still on disk a
+        // missing mode would read as `.clean` on the next launch and
+        // show the held data to whoever opens the app.
+        persistAppMode()
+        cancelAllAccountNotifications()
+        WidgetBridge.publish(from: self)
+        accountDataEpoch += 1
+    }
+
+    /// View-driving state that only makes sense for the session that
+    /// just ended.
+    private func resetTransientAccountState() {
+        undoStack = []
+        coldStartCoaching = false
+        accountSeamActive = false
+        viewingDay = nil
+        showCarryForwardPrompt = false
+        carryForwardCandidates = []
+        showSeasonCompletePrompt = false
+        pendingTrainAward = nil
+        pendingBoosterAward = nil
+    }
+
+    /// Remove every persisted key that holds account data.
+    private static func purgeAccountDefaults() {
+        let defaults = UserDefaults.standard
+        // The Store's own slices, by the constants that write them…
+        for key in allPersistedKeys {
+            defaults.removeObject(forKey: key)
+        }
+        // …then everything else that is account data, by rule (sync
+        // bookkeeping for every account, recovery + backup copies,
+        // settings, drafts).
+        let allKeys = Array(defaults.dictionaryRepresentation().keys)
+        for key in allKeys where SyncIntegrity.isAccountScopedDefaultsKey(key) {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.removeObject(forKey: Keys.appMode)
+    }
+
+    /// Remove every file that holds account data: all media under
+    /// Documents (journal photos and memos, milestone media, the proof
+    /// library, pinned proofs, story media), the capture draft, queued
+    /// failed sends, and the media caches.
+    private static func purgeAccountFiles() {
+        let fm = FileManager.default
+        if let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let items = (try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil)) ?? []
+            for item in items {
+                try? fm.removeItem(at: item)
+            }
+        }
+        if let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            try? fm.removeItem(at: support.appendingPathComponent("CaptureDraft", isDirectory: true))
+            try? fm.removeItem(at: support.appendingPathComponent("FailedSends", isDirectory: true))
+        }
+        if let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            try? fm.removeItem(at: caches.appendingPathComponent("ProofMedia", isDirectory: true))
+            try? fm.removeItem(at: caches.appendingPathComponent("ImageCache", isDirectory: true))
+        }
+        // Exported clips and upload transcodes this app left in tmp.
+        let tmp = fm.temporaryDirectory
+        let tmpItems = (try? fm.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)) ?? []
+        for item in tmpItems {
+            let name = item.lastPathComponent
+            if name.hasPrefix("frisfocus-") || name.hasPrefix("ff-upload-") {
+                try? fm.removeItem(at: item)
+            }
+        }
     }
 
     /// A returning user signed in from the welcome intro. Leave the

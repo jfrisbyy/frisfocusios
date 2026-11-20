@@ -21,6 +21,7 @@ struct GoldenHourSettingsSheet: View {
 
     @Environment(GoldenHourService.self) private var service
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var enabled = false
     @State private var mode: GoldenHourMode = .surprise
@@ -38,6 +39,12 @@ struct GoldenHourSettingsSheet: View {
         (mode == .fixed && Self.minute(of: fireTime) != settings.fireMinute)
     }
 
+    /// Golden Hour is (or is about to be) on for this circle, and iOS
+    /// will not deliver its alerts on this phone.
+    private var showsAlertsOffHint: Bool {
+        service.alertsBlocked && (enabled || settings.enabled)
+    }
+
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 20) {
@@ -45,6 +52,9 @@ struct GoldenHourSettingsSheet: View {
 
                 if canManage {
                     enableRow
+                    if showsAlertsOffHint {
+                        alertsOffHint
+                    }
                     if enabled {
                         modePicker
                         if mode == .fixed {
@@ -53,6 +63,9 @@ struct GoldenHourSettingsSheet: View {
                     }
                 } else {
                     readOnlySummary
+                    if showsAlertsOffHint {
+                        alertsOffHint
+                    }
                 }
 
                 if enabled || settings.enabled {
@@ -71,9 +84,25 @@ struct GoldenHourSettingsSheet: View {
         .presentationDragIndicator(.visible)
         .onAppear { seedIfNeeded() }
         .task {
+            await service.refreshAlertPermission()
             if service.settingsByCircle[circleId] == nil, !myUserId.isEmpty {
                 await service.load(myUserId: myUserId)
                 seedIfNeeded(force: true)
+            }
+        }
+        // Switching Golden Hour on is the moment its alerts start to
+        // matter, so it is the moment to ask for them — once, and only
+        // when iOS has never asked. Seeding the toggle from a circle that
+        // already has it on is not "switching it on" and asks nothing.
+        .onChange(of: enabled) { _, isOn in
+            if isOn, !settings.enabled {
+                Task { await service.ensureAlertPermission() }
+            }
+        }
+        // Back from Settings: the hint should follow what was changed there.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                Task { await service.refreshAlertPermission() }
             }
         }
     }
@@ -140,6 +169,43 @@ struct GoldenHourSettingsSheet: View {
         .tint(GoldenTheme.gold)
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(GoldenTheme.inkRaised))
+    }
+
+    /// Notifications are off for the app, so the one alert this feature
+    /// depends on cannot arrive. Taps through to Settings, the only place
+    /// it can be changed once iOS has been told no.
+    private var alertsOffHint: some View {
+        Button {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "bell.slash.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(GoldenTheme.gold)
+                Text("Notifications are off, so Golden Hour can't ping this phone. Tap to allow them in Settings.")
+                    .font(.sans(12, weight: .regular))
+                    .foregroundStyle(GoldenTheme.cream.opacity(0.7))
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(GoldenTheme.cream.opacity(0.4))
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(GoldenTheme.inkRaised)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(GoldenTheme.gold.opacity(0.25), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Mode

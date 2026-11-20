@@ -54,6 +54,17 @@ private struct LogEntriesSyncPayload: Codable {
     let tombstones: [String: Date]
 }
 
+/// Wire payload for a slice its owner emptied ON PURPOSE (deleted the
+/// last to-do, started a season with no boosters). A bare `[]` cannot
+/// say that — it is indistinguishable from a blanked backup, which is
+/// never applied over content. The marker can: another device that
+/// holds the synced copy clears its own. Builds that predate it cannot
+/// decode it, so they treat the row as protected content and leave
+/// their copy alone — the safe reading.
+private struct EmptiedSliceMarker: Codable {
+    let emptiedOnPurpose: Bool
+}
+
 /// One captured known-good state of a slice, kept on-device as a
 /// last-resort fallback if both the live copy and the cloud are wiped.
 private nonisolated struct SnapshotEntry: Codable, Sendable {
@@ -82,6 +93,12 @@ final class SeasonSyncService {
     /// current sign-in — lets the shell distinguish "no season exists"
     /// from "the season simply hasn't come down yet".
     private(set) var hasAttemptedRestore: Bool = false
+    /// True once a cloud pull has actually SUCCEEDED for the current
+    /// sign-in. `hasAttemptedRestore` alone cannot tell "the account has
+    /// no season" from "the network never answered" — routing a
+    /// returning person to "build a new season" on a failed restore is
+    /// how a real cloud season used to get overwritten.
+    private(set) var restoreSucceeded: Bool = false
 
     @ObservationIgnored weak var store: Store?
     @ObservationIgnored private var flushDebounce: Task<Void, Never>?
@@ -89,6 +106,14 @@ final class SeasonSyncService {
     /// Slices whose hooks should be ignored because we're writing
     /// remote data into the Store right now (prevents echo loops).
     @ObservationIgnored private var suppressedSlices: Set<String> = []
+    /// Store writes this service caused itself (applying a cloud slice)
+    /// whose change notification has not come back yet. The Store hands
+    /// `sliceChanged` over on a later main-actor turn — after the
+    /// suppression window above has already closed — so without this
+    /// every applied slice was re-stamped "now" and uploaded straight
+    /// back, and that fresh stamp then beat genuinely newer edits made
+    /// offline on another device.
+    @ObservationIgnored private var expectedEchoes: [String: Int] = [:]
 
     /// Slices with local changes not yet pushed. Persisted so offline
     /// edits survive a relaunch.
@@ -121,6 +146,25 @@ final class SeasonSyncService {
     /// Set by the log-entries merge when the union holds content the
     /// cloud copy is missing — the pull loop re-queues the slice.
     @ObservationIgnored private var logEntriesNeedUpsync = false
+    /// Slices this device has held in agreement with the account at
+    /// least once (it applied the cloud copy, or uploaded its own).
+    /// Only such a slice can be emptied ON PURPOSE — an empty slice on
+    /// a device that never synced it is just a device with nothing yet.
+    @ObservationIgnored private var syncedSlices: Set<String> = []
+    /// Slices the person emptied deliberately (deleted the last item,
+    /// started a season without any). Their emptiness is real content:
+    /// it uploads, it is not "restored" from the cloud, and it is not
+    /// rebuilt from an on-device snapshot.
+    @ObservationIgnored private var emptiedSlices: Set<String> = []
+    /// Whether a pull has ever succeeded for this account on this
+    /// device (since its data was last wiped). Until one has, nothing
+    /// local has been reconciled with the cloud, so local stamps prove
+    /// nothing and the cloud copy wins.
+    @ObservationIgnored private var hasCloudBaseline = false
+    /// Identity of the current start/stop cycle, so a `start` that is
+    /// still awaiting the network cannot finish its work after a
+    /// sign-out (or on behalf of a different account).
+    @ObservationIgnored private var lifecycle = UUID()
 
     private enum Keys {
         // Per-account state so two sign-ins on one device never share
@@ -130,6 +174,9 @@ final class SeasonSyncService {
         static func uploadedMedia(_ userId: String) -> String { "seasonSync.uploadedMedia.\(userId)" }
         static func snapshots(_ userId: String) -> String { "seasonSync.snapshots.\(userId)" }
         static func logTombstones(_ userId: String) -> String { "seasonSync.logTombstones.\(userId)" }
+        static func syncedSlices(_ userId: String) -> String { "seasonSync.syncedSlices.\(userId)" }
+        static func emptiedSlices(_ userId: String) -> String { "seasonSync.emptiedSlices.\(userId)" }
+        static func cloudBaseline(_ userId: String) -> String { "seasonSync.cloudBaseline.\(userId)" }
         // Pre-namespacing keys — adopted once by the first account that
         // loads them (the device owner), then removed.
         static let legacyPendingSlices = "seasonSync.pendingSlices"
@@ -176,6 +223,15 @@ final class SeasonSyncService {
     /// Begin syncing for the signed-in user. Idempotent per user id.
     func start(myUserId: String, store: Store) async {
         if self.myUserId == myUserId, self.store === store { return }
+        // The demo sandbox is sample data — it must never reach an
+        // account. The sign-in path leaves demo (wiping the samples)
+        // before it gets here; this is the backstop.
+        guard store.appMode != .demo else {
+            Log.seasonSync.error("start refused — demo content never syncs")
+            return
+        }
+        let cycle = UUID()
+        lifecycle = cycle
         self.myUserId = myUserId
         self.store = store
         store.seasonSync = self
@@ -187,6 +243,9 @@ final class SeasonSyncService {
         // data and blank the account out.
         isRestoring = true
         await restoreFromCloud()
+        // Signed out (or switched accounts) while the restore was in
+        // flight — nothing below may run for the session that ended.
+        guard lifecycle == cycle else { return }
         isRestoring = false
         hasAttemptedRestore = true
 
@@ -205,19 +264,75 @@ final class SeasonSyncService {
         // signed out, offline, or before sync existed always migrates up
         // — on every launch, not just the first sync of an install.
         await flushNow()
+        guard lifecycle == cycle else { return }
         // Make sure friends see the freshest season card even when no
         // slice needed flushing this launch.
         await pushSeasonCard()
     }
 
-    /// Stop syncing on sign-out. The local season stays put — it
-    /// existed before sign-in and remains personal to this device.
+    /// Stop syncing when the session ends. What happens to the local
+    /// season is not decided here: a deliberate sign-out or an account
+    /// deletion wipes it (`discardLocalState` + the Store wipe), an
+    /// expired session leaves it for the same person to sign back into.
     func stop() {
         hasAttemptedRestore = false
+        isRestoring = false
+        restoreSucceeded = false
+        lifecycle = UUID()
         flushDebounce?.cancel()
         flushDebounce = nil
         myUserId = nil
         restoreConfirmed = false
+    }
+
+    /// Whether this device may hold season data the account does not
+    /// have yet. Asked before a sign-out wipes the device: queued
+    /// slices are the obvious case; the quiet one is a session whose
+    /// restore never succeeded, where nothing local has been compared
+    /// with the cloud at all.
+    var hasUnsyncedChanges: Bool {
+        if !pendingSlices.isEmpty { return true }
+        if restoreConfirmed { return false }
+        for slice in Self.allSlices where !sliceIsEmpty(slice) {
+            return true
+        }
+        return false
+    }
+
+    /// Stop, and forget every piece of sync bookkeeping held in memory.
+    /// Called when the device's account data is being wiped: the wiped
+    /// Store must look NEVER-SYNCED afterwards, or its emptiness would
+    /// read as a decision and upload over the account's real data. (The
+    /// persisted copies of this state are removed by the Store wipe.)
+    func discardLocalState() {
+        stop()
+        store?.seasonSync = nil
+        store = nil
+        pendingSlices = []
+        localStamps = [:]
+        uploadedMedia = []
+        snapshots = [:]
+        cloudNonEmptySlices = []
+        logTombstones = [:]
+        logEntriesNeedUpsync = false
+        syncedSlices = []
+        emptiedSlices = []
+        hasCloudBaseline = false
+        expectedEchoes = [:]
+    }
+
+    /// Try the cloud restore again after it failed (offline sign-in, a
+    /// slow network). Safe to call any time; a no-op while one is
+    /// already running or when signed out.
+    func retryRestore() async {
+        guard myUserId != nil, !isRestoring else { return }
+        let cycle = lifecycle
+        isRestoring = true
+        await restoreFromCloud()
+        guard lifecycle == cycle else { return }
+        isRestoring = false
+        hasAttemptedRestore = true
+        if restoreSucceeded { await flushNow() }
     }
 
     // MARK: Log-entry tombstones (called by Store deletion paths)
@@ -248,9 +363,33 @@ final class SeasonSyncService {
     /// being applied so pulls never echo back up.
     func sliceChanged(_ key: Store.DataKey) {
         guard let slice = Self.slice(for: key) else { return }
-        guard !suppressedSlices.contains(slice) else { return }
+        // Our own write coming back — either inside the suppression
+        // window (a synchronous hand-over) or on a later turn (the
+        // deferred one). Either way it is not a local edit.
+        let owed = expectedEchoes[slice] ?? 0
+        if suppressedSlices.contains(slice) {
+            if owed > 0 { expectedEchoes[slice] = owed - 1 }
+            return
+        }
+        if owed > 0 {
+            expectedEchoes[slice] = owed - 1
+            return
+        }
         localStamps[slice] = Date()
         pendingSlices.insert(slice)
+        // A local write that leaves a previously-synced slice empty is
+        // the person emptying it (deleting the last to-do, starting a
+        // season with no boosters). Remember that, so the emptiness
+        // uploads instead of being "restored" on the next pull.
+        let emptied = SyncIntegrity.emptySliceIsIntentional(
+            localIsEmpty: sliceIsEmpty(slice),
+            hasSyncedBefore: syncedSlices.contains(slice)
+        )
+        if emptied {
+            emptiedSlices.insert(slice)
+        } else {
+            emptiedSlices.remove(slice)
+        }
         persistState()
         scheduleFlush()
     }
@@ -263,6 +402,8 @@ final class SeasonSyncService {
     private func restoreFromCloud() async {
         for attempt in 0..<5 {
             if await pullRemote() { return }
+            // Signed out mid-restore — stop retrying for nobody.
+            guard myUserId != nil else { return }
             try? await Task.sleep(for: .seconds(Double(attempt + 1)))
         }
         Log.seasonSync.debug("restore could not reach cloud after retries; uploads stay gated")
@@ -275,7 +416,11 @@ final class SeasonSyncService {
         switch slice {
         case "season":
             let s = store.currentSeason
-            return s.categories.isEmpty && s.milestones.isEmpty
+            return SyncIntegrity.seasonSliceIsEmpty(
+                name: s.name,
+                categoryCount: s.categories.count,
+                milestoneCount: s.milestones.count
+            )
         case "pastSeasons": return store.pastSeasons.isEmpty
         case "archivedSeasons": return store.archivedSeasons.isEmpty
         case "tasks": return store.tasks.isEmpty
@@ -327,8 +472,24 @@ final class SeasonSyncService {
                 .execute()
                 .value
 
+            // The session these rows were fetched for ended while the
+            // request was in flight (sign-out, account switch, a device
+            // wipe). They must never land in the Store now.
+            guard self.myUserId == myUserId else { return false }
+
             Log.seasonSync.sensitive("pull for user=\(myUserId): \(rows.count) row(s)")
+            // First successful pull for this account on this device:
+            // nothing local has been reconciled with the cloud yet, so
+            // the cloud copy wins every slice it has content for. A
+            // real local season it is about to replace is set aside as
+            // a restorable past season first — never silently lost, and
+            // never allowed to replace the account's season.
+            let isFirstPull = !hasCloudBaseline
+            let supersededSeason: SeasonArchive? = isFirstPull
+                ? localSeasonSuperseded(by: rows)
+                : nil
             var appliedSeason = false
+            var appliedSlices: Set<String> = []
             var nonEmpty: Set<String> = []
             for row in rows {
                 let remoteStamp = SyncDates.parse(row.updatedAt)
@@ -339,12 +500,36 @@ final class SeasonSyncService {
                 // payload this build can't decode (written by a newer or
                 // older model) must never count as blank — that would let
                 // an empty local slice overwrite real data.
-                if remoteState != .empty { nonEmpty.insert(row.sliceKey) }
+                if remoteState != .empty && remoteState != .emptied { nonEmpty.insert(row.sliceKey) }
                 Log.seasonSync.debug("slice=\(row.sliceKey) bytes=\(row.payload.utf8.count) remote=\(remoteState.rawValue) localEmpty=\(localEmpty) remoteStamp=\(row.updatedAt) localStamp=\(localStamp)")
 
                 // An unreadable payload is never applied — a corrupt or
                 // future-model row must not nuke local data.
                 guard remoteState != .undecodable else { continue }
+
+                // The owner emptied this slice on another device. A
+                // device holding the synced copy, with nothing unsent,
+                // follows; anything else keeps its content (which then
+                // uploads over the marker as the newer truth).
+                if remoteState == .emptied {
+                    let adopt = SyncIntegrity.shouldAdoptRemoteEmptiness(
+                        remoteIsNewer: remoteStamp > localStamp,
+                        localIsEmpty: localEmpty,
+                        localHasUnsentChanges: pendingSlices.contains(row.sliceKey),
+                        hasSyncedBefore: syncedSlices.contains(row.sliceKey)
+                    )
+                    if adopt {
+                        clearLocalSliceQuietly(row.sliceKey)
+                        localStamps[row.sliceKey] = remoteStamp
+                        Log.seasonSync.debug("slice=\(row.sliceKey) emptied on another device — cleared here")
+                    }
+                    if sliceIsEmpty(row.sliceKey) {
+                        // Agreed-empty: don't rebuild it from a snapshot.
+                        syncedSlices.insert(row.sliceKey)
+                        emptiedSlices.insert(row.sliceKey)
+                    }
+                    continue
+                }
 
                 // Content always wins, emptiness never travels: a real
                 // cloud copy applies when newer by stamp, or whenever the
@@ -356,22 +541,40 @@ final class SeasonSyncService {
                 // logEntries always merges: the per-entry union with
                 // tombstones is commutative and idempotent, so stamps
                 // can't drop one device's offline entries.
-                let shouldApply = remoteState == .content
-                    && ((remoteStamp > localStamp) || localEmpty || row.sliceKey == "logEntries")
+                // The one exception to "emptiness never travels" is a
+                // slice the person emptied on purpose and has not
+                // uploaded yet: restoring it here is what used to bring
+                // a deleted last to-do back on the next foreground.
+                let emptiedOnPurpose = localEmpty
+                    && emptiedSlices.contains(row.sliceKey)
+                    && pendingSlices.contains(row.sliceKey)
+                let shouldApply = SyncIntegrity.shouldApplyRemoteSlice(
+                    remoteHasContent: remoteState == .content,
+                    remoteIsNewer: remoteStamp > localStamp,
+                    localIsEmpty: localEmpty,
+                    localEmptyIsIntentional: emptiedOnPurpose,
+                    alwaysMerges: row.sliceKey == "logEntries",
+                    isFirstPullForAccount: isFirstPull
+                )
                 guard shouldApply else { continue }
 
                 suppressedSlices.insert(row.sliceKey)
                 let applied = apply(slice: row.sliceKey, payload: row.payload)
+                if applied { expectEcho(of: row.sliceKey) }
                 // Flush synchronously inside the suppression window so
                 // the resulting write never re-queues this slice.
                 store.flushPendingSaves()
                 suppressedSlices.remove(row.sliceKey)
+                if applied { appliedSlices.insert(row.sliceKey) }
 
                 if applied {
                     // Keep the stamp monotonic: never move it backwards
                     // when we restored purely because local was empty.
                     localStamps[row.sliceKey] = max(remoteStamp, localStamp)
                     pendingSlices.remove(row.sliceKey)
+                    // This device now holds the account's copy.
+                    syncedSlices.insert(row.sliceKey)
+                    emptiedSlices.remove(row.sliceKey)
                     captureSnapshot(slice: row.sliceKey, payload: row.payload, stamp: remoteStamp)
                     if row.sliceKey == "season" { appliedSeason = true }
                     // The merge found local entries or tombstones the
@@ -385,7 +588,30 @@ final class SeasonSyncService {
                 }
             }
             cloudNonEmptySlices = nonEmpty
+            hasCloudBaseline = true
             persistState()
+
+            // The local season the cloud just replaced goes into the
+            // archive (after the cloud's own archive landed, so it is
+            // added to that list rather than overwritten by it). The
+            // resulting write queues both slices for upload normally.
+            if let supersededSeason {
+                // Whatever of the local season's board the cloud had no
+                // replacement for (boosters, trains…) is in the archive
+                // now. Left live, it would be grafted onto the cloud
+                // season and uploaded as if it belonged there.
+                for slice in Self.seasonBoardSlices where !appliedSlices.contains(slice) {
+                    clearLocalSliceQuietly(slice)
+                }
+                if !store.archivedSeasons.contains(where: { $0.id == supersededSeason.id }) {
+                    store.archivedSeasons.insert(supersededSeason, at: 0)
+                }
+                if !store.pastSeasons.contains(where: { $0.id == supersededSeason.id }) {
+                    store.pastSeasons.insert(supersededSeason.summary(endedAt: Date()), at: 0)
+                }
+                store.flushPendingSaves()
+                Log.seasonSync.debug("kept the cloud season; archived the local season it replaced")
+            }
 
             // Media already in the bucket needs no re-upload; fetch
             // anything this device doesn't have yet.
@@ -398,6 +624,7 @@ final class SeasonSyncService {
             }
             // Cloud reached and applied — the upload gate may open.
             restoreConfirmed = true
+            restoreSucceeded = true
             // Self-healing pass: push up anything real that the cloud is
             // missing, every launch.
             queueStrandedLocalContent()
@@ -409,15 +636,104 @@ final class SeasonSyncService {
         }
     }
 
+    /// Note that a Store write this service is about to flush will come
+    /// back through `sliceChanged` exactly once, and must be ignored.
+    private func expectEcho(of slice: String) {
+        // No bridge, no notification — nothing to wait for.
+        guard let store, store.seasonSync === self else { return }
+        expectedEchoes[slice] = (expectedEchoes[slice] ?? 0) + 1
+    }
+
+    /// The season-scoped board slices a `SeasonArchive` carries.
+    private static let seasonBoardSlices = ["tasks", "todos", "boosters", "habitTrains", "avoidanceItems"]
+
+    /// Empty one slice locally WITHOUT recording it as a local edit:
+    /// nothing is queued, nothing is stamped, and it is not treated as
+    /// emptied on purpose here. Never touches the season itself or the
+    /// score history.
+    private func clearLocalSliceQuietly(_ slice: String) {
+        guard let store, !sliceIsEmpty(slice) else { return }
+        suppressedSlices.insert(slice)
+        switch slice {
+        case "pastSeasons": store.pastSeasons = []
+        case "archivedSeasons": store.archivedSeasons = []
+        case "tasks": store.tasks = []
+        case "todos": store.todos = []
+        case "boosters": store.boosters = []
+        case "habitTrains": store.habitTrains = []
+        case "avoidanceItems": store.avoidanceItems = []
+        case "avoidanceOccurrences": store.avoidanceOccurrences = []
+        case "buckets": store.buckets = []
+        case "dayTemplates": store.dayTemplates = []
+        case "scheduleConfig":
+            store.weekTemplateAssignments = []
+            store.daySwaps = []
+        default:
+            suppressedSlices.remove(slice)
+            return
+        }
+        expectEcho(of: slice)
+        store.flushPendingSaves()
+        suppressedSlices.remove(slice)
+        pendingSlices.remove(slice)
+        emptiedSlices.remove(slice)
+    }
+
+    /// The local season graph, as a restorable archive, when the first
+    /// pull is about to replace it with a DIFFERENT season from the
+    /// cloud — a season built on this device before the account's own
+    /// could be restored (a failed or timed-out restore, an offline
+    /// sign-in). Nil when there is nothing worth keeping.
+    private func localSeasonSuperseded(by rows: [SeasonSyncRow]) -> SeasonArchive? {
+        guard let store else { return nil }
+        guard let row = rows.first(where: { $0.sliceKey == "season" }) else { return nil }
+        guard remotePayloadState(slice: "season", payload: row.payload) == .content else { return nil }
+        guard let data = row.payload.data(using: .utf8),
+              let cloudSeason = try? JSONDecoder().decode(Season.self, from: data) else { return nil }
+        let local = store.currentSeason
+        let keep = SyncIntegrity.shouldPreserveLocalSeason(
+            localSeasonName: local.name,
+            localSeasonId: local.id,
+            cloudSeasonId: cloudSeason.id
+        )
+        guard keep else { return nil }
+        return SeasonArchive(
+            id: local.id,
+            season: local,
+            tasks: store.tasks,
+            todos: store.todos,
+            boosters: store.boosters,
+            habitTrains: store.habitTrains,
+            avoidanceItems: store.avoidanceItems,
+            archivedAt: Date()
+        )
+    }
+
     /// What an inbound cloud payload holds — the mirror of
     /// `sliceIsEmpty` but for a remote row. `.undecodable` is distinct
     /// from `.empty` on purpose: a row this build can't read is treated
     /// as protected content (never overwritten by empties), not blank.
-    private enum RemotePayloadState: String { case content, empty, undecodable }
+    /// `.emptied` is an explicit "the owner emptied this" marker — see
+    /// `EmptiedSliceMarker`.
+    private enum RemotePayloadState: String { case content, empty, emptied, undecodable }
+
+    /// Slices whose deliberate emptiness travels as a marker. The season
+    /// itself and the score history are never "emptied": a season is a
+    /// named object, and the history carries its own tombstones.
+    private static let markerSlices: Set<String> = [
+        "pastSeasons", "archivedSeasons", "tasks", "todos", "boosters",
+        "habitTrains", "avoidanceItems", "avoidanceOccurrences",
+        "buckets", "dayTemplates", "scheduleConfig"
+    ]
 
     private func remotePayloadState(slice: String, payload: String) -> RemotePayloadState {
         guard let data = payload.data(using: .utf8) else { return .undecodable }
         let d = JSONDecoder()
+        if Self.markerSlices.contains(slice),
+           let marker = try? d.decode(EmptiedSliceMarker.self, from: data),
+           marker.emptiedOnPurpose {
+            return .emptied
+        }
         func arrayState<T: Decodable>(_ type: T.Type) -> RemotePayloadState {
             guard let v = try? d.decode([T].self, from: data) else { return .undecodable }
             return v.isEmpty ? .empty : .content
@@ -425,7 +741,12 @@ final class SeasonSyncService {
         switch slice {
         case "season":
             guard let v = try? d.decode(Season.self, from: data) else { return .undecodable }
-            return (v.categories.isEmpty && v.milestones.isEmpty) ? .empty : .content
+            let bare = SyncIntegrity.seasonSliceIsEmpty(
+                name: v.name,
+                categoryCount: v.categories.count,
+                milestoneCount: v.milestones.count
+            )
+            return bare ? .empty : .content
         case "pastSeasons": return arrayState(PastSeasonSummary.self)
         case "archivedSeasons": return arrayState(SeasonArchive.self)
         case "tasks": return arrayState(FFTask.self)
@@ -520,6 +841,12 @@ final class SeasonSyncService {
         return true
     }
 
+    /// The wire form of `EmptiedSliceMarker`.
+    private static let emptiedMarkerPayload: String? = {
+        guard let data = try? JSONEncoder().encode(EmptiedSliceMarker(emptiedOnPurpose: true)) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }()
+
     /// Encode one slice's current local value as a JSON payload.
     private func payload(for slice: String) -> String? {
         guard let store else { return nil }
@@ -583,12 +910,23 @@ final class SeasonSyncService {
         let touchesSeasonCard = !pendingSlices.isDisjoint(with: Self.seasonCardSlices)
 
         for slice in pendingSlices {
-            // Content-aware guard: never upload an empty slice over a
-            // cloud slice that still holds real content. This covers both
-            // the phantom-empty reinstall case (no local mutation) and a
-            // stale-stamp case where an empty slice looks "changed".
-            if sliceIsEmpty(slice), localStamps[slice] == nil || cloudNonEmptySlices.contains(slice) {
-                Log.seasonSync.debug("flush skip empty slice=\(slice) (cloud has content or never edited)")
+            // The session ended mid-flush (sign-out, a device wipe).
+            // Nothing more may go up under the old account — least of
+            // all the emptiness of a Store that was just wiped.
+            guard self.myUserId == myUserId else { break }
+            // Content-aware guard: an empty slice uploads only when the
+            // person emptied it on purpose (this device held the synced
+            // copy, then wrote it empty). A phantom-empty slice — a
+            // fresh install, a wiped device, a slice that failed to
+            // load — never does, so it can't blank the cloud copy; the
+            // next pull restores it instead.
+            let isEmpty = sliceIsEmpty(slice)
+            let mayUpload = SyncIntegrity.shouldUploadSlice(
+                localIsEmpty: isEmpty,
+                emptyIsIntentional: isEmpty && emptiedSlices.contains(slice)
+            )
+            if !mayUpload {
+                Log.seasonSync.debug("flush skip empty slice=\(slice) (not emptied on purpose)")
                 pendingSlices.remove(slice)
                 continue
             }
@@ -596,8 +934,14 @@ final class SeasonSyncService {
             // make sure the files are up before the row points at them.
             if slice == "season" {
                 guard await uploadMilestoneMedia(userId: myUserId) else { continue }
+                guard self.myUserId == myUserId else { break }
             }
-            guard let payload = payload(for: slice) else {
+            // A slice emptied on purpose goes up as an explicit marker
+            // rather than a bare empty value, so other devices can tell
+            // a decision from a blanked backup.
+            let sendsMarker = isEmpty && Self.markerSlices.contains(slice)
+            let encoded: String? = sendsMarker ? Self.emptiedMarkerPayload : self.payload(for: slice)
+            guard let payload = encoded else {
                 pendingSlices.remove(slice)
                 continue
             }
@@ -612,7 +956,15 @@ final class SeasonSyncService {
                     payload: payload,
                     updatedAt: SyncDates.iso(stamp)
                 ), onConflict: "user_id,slice_key").execute()
-                pendingSlices.remove(slice)
+                // An edit that landed while this upload was in flight
+                // re-stamped the slice; it is still unsent, so it stays
+                // queued instead of being dropped with the older copy.
+                let latest = localStamps[slice]
+                if latest == nil || latest == stamp {
+                    pendingSlices.remove(slice)
+                }
+                // This device has now held the account's copy.
+                syncedSlices.insert(slice)
             } catch {
                 Log.seasonSync.error("upsert failed for \(slice): \(error)")
             }
@@ -723,9 +1075,14 @@ final class SeasonSyncService {
         guard let store else { return }
         var recoveredAny = false
         for slice in Self.allSlices where sliceIsEmpty(slice) {
+            // A slice the person emptied on purpose is not a loss to
+            // recover from — rebuilding it here would undo the delete
+            // on every launch.
+            guard !emptiedSlices.contains(slice) else { continue }
             guard let newest = snapshots[slice]?.max(by: { $0.stamp < $1.stamp }) else { continue }
             suppressedSlices.insert(slice)
             let applied = apply(slice: slice, payload: newest.payload)
+            if applied { expectEcho(of: slice) }
             store.flushPendingSaves()
             suppressedSlices.remove(slice)
             if applied, !sliceIsEmpty(slice) {
@@ -929,6 +1286,11 @@ final class SeasonSyncService {
         logTombstones = [:]
         logEntriesNeedUpsync = false
         restoreConfirmed = false
+        restoreSucceeded = false
+        syncedSlices = []
+        emptiedSlices = []
+        hasCloudBaseline = false
+        expectedEchoes = [:]
 
         let defaults = UserDefaults.standard
         let decoder = JSONDecoder()
@@ -967,6 +1329,28 @@ final class SeasonSyncService {
            let stones = try? decoder.decode([String: Date].self, from: data) {
             logTombstones = stones
         }
+        if let data = defaults.data(forKey: Keys.emptiedSlices(userId)),
+           let slices = try? decoder.decode([String].self, from: data) {
+            emptiedSlices = Set(slices)
+        }
+        if let data = defaults.data(forKey: Keys.syncedSlices(userId)),
+           let slices = try? decoder.decode([String].self, from: data) {
+            syncedSlices = Set(slices)
+        } else {
+            // A build from before this was tracked. Snapshots are only
+            // ever captured once a pull has succeeded (on applying a
+            // cloud slice, or just before an upload the restore gate
+            // allowed), so a slice with a snapshot is one this device
+            // has held in agreement with the account.
+            syncedSlices = Set(snapshots.keys)
+        }
+        if defaults.object(forKey: Keys.cloudBaseline(userId)) != nil {
+            hasCloudBaseline = defaults.bool(forKey: Keys.cloudBaseline(userId))
+        } else {
+            // Same inference for the same reason: any snapshot at all
+            // means a pull has succeeded here before.
+            hasCloudBaseline = !snapshots.isEmpty
+        }
     }
 
     private func persistState() {
@@ -978,5 +1362,8 @@ final class SeasonSyncService {
         defaults.set(try? encoder.encode(Array(uploadedMedia)), forKey: Keys.uploadedMedia(myUserId))
         defaults.set(try? encoder.encode(snapshots), forKey: Keys.snapshots(myUserId))
         defaults.set(try? encoder.encode(logTombstones), forKey: Keys.logTombstones(myUserId))
+        defaults.set(try? encoder.encode(Array(syncedSlices)), forKey: Keys.syncedSlices(myUserId))
+        defaults.set(try? encoder.encode(Array(emptiedSlices)), forKey: Keys.emptiedSlices(myUserId))
+        defaults.set(hasCloudBaseline, forKey: Keys.cloudBaseline(myUserId))
     }
 }

@@ -111,6 +111,19 @@ final class NeedsYouState {
         if changed { save() }
     }
 
+    /// Forget everything — in memory and on disk. Called when the
+    /// device's account data is wiped: the cached read is a summary of
+    /// one person's day and must not greet the next.
+    func reset() {
+        dismissed = [:]
+        snoozedUntil = [:]
+        cachedRead = nil
+        phase = .idle
+        defaults.removeObject(forKey: Keys.dismissed)
+        defaults.removeObject(forKey: Keys.snoozed)
+        defaults.removeObject(forKey: Keys.read)
+    }
+
     // MARK: - Persistence
 
     private func load() {

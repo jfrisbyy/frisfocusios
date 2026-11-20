@@ -125,6 +125,12 @@ final class ProofLibrarySyncService {
     /// Begin syncing for the signed-in user. Idempotent per user id.
     func start(myUserId: String, store: Store) async {
         if self.myUserId == myUserId, self.store === store { return }
+        // The demo sandbox must never reach an account. The sign-in
+        // path leaves demo first; this is the backstop.
+        guard store.appMode != .demo else {
+            Log.proofLibrary.error("start refused — demo content never syncs")
+            return
+        }
         stop()
         self.myUserId = myUserId
         self.store = store
@@ -153,8 +159,39 @@ final class ProofLibrarySyncService {
         await flushNow()
     }
 
-    /// Stop syncing on sign-out. The local archive stays put — it
-    /// existed before sign-in and belongs to this device.
+    /// Whether this device may hold proofs the account does not have
+    /// yet: rows still queued, or media whose bytes exist only here
+    /// (media waits for an unmetered connection, so on cellular this
+    /// can stay true for a while). Asked before a sign-out wipes the
+    /// device.
+    var hasUnsyncedChanges: Bool {
+        if !pendingRows.isEmpty { return true }
+        guard let store else { return false }
+        for item in store.proofLibrary where pendingMedia.contains(item.id) {
+            if refusedMedia.contains(item.id) { continue }
+            if item.mediaPath != nil { continue }
+            guard let url = item.url else { continue }
+            if FileManager.default.fileExists(atPath: url.path) { return true }
+        }
+        return false
+    }
+
+    /// Stop, and forget every queue held in memory. Called when the
+    /// device's account data is being wiped. (The persisted queues are
+    /// removed by the Store wipe.)
+    func discardLocalState() {
+        stop()
+        store?.proofLibrarySync = nil
+        store = nil
+        pendingRows = []
+        pendingMedia = []
+        refusedMedia = []
+        missingMediaCount = 0
+    }
+
+    /// Stop syncing when the session ends. What happens to the local
+    /// archive is decided by the caller: a deliberate sign-out or an
+    /// account deletion wipes it, an expired session leaves it.
     func stop() {
         flushDebounce?.cancel()
         flushDebounce = nil
@@ -258,7 +295,11 @@ final class ProofLibrarySyncService {
         }
     }
 
-    func flushNow() async {
+    /// `fetchMissing` false pushes uploads only. The sign-out path uses
+    /// it: bringing the rest of the archive DOWN is the opposite of
+    /// what a device about to be wiped needs, and waiting on it would
+    /// stall the sign-out for as long as the downloads take.
+    func flushNow(fetchMissing: Bool = true) async {
         guard !isFlushing, myUserId != nil, let store else { return }
         isFlushing = true
         defer { isFlushing = false }
@@ -283,7 +324,7 @@ final class ProofLibrarySyncService {
             if await uploadMedia(for: item) { pendingMedia.remove(id) }
         }
         persistQueues()
-        await fetchMissingMedia()
+        if fetchMissing { await fetchMissingMedia() }
     }
 
     /// Bring down the bytes for any archived proof whose local file is
