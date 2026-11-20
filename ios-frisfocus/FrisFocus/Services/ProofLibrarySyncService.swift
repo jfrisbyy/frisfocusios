@@ -167,6 +167,13 @@ final class ProofLibrarySyncService {
     var hasUnsyncedChanges: Bool {
         if !pendingRows.isEmpty { return true }
         guard let store else { return false }
+        // Not yet through this account's first sync here: whatever is in
+        // the archive has not even been queued.
+        if let myUserId,
+           !UserDefaults.standard.bool(forKey: Keys.initialPush(myUserId)),
+           !store.proofLibrary.isEmpty {
+            return true
+        }
         for item in store.proofLibrary where pendingMedia.contains(item.id) {
             if refusedMedia.contains(item.id) { continue }
             if item.mediaPath != nil { continue }

@@ -171,7 +171,8 @@ nonisolated enum SyncIntegrity {
     private static let sideStateKeys: [String] = [
         "planReminderPrefs.v1", "needsYou.dismissed", "needsYou.snoozedUntil",
         "needsYou.cachedRead", "share.milestone.options", "coldStart.draft.v1",
-        "seasonSetup.resumeSnapshot.v1", "onboarding.phase.v1"
+        "seasonSetup.resumeSnapshot.v1", "onboarding.phase.v1",
+        "profile.pendingClaim.v1"
     ]
 
     /// Exact persisted keys that hold account data.

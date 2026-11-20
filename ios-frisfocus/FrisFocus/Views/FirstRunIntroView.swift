@@ -60,6 +60,12 @@ struct FirstRunIntroView: View {
     /// True while a fresh sign-in resolves (profile + cloud season check).
     @State private var resolving: Bool = false
     @State private var didResolveEntry: Bool = false
+    /// True while the account's cloud restore has not answered — the
+    /// resolve overlay turns into a retry state instead of the flow
+    /// guessing "no season" and offering to build a new one.
+    @State private var restoreStalled: Bool = false
+    /// Bumped by the overlay's "Try again".
+    @State private var retryRequests: Int = 0
 
     private enum Phase {
         case welcome, manifesto, ageCheck, account, claimName, fork, quickPath, deepPath, peopleCard, invites
@@ -191,9 +197,14 @@ struct FirstRunIntroView: View {
 
             // A quiet resolve state after any sign-in outside the account
             // step (welcome link, entry restore) — never a dead screen.
-            if resolving && phase != .account {
-                ResolvingAccountOverlay()
-                    .transition(.opacity)
+            // (The account step shows its own resolving state — except
+            // when the restore has stalled, which needs the retry.)
+            if resolving && (phase != .account || restoreStalled) {
+                ResolvingAccountOverlay(
+                    stalled: restoreStalled,
+                    onRetry: { retryRequests += 1 }
+                )
+                .transition(.opacity)
             }
         }
         .sheet(isPresented: $showSignIn) {
@@ -277,24 +288,68 @@ struct FirstRunIntroView: View {
 
     // MARK: Sign-in resolution
 
-    /// After any successful sign-in: load the profile, give the cloud
-    /// season a moment to restore, then route — existing season skips
+    /// After any successful sign-in: load the profile, wait for the
+    /// cloud restore to ANSWER, then route — existing season skips
     /// everything; a claimed handle lands at the fork; otherwise claim.
+    ///
+    /// The fork ("build a new season") is only ever offered once the
+    /// cloud has been reached and has no season. A restore that failed
+    /// or is still out says nothing about the account, so the flow
+    /// holds on a retry state instead: this used to give up after 8
+    /// seconds and send a returning person on a slow network to build a
+    /// season that then replaced their real one.
     private func handleSignInSuccess() {
         guard !resolving else { return }
         resolving = true
+        restoreStalled = false
         Task {
             if let myId = auth.user?.id {
                 await profileStore.load(myUserId: myId)
             }
-            await waitForSeasonRestore()
+            var outcome = await waitForSeasonRestore()
+            while outcome == .failed {
+                // Signed out underneath us (an expired session) — the
+                // cover is about to change hands; stop resolving.
+                guard auth.user != nil else { break }
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+                    restoreStalled = true
+                }
+                // Hold here until the person asks again — or the
+                // restore lands on its own (the sync service keeps
+                // retrying, and every return to the app pulls).
+                let seen = retryRequests
+                while retryRequests == seen {
+                    if auth.user == nil { break }
+                    if seasonSync.restoreSucceeded { break }
+                    if !store.currentSeason.name.isEmpty { break }
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+                    restoreStalled = false
+                }
+                if retryRequests != seen {
+                    await seasonSync.retryRestore()
+                }
+                outcome = await waitForSeasonRestore()
+            }
+            // The profile may have failed to load on the same bad
+            // network — ask once more now that the cloud is answering,
+            // so a returning person isn't sent to claim a name again.
+            if profileStore.myProfile == nil, let myId = auth.user?.id {
+                await profileStore.load(myUserId: myId)
+            }
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
                 resolving = false
+                restoreStalled = false
             }
-            let hasSeason = !store.currentSeason.name.isEmpty
+            // Only reachable when the session ended mid-resolve: the
+            // cloud never answered, so nothing may be concluded — the
+            // cover re-resolves for whoever signs in next.
+            guard outcome != .failed else { return }
+            let hasSeason = outcome == .seasonPresent
             let hasHandle = (profileStore.myProfile?.username?.isEmpty == false)
             if hasSeason {
-                // Existing cloud season → straight to the live home.
+                // Existing season → straight to the live home.
                 OnboardingProgress.clear()
                 store.restoreFromSignIn()
             } else if hasHandle {
@@ -310,15 +365,32 @@ struct FirstRunIntroView: View {
         }
     }
 
-    /// Wait (bounded) for the account's cloud restore to have had its
-    /// say, so "no season" is a fact and not a race.
-    private func waitForSeasonRestore() async {
-        let deadline = Date().addingTimeInterval(8)
+    /// Wait for the account's cloud restore to have had its say, so
+    /// "no season" is a fact and not a race. Returns what is actually
+    /// known: a season is here, the cloud was reached and has none, or
+    /// — after `patience` seconds, or once the sync service has run out
+    /// of retries — that the cloud has not answered.
+    private func waitForSeasonRestore(patience: TimeInterval = 20) async -> SeasonRestoreOutcome {
+        let deadline = Date().addingTimeInterval(patience)
         while Date() < deadline {
-            if !store.currentSeason.name.isEmpty { return }
-            if seasonSync.hasAttemptedRestore && !seasonSync.isRestoring { return }
+            let hasSeason = !store.currentSeason.name.isEmpty
+            if hasSeason || seasonSync.restoreSucceeded {
+                return SyncIntegrity.restoreOutcome(
+                    hasLocalSeason: hasSeason,
+                    restoreSucceeded: seasonSync.restoreSucceeded
+                )
+            }
+            // The restore ran and gave up without reaching the cloud.
+            if seasonSync.hasAttemptedRestore && !seasonSync.isRestoring {
+                return .failed
+            }
+            if auth.user == nil { return .failed }
             try? await Task.sleep(for: .milliseconds(250))
         }
+        return SyncIntegrity.restoreOutcome(
+            hasLocalSeason: !store.currentSeason.name.isEmpty,
+            restoreSucceeded: seasonSync.restoreSucceeded
+        )
     }
 
     // MARK: Advancing
@@ -493,16 +565,47 @@ private struct WelcomePanel: View {
 
 /// Shown while a fresh sign-in is being resolved outside the account
 /// step — a calm beat, never a dead screen.
+///
+/// `stalled` turns it into the retry state: the account's cloud restore
+/// has not answered, so the flow waits here rather than guessing the
+/// account is empty and offering to build a new season over a real one.
 private struct ResolvingAccountOverlay: View {
+    var stalled: Bool = false
+    var onRetry: () -> Void = {}
+
     var body: some View {
         ZStack {
             Color.black.opacity(0.35).ignoresSafeArea()
             VStack(spacing: 14) {
-                ProgressView()
-                    .tint(Theme.textPrimary)
-                Text("One moment — checking your account…")
-                    .font(.sans(13.5, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
+                if stalled {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Can't reach your account yet")
+                        .font(.sans(14.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Your season is safe. We'll pick up as soon as your account answers — nothing new is started until then.")
+                        .font(.sans(12.5, weight: .regular))
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 260)
+                    Button(action: onRetry) {
+                        Text("Try again")
+                            .font(.sans(14, weight: .semibold))
+                            .foregroundStyle(Theme.textCream)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(Capsule().fill(Theme.textPrimary))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    ProgressView()
+                        .tint(Theme.textPrimary)
+                    Text("One moment — checking your account…")
+                        .font(.sans(13.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                }
             }
             .padding(.horizontal, 26)
             .padding(.vertical, 22)

@@ -41,6 +41,18 @@ class AuthManager {
     private let projectID = Config.EXPO_PUBLIC_PROJECT_ID
     private var codeVerifier: String?
     private var webAuthSession: ASWebAuthenticationSession?
+
+    /// The app's one AuthManager, so the Supabase client's token
+    /// provider (which runs off the main actor, with no view in reach)
+    /// can ask for a refresh. Weak: this never keeps it alive.
+    static weak var live: AuthManager?
+    /// The refresh a request is currently waiting on, if any — every
+    /// request that finds the token stale shares this one instead of
+    /// starting its own.
+    @ObservationIgnored private var requestRefresh: Task<Void, Never>?
+    /// When a request last asked for a refresh, so a refresh that just
+    /// failed (offline) is not re-attempted by every request behind it.
+    @ObservationIgnored private var lastRequestRefreshAt: Date?
     // Injected by Rork into UserDefaults at install time on the iOS Simulator
     // only. Tells the backend which developer's browser tab should receive the
     // OAuth popup. Absent on real devices and in non-Rork environments — that
@@ -82,6 +94,7 @@ class AuthManager {
     }
 
     init() {
+        AuthManager.live = self
         Task { await checkAuth() }
     }
 
@@ -143,6 +156,25 @@ class AuthManager {
         }
 
         return User(id: payload.sub, email: payload.email ?? "", name: payload.name, picture: payload.picture)
+    }
+
+    /// The user for a session that was just issued, identified the way
+    /// every later launch will identify them: by the access token's
+    /// subject. The sign-in response and the token should agree; if
+    /// they ever did not, the id would silently change between the
+    /// first session and the next launch — and local data is now tied
+    /// to the id it was created under, so that must not happen.
+    private func sessionUser(_ responseUser: User, accessToken: String) -> User {
+        guard let subject = decodePayload(accessToken)?.sub, subject != responseUser.id else {
+            return responseUser
+        }
+        Log.auth.error("sign-in: response user id differs from the token subject — using the token subject")
+        return User(
+            id: subject,
+            email: responseUser.email,
+            name: responseUser.name,
+            picture: responseUser.picture
+        )
     }
 
     /// Read refresh token from UserDefaults (simulator-injected) first, then Keychain.
@@ -361,10 +393,11 @@ class AuthManager {
             // Before anything can observe the new session: if this
             // device is in the demo or holds another account's data,
             // clear it now, so no sync service ever starts on top of it.
-            accountData.prepareLocalData(forUserId: tokenResponse.user.id)
-            user = tokenResponse.user
+            let signedIn = sessionUser(tokenResponse.user, accessToken: tokenResponse.access_token)
+            accountData.prepareLocalData(forUserId: signedIn.id)
+            user = signedIn
             sessionExpired = false
-            syncProfile(tokenResponse.user)
+            syncProfile(signedIn)
         } catch {
             setError("Sign in failed: \(error.localizedDescription)")
         }
@@ -391,7 +424,10 @@ class AuthManager {
             let (data, response) = try await URLSession.shared.data(for: request)
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard code == 200 else {
-                if (400...499).contains(code) {
+                // 408 (timeout) and 429 (rate limit) say "not now", not
+                // "never" — they must not end a valid session, least of
+                // all now that a stale token is refreshed at request time.
+                if (400...499).contains(code), code != 408, code != 429 {
                     // The auth server definitively rejected the refresh
                     // token — the session is over. Sign out, but say so
                     // visibly instead of silently looking empty.
@@ -463,6 +499,44 @@ class AuthManager {
         await refreshToken()
     }
 
+    /// Refresh the access token because a request is about to go out
+    /// with one that has expired (or is about to). Until this existed
+    /// the token was only refreshed on foreground, so a session left
+    /// open past its expiry started failing every request with a 401
+    /// until the person happened to leave the app and come back.
+    ///
+    /// One refresh serves every request that asks while it is in
+    /// flight, and a failed attempt is not repeated for 20 seconds, so
+    /// a burst of requests on a dead network costs one call, not one
+    /// each.
+    @MainActor
+    func refreshForRequestIfNeeded() async {
+        if let inFlight = requestRefresh {
+            await inFlight.value
+            return
+        }
+        // (Deliberately allowed while a sign-out is finishing: its final
+        // upload of unsent edits needs a working token more than most.)
+        guard user != nil, !isSigningIn else { return }
+        if let last = lastRequestRefreshAt, Date().timeIntervalSince(last) < 20 { return }
+        lastRequestRefreshAt = Date()
+        Log.auth.debug("access token stale at request time — refreshing before sending")
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.refreshToken()
+        }
+        requestRefresh = task
+        await task.value
+        requestRefresh = nil
+    }
+
+    /// Entry point for code that cannot hold a reference to the live
+    /// AuthManager (the Supabase client's token provider).
+    @MainActor
+    static func refreshForRequest() async {
+        await live?.refreshForRequestIfNeeded()
+    }
+
     /// Sign out because the person asked to.
     ///
     /// Unsent edits get one bounded chance to upload first. Then the
@@ -483,9 +557,11 @@ class AuthManager {
         // and decide the fate of the on-device data.
         let disposition = await accountData.sessionWillEnd(.userSignOut)
 
-        // PUSH-TOKEN-CLEANUP-HOOK
-        // (must run here — after the final flush, BEFORE the session
-        // token is cleared below)
+        // Remove this device's push token while the session can still
+        // authorise the delete, so the account being left stops
+        // notifying this phone. Bounded by its own timeout — sign-out
+        // never waits on the network for longer than that.
+        await NotificationManager.unregisterDevice()
 
         clearSession(disposition)
     }
@@ -503,9 +579,9 @@ class AuthManager {
 
         let disposition = await accountData.sessionWillEnd(.sessionExpired)
 
-        // PUSH-TOKEN-CLEANUP-HOOK
-        // (expired-session path: the access token is already rejected
-        // here, so only cleanup that needs no valid session can work)
+        // No push-token removal here: the access token is already
+        // rejected, so the delete could not be authorised. The next
+        // account to sign in on this phone claims the token instead.
 
         clearSession(disposition)
         sessionExpired = true
@@ -557,9 +633,8 @@ class AuthManager {
 
         let disposition = await accountData.sessionWillEnd(.accountDeleted)
 
-        // PUSH-TOKEN-CLEANUP-HOOK
-        // (must run here — BEFORE the session token is cleared below;
-        // note the account itself is already deleted server-side)
+        // No push-token removal here: deleting the account already
+        // removed its device tokens server-side.
 
         clearSession(disposition)
         return true
@@ -600,6 +675,57 @@ class AuthManager {
                 Log.auth.error("Profile sync failed: \(error)")
             }
         }
+    }
+}
+
+// MARK: - Request-time access token
+
+/// The access token to send with a request made right now.
+///
+/// This is the one place every Supabase request passes through, so it
+/// is where a stale token is caught: if the stored token has expired
+/// (or is within a minute of it), the session is refreshed first and
+/// the request goes out with the new token — instead of going out with
+/// the old one and coming back 401.
+///
+/// `nonisolated` throughout: the Supabase client calls its token
+/// provider off the main actor.
+nonisolated enum SessionAccessToken {
+    /// Refresh when the token has less than this long to live.
+    static let refreshMargin: TimeInterval = 60
+
+    /// The `exp` claim of a JWT, if it has a readable one. The signature
+    /// is not checked — this only reads a clock off a token the app
+    /// stored itself.
+    static func expiry(ofJWT token: String) -> Date? {
+        let parts = token.split(separator: ".")
+        guard parts.count == 3 else { return nil }
+        var base64 = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 { base64.append("=") }
+        guard let data = Data(base64Encoded: base64),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let payload = object as? [String: Any],
+              let exp = payload["exp"] as? Double else { return nil }
+        return Date(timeIntervalSince1970: exp)
+    }
+
+    /// Whether a token with this expiry should be refreshed before it
+    /// is sent. A token with no readable expiry is left alone.
+    static func needsRefresh(expiry: Date?, now: Date, margin: TimeInterval) -> Bool {
+        guard let expiry else { return false }
+        return expiry.timeIntervalSince(now) < margin
+    }
+
+    /// The token for a request going out now — refreshed first when
+    /// stale. Nil when signed out (the request runs as `anon`).
+    static func current() async -> String? {
+        guard let token = KeychainHelper.get("access_token") else { return nil }
+        let stale = needsRefresh(expiry: expiry(ofJWT: token), now: Date(), margin: refreshMargin)
+        guard stale else { return token }
+        await AuthManager.refreshForRequest()
+        return KeychainHelper.get("access_token")
     }
 }
 

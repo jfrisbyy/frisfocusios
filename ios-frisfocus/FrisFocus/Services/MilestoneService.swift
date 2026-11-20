@@ -329,6 +329,14 @@ extension Store {
     /// Re-schedule the single gentle local notification per milestone
     /// whose target week hasn't started yet; cancel the rest.
     func refreshMilestoneNudges() {
+        // Only a live personal install gets nudges. In the demo, or
+        // while a signed-out account's data is put away behind the
+        // first-run cover, refreshing against an empty season cancels
+        // any that are pending instead of scheduling new ones.
+        guard appMode == .clean else {
+            MilestoneNudgeService.refresh(for: Store.emptySeason())
+            return
+        }
         MilestoneNudgeService.refresh(for: currentSeason)
     }
 

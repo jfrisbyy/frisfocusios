@@ -299,6 +299,13 @@ struct ContentView: View {
                     // instead of six stacked ones. Realtime subscriptions
                     // attach right after each load lands.
                     async let proofLoad: Void = proofLibrarySync.start(myUserId: myId, store: store)
+                    // Private season sync: season, tasks, score history,
+                    // and milestones follow the account. Started with the
+                    // first wave rather than last: the sign-in flow waits
+                    // on its restore to learn whether the account has a
+                    // season, and must not be told "can't reach your
+                    // account" merely because the loads ahead were slow.
+                    async let seasonLoad: Void = seasonSync.start(myUserId: myId, store: store)
                     async let messagesLoad: Void = messageGraph.load(myUserId: myId)
                     async let friendsLoad: Void = friendGraph.load(myUserId: myId)
                     async let goldenLoad: Void = goldenHour.load(myUserId: myId)
@@ -316,9 +323,8 @@ struct ContentView: View {
                     // Private journal sync: notes, folders, tags, and
                     // their media follow the account — offline-first.
                     await notesSync.start(myUserId: myId, store: store)
-                    // Private season sync: season, tasks, score history,
-                    // and milestones follow the account too.
-                    await seasonSync.start(myUserId: myId, store: store)
+                    // The season sync started above — wait for it here.
+                    await seasonLoad
                     // The proof archive follows the account too. Rows go
                     // up on any connection; the media waits for a
                     // connection worth spending.
@@ -354,9 +360,8 @@ struct ContentView: View {
                 // is gone.
                 showProfileSheet = false
                 showExitDemoDialog = false
-                closingPact = nil
                 presentedClosingPactID = nil
-                pendingInvite = nil
+                closingPact = nil
             }
             .onAppear {
                 // Hand the Store and sync services to the auth layer's
@@ -722,6 +727,50 @@ private struct CloudRestoreBanner: View {
         )
         .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         .accessibilityLabel("Restoring your season from your account")
+    }
+}
+
+/// Shown when a signed-in account has no season on this device and the
+/// cloud could not be reached to ask whether one exists.
+///
+/// Without it this state fell through to the "build a new season" fork
+/// — for a returning person on a slow or offline network, an invitation
+/// to overwrite the season they already have. The honest thing to say
+/// is that we don't know yet, and to offer another try.
+private struct CloudRestoreFailedBanner: View {
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.sunOuter)
+            Text("Couldn't reach your account to restore your season.")
+                .font(.sans(12.5, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: onRetry) {
+                Text("Try again")
+                    .font(.sans(12.5, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Theme.textPrimary.opacity(0.1)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Theme.sunOuter.opacity(0.5), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .accessibilityElement(children: .contain)
     }
 }
 

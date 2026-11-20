@@ -156,6 +156,12 @@ final class SeasonSyncService {
     /// it uploads, it is not "restored" from the cloud, and it is not
     /// rebuilt from an on-device snapshot.
     @ObservationIgnored private var emptiedSlices: Set<String> = []
+    /// Slices this device once held the account's copy of that came up
+    /// EMPTY at start without the person having emptied them — a slice
+    /// that failed to decode, or was removed behind the app's back. For
+    /// the rest of the session their emptiness is never a decision: it
+    /// must not upload, and the next pull restores them.
+    @ObservationIgnored private var lostSlices: Set<String> = []
     /// Whether a pull has ever succeeded for this account on this
     /// device (since its data was last wiped). Until one has, nothing
     /// local has been reconciled with the cloud, so local stamps prove
@@ -236,6 +242,10 @@ final class SeasonSyncService {
         self.store = store
         store.seasonSync = self
         loadState(for: myUserId)
+        for slice in Self.allSlices
+        where syncedSlices.contains(slice) && !emptiedSlices.contains(slice) && sliceIsEmpty(slice) {
+            lostSlices.insert(slice)
+        }
 
         // Startup guarantee: reach and finish restoring from the cloud
         // backup before we are ever allowed to upload. Retries on
@@ -319,6 +329,7 @@ final class SeasonSyncService {
         emptiedSlices = []
         hasCloudBaseline = false
         expectedEchoes = [:]
+        lostSlices = []
     }
 
     /// Try the cloud restore again after it failed (offline sign-in, a
@@ -381,10 +392,17 @@ final class SeasonSyncService {
         // the person emptying it (deleting the last to-do, starting a
         // season with no boosters). Remember that, so the emptiness
         // uploads instead of being "restored" on the next pull.
-        let emptied = SyncIntegrity.emptySliceIsIntentional(
-            localIsEmpty: sliceIsEmpty(slice),
-            hasSyncedBefore: syncedSlices.contains(slice)
-        )
+        // Only for slices whose emptiness can travel as a marker (never
+        // the season itself or the score history), and never for a slice
+        // that came up empty on its own this launch.
+        let isEmpty = sliceIsEmpty(slice)
+        if !isEmpty { lostSlices.remove(slice) }
+        let heldSyncedCopy = syncedSlices.contains(slice) && !lostSlices.contains(slice)
+        let emptied = Self.markerSlices.contains(slice)
+            && SyncIntegrity.emptySliceIsIntentional(
+                localIsEmpty: isEmpty,
+                hasSyncedBefore: heldSyncedCopy
+            )
         if emptied {
             emptiedSlices.insert(slice)
         } else {
@@ -575,6 +593,7 @@ final class SeasonSyncService {
                     // This device now holds the account's copy.
                     syncedSlices.insert(row.sliceKey)
                     emptiedSlices.remove(row.sliceKey)
+                    lostSlices.remove(row.sliceKey)
                     captureSnapshot(slice: row.sliceKey, payload: row.payload, stamp: remoteStamp)
                     if row.sliceKey == "season" { appliedSeason = true }
                     // The merge found local entries or tombstones the
@@ -842,10 +861,11 @@ final class SeasonSyncService {
     }
 
     /// The wire form of `EmptiedSliceMarker`.
-    private static let emptiedMarkerPayload: String? = {
-        guard let data = try? JSONEncoder().encode(EmptiedSliceMarker(emptiedOnPurpose: true)) else { return nil }
+    private func emptiedMarkerPayload() -> String? {
+        let marker = EmptiedSliceMarker(emptiedOnPurpose: true)
+        guard let data = try? JSONEncoder().encode(marker) else { return nil }
         return String(data: data, encoding: .utf8)
-    }()
+    }
 
     /// Encode one slice's current local value as a JSON payload.
     private func payload(for slice: String) -> String? {
@@ -940,7 +960,7 @@ final class SeasonSyncService {
             // rather than a bare empty value, so other devices can tell
             // a decision from a blanked backup.
             let sendsMarker = isEmpty && Self.markerSlices.contains(slice)
-            let encoded: String? = sendsMarker ? Self.emptiedMarkerPayload : self.payload(for: slice)
+            let encoded: String? = sendsMarker ? emptiedMarkerPayload() : self.payload(for: slice)
             guard let payload = encoded else {
                 pendingSlices.remove(slice)
                 continue
@@ -1291,6 +1311,7 @@ final class SeasonSyncService {
         emptiedSlices = []
         hasCloudBaseline = false
         expectedEchoes = [:]
+        lostSlices = []
 
         let defaults = UserDefaults.standard
         let decoder = JSONDecoder()

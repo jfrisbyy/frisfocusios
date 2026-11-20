@@ -52,7 +52,11 @@ let supabase = SupabaseClient(
     options: .init(
         auth: .init(
             accessToken: {
-                KeychainHelper.get("access_token")
+                // Every request passes through here, so this is where a
+                // stale token is caught: `SessionAccessToken` refreshes
+                // an expired (or about-to-expire) session once before
+                // the request goes out, instead of letting it 401.
+                await SessionAccessToken.current()
             }
         )
     )
