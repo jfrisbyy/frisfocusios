@@ -1109,7 +1109,7 @@ struct CircleSettingsSheet: View {
         // circle — a member who isn't a friend has no profile to open,
         // so this menu is the only place those two can live. Offered
         // whenever the member is a real account.
-        let flaggable = safetyProfile(for: memberId, fallbackName: displayName)
+        let flaggable = socialSync.reportableProfile(forLocal: memberId, fallbackName: displayName)
         let canGovern = viewerIsOwner || (viewerCanManage && role == .member)
 
         return HStack(spacing: 12) {
@@ -1277,28 +1277,6 @@ struct CircleSettingsSheet: View {
             )
             await settle()
         }
-    }
-
-    /// The account behind a member row, for report / block. Nil for
-    /// sample-sandbox members, who have no account to act on. The
-    /// synced profile is preferred; when only the id mapping is known,
-    /// the name already on the row stands in.
-    private func safetyProfile(for memberId: UUID, fallbackName: String) -> RemoteProfile? {
-        guard memberId != store.currentUserId,
-              let remote = socialSync.remoteId(forLocal: memberId)
-        else { return nil }
-        if let known = socialSync.profile(forLocal: memberId) { return known }
-        return RemoteProfile(
-            id: remote,
-            email: nil,
-            name: fallbackName,
-            username: nil,
-            avatarUrl: nil,
-            headerUrl: nil,
-            areaKey: nil,
-            areaName: nil,
-            seasonCard: nil
-        )
     }
 
     /// Report the circle itself — its name, events, or shared tasks —

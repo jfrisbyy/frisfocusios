@@ -13,7 +13,8 @@
 //     Closing returns the user exactly where they were.
 //   • `MemberListSheet` — a calm, tappable member list so overlapping
 //     avatar clusters (and their "+N" overflow) can still reach every
-//     person behind the stack.
+//     person behind the stack. A member who isn't a friend has no
+//     profile to open; their row offers report / block instead.
 //
 //  `store` is passed explicitly into the modifier so the presented
 //  surface keeps the shared environment even when it opens from inside
@@ -92,12 +93,18 @@ extension View {
 /// A calm list of the members behind an avatar cluster. Each row opens
 /// that person's profile. Used by the "+N" overflow so people hidden
 /// behind a stack stay reachable, and as a standalone way to browse a
-/// group's people. Circle-only members not in the friend graph render
-/// as a quiet, non-tappable row.
+/// group's people. Circle-only members not in the friend graph have no
+/// profile to show, so their row opens report / block instead — a
+/// circle is where strangers meet, and those two must stay in reach.
 struct MemberListSheet: View {
     @Environment(Store.self) private var store
     @Environment(AuthManager.self) private var auth
+    @Environment(SocialSyncService.self) private var socialSync
     @Environment(\.dismiss) private var dismiss
+
+    /// The non-friend member picked for "Report or block", if any.
+    @State private var safetyMember: RemoteProfile?
+    @State private var reportTarget: ReportTarget?
 
     var title: String = "Members"
     let memberIds: [UUID]
@@ -129,6 +136,7 @@ struct MemberListSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(28)
+        .memberSafetyActions(report: $reportTarget, member: $safetyMember)
     }
 
     private var header: some View {
@@ -172,9 +180,18 @@ struct MemberListSheet: View {
         let color: Color = isUser
             ? Theme.textPrimary
             : (friend.map { Color(hex: $0.accentColorHex) } ?? Theme.textTertiary)
+        let stranger: RemoteProfile? = target == nil
+            ? socialSync.reportableProfile(forLocal: id, fallbackName: name)
+            : nil
 
         Button {
-            guard let target else { return }
+            guard let target else {
+                if let stranger {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    safetyMember = stranger
+                }
+                return
+            }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             onSelect(target)
         } label: {
@@ -210,6 +227,10 @@ struct MemberListSheet: View {
                     Image(systemName: "chevron.right")
                         .font(.sans(12, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                } else if stranger != nil {
+                    Image(systemName: "ellipsis")
+                        .font(.sans(12, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.3))
                 }
             }
             .padding(10)
@@ -224,7 +245,8 @@ struct MemberListSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(target == nil)
+        .disabled(target == nil && stranger == nil)
         .accessibilityLabel(isUser ? "You" : (target != nil ? "Open \(name)'s profile" : name))
+        .accessibilityHint(stranger != nil ? "Report or block this member" : "")
     }
 }

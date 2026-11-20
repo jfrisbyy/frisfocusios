@@ -237,6 +237,29 @@ final class SocialSyncService {
         return profilesByRemote[remote]
     }
 
+    /// The account behind a member row, for report / block — nil for
+    /// yourself and for sample-sandbox members, who have no account to
+    /// act on. A circle member who isn't a friend may have an id mapping
+    /// but no synced profile yet; the name already on the row stands in,
+    /// because being able to report or block someone must not depend on
+    /// a profile fetch having landed.
+    func reportableProfile(forLocal local: UUID, fallbackName: String) -> RemoteProfile? {
+        if let store, local == store.currentUserId { return nil }
+        guard let remote = remoteByLocal[local] else { return nil }
+        if let known = profilesByRemote[remote] { return known }
+        return RemoteProfile(
+            id: remote,
+            email: nil,
+            name: fallbackName,
+            username: nil,
+            avatarUrl: nil,
+            headerUrl: nil,
+            areaKey: nil,
+            areaName: nil,
+            seasonCard: nil
+        )
+    }
+
     // MARK: Full refresh
 
     func refreshAll() async {
