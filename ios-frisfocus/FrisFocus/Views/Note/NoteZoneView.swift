@@ -86,7 +86,6 @@ struct NoteZoneView: View {
                 Button(action: openLibrary) {
                     ZoneHeaderView(
                         title: "The note",
-                        eyebrowRight: "Zone 3 of 4",
                         subline: store.isViewingPast
                             ? "that day's page · tap for everything"
                             : "today's page · tap for everything"

@@ -1014,6 +1014,12 @@ struct Season: Codable, Identifiable {
     /// card ("resting this week", "locked in"). Optional so persisted
     /// seasons decode cleanly; published to friends via the season card.
     var moodLine: String?
+    /// True once the person has set the daily goal by hand in season
+    /// settings. While it holds, the provisional season's automatic
+    /// recalibration leaves the goal alone — a number someone chose on
+    /// purpose is never quietly replaced. Optional so persisted seasons
+    /// decode cleanly (nil reads as "not set by hand").
+    var dailyGoalIsManual: Bool?
 }
 
 extension Season {

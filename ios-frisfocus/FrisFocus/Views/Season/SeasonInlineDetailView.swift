@@ -659,7 +659,7 @@ struct SeasonInlineDetailView: View {
             ) { showMilestones = true },
             SeasonOptionItem(
                 label: "Scoring",
-                hint: "Reminders, categories, colors",
+                hint: "Daily goal, reminders, colors",
                 iconName: "slider.horizontal.3"
             ) { showSettings = true },
             SeasonOptionItem(

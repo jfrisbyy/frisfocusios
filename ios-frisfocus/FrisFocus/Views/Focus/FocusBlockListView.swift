@@ -169,7 +169,9 @@ struct FocusBlockListView: View {
         guard let failure = blocking.lastFailure else {
             return "Apple refused the Screen Time request. Please try again."
         }
-        return "\(failure.message)\n\nApple's error: \(failure.rawCode)"
+        // The raw framework code stays in the logs; the plain-language
+        // message is the part written for the person.
+        return failure.message
     }
 
     // MARK: - Actions

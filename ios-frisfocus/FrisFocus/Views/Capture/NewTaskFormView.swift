@@ -49,13 +49,22 @@ struct NewTaskFormView: View {
     @State private var penaltyThreshold: Int
     @State private var penaltyPoints: Int
 
-    init(editing: FFTask? = nil, onSave: @escaping () -> Void) {
+    /// `startOnToday` pre-selects "Today only" for a brand-new task — used
+    /// when the form is opened from the Add-to-today sheet, where landing
+    /// in the library unpinned would look like the task had vanished. It
+    /// has no effect when editing, and every other entry point keeps the
+    /// "Not pinned" default.
+    init(editing: FFTask? = nil, startOnToday: Bool = false, onSave: @escaping () -> Void) {
         self.editing = editing
         self.onSave = onSave
         _title = State(initialValue: editing?.title ?? "")
         _category = State(initialValue: editing?.category ?? .work)
         _pointValue = State(initialValue: editing?.pointValue ?? 5)
-        _scheduleDraft = State(initialValue: ScheduleDraft(task: editing))
+        var initialSchedule = ScheduleDraft(task: editing)
+        if editing == nil && startOnToday {
+            initialSchedule.mode = .today
+        }
+        _scheduleDraft = State(initialValue: initialSchedule)
 
         let scoring = editing?.scoring ?? ScoringConfig()
         _scoringType = State(initialValue: scoring.type)

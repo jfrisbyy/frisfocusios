@@ -59,7 +59,6 @@ struct MilestoneZoneView: View {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 ZoneHeaderView(
                     title: "Milestones",
-                    eyebrowRight: "Zone 4 of 4",
                     subline: seasonSubline
                 )
 

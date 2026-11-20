@@ -690,6 +690,14 @@ struct SetupConversationView: View {
             Button {
                 useKeyboard = false
                 keyboardFocused = false
+                // One tap from typing to talking: the mic here starts
+                // listening straight away rather than only revealing a
+                // second mic button to tap.
+                if !viewModel.isThinking && !viewModel.conversationDone && !speech.isListening {
+                    showTranscriptEditor = false
+                    transcriptDraft = ""
+                    Task { await speech.start() }
+                }
             } label: {
                 Image(systemName: "mic")
                     .font(.system(size: 16, weight: .regular))

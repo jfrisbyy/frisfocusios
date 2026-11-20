@@ -82,6 +82,28 @@ struct HomeView: View {
     @State private var keyboardVisible: Bool = false
     /// Auto-dismiss timer for the undo banner.
     @State private var undoDismissTask: Task<Void, Never>?
+    /// "Not now" on the location prime card — remembered for good, so
+    /// the offer is made once and never repeated.
+    @State private var locationPrimeDeclined: Bool =
+        UserDefaults.standard.bool(forKey: HomeView.locationPrimeDeclinedKey)
+
+    private static let locationPrimeDeclinedKey = "location.primeDeclined"
+
+    /// The honest moment to offer real sunrise and sunset: signed in, on
+    /// the live home with a season, onboarding and its coaching finished,
+    /// never asked, never declined — and not while the notification
+    /// prime card is making its own offer in the same spot. Without
+    /// location the sun keeps running on its fixed fallback times.
+    private var shouldOfferLocationPrime: Bool {
+        guard auth.user != nil, store.appMode == .clean else { return false }
+        guard !store.accountSeamActive, !store.needsSeasonSetup else { return false }
+        guard !walkthrough.tourActive, !store.coldStartCoaching else { return false }
+        guard store.viewingDay == nil, !locationPrimeDeclined else { return false }
+        guard locationService.canAskForPermission else { return false }
+        let notificationOfferLikely = notifications.primeEligible
+            && (store.hasDeliverableSocialEvent || !friendGraph.incoming.isEmpty)
+        return !notificationOfferLikely
+    }
 
     /// Coordinate space anchored to the scrolling content, so each
     /// zone's measured top/height stays stable while the page scrolls
@@ -98,13 +120,12 @@ struct HomeView: View {
                     .environment(\.sunSky, sky)
                     .onChange(of: context.date) { _, _ in
                         // Keep nudging CoreLocation if we still don't
-                        // have a fix — on device the first permission
-                        // prompt can land after onAppear has already
-                        // fired, so the initial requestLocation can
-                        // miss. Cheap to call when authorized; no-ops
-                        // if denied.
+                        // have a fix — permission can be granted after
+                        // onAppear has already fired, so the initial
+                        // requestLocation can miss. Cheap to call when
+                        // authorized; never raises the system alert.
                         if locationService.coordinate == nil {
-                            locationService.requestPermissionIfNeeded()
+                            locationService.refreshIfAuthorized()
                         }
                     }
             }
@@ -119,7 +140,12 @@ struct HomeView: View {
             }
         }
         .onAppear {
-            locationService.requestPermissionIfNeeded()
+            // Read a fix only if permission already exists. This view is
+            // the root beneath the onboarding cover, so asking here put
+            // the system location alert over the welcome screen on first
+            // launch — before the person knew what the app was. The ask
+            // now lives behind the soft prime card below.
+            locationService.refreshIfAuthorized()
             scrollTracker.prepareHaptics()
             refreshTopSafeInset()
         }
@@ -425,6 +451,21 @@ struct HomeView: View {
                         ColdStartCoachBanner()
                     }
 
+                    // The one place the system location alert can come
+                    // from on the home — and only after an explicit yes.
+                    if shouldOfferLocationPrime {
+                        LocationPrimeCard(
+                            onAccept: { locationService.requestPermissionIfNeeded() },
+                            onDecline: {
+                                UserDefaults.standard.set(true, forKey: HomeView.locationPrimeDeclinedKey)
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    locationPrimeDeclined = true
+                                }
+                            }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
                     // Live friend-graph moments — a request just arrived,
                     // or someone accepted yours. Tap opens Friends.
                     FriendRequestBanner {
@@ -721,6 +762,71 @@ private struct UndoBanner: View {
             Capsule().fill(Theme.textPrimary.opacity(0.92))
         )
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+    }
+}
+
+// MARK: - Location prime card
+
+/// The soft pre-permission offer for location, modelled on the
+/// notification prime card: one plain line saying what it is for, an
+/// explicit yes before the single system dialog, and a "Not now" that
+/// is respected for good. Declining costs nothing — the sun keeps
+/// running on its fixed sunrise and sunset times.
+private struct LocationPrimeCard: View {
+    let onAccept: () -> Void
+    let onDecline: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Theme.sunWarm.opacity(0.22))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: "sunrise.fill")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.sunWarm)
+                }
+                Text("Time your sun to your real sunrise and sunset? It only needs your rough area.")
+                    .font(.sans(13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: onAccept) {
+                    Text("Allow")
+                        .font(.sans(13.5, weight: .semibold))
+                        .foregroundStyle(Theme.textCream)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(Capsule().fill(Theme.textPrimary))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onDecline) {
+                    Text("Not now")
+                        .font(.sans(13.5, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Theme.paperCream)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Theme.sunWarm.opacity(0.4), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.14), radius: 12, y: 5)
+        .padding(.horizontal, 16)
     }
 }
 

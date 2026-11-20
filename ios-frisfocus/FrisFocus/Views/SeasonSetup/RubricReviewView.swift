@@ -192,8 +192,8 @@ struct RubricReviewView: View {
         }
         .sheet(item: $editingPenalty) { penalty in
             SetupRuleEditSheet(
-                title: "End-of-week floor",
-                helper: "If the referenced task happens fewer times than the floor, the deduction lands once for the week.",
+                title: "Weekly minimum",
+                helper: "If the task happens fewer times than the minimum, the deduction lands once for the week.",
                 name: penalty.name,
                 reference: penalty.referenceName,
                 threshold: penalty.threshold,
@@ -679,7 +679,7 @@ struct RubricReviewView: View {
 
     private var penaltiesSection: some View {
         collapsibleSection(
-            title: "END-OF-WEEK FLOORS",
+            title: "WEEKLY MINIMUMS",
             tint: Theme.alertAmber,
             isExpanded: $showPenalties,
             count: draft.weeklyPenalties.count,

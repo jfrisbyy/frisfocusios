@@ -66,7 +66,7 @@ struct SundialNavView: View {
 
     /// Resting opacity — the pill recedes while you scroll and read,
     /// but stays legible enough to find at a glance.
-    private let restOpacity: Double = 0.5
+    private let restOpacity: Double = 0.85
 
     var body: some View {
         HStack(spacing: 4) {

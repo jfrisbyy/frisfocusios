@@ -476,6 +476,12 @@ struct WorkZoneView: View {
             .overlay(
                 Capsule().stroke(Theme.textPrimary.opacity(0.15), lineWidth: 0.6)
             )
+            // The pill draws about 25pt tall. Grow the tappable area to
+            // 44pt and hand the layout space straight back, so nothing
+            // on screen moves or changes size.
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .padding(.vertical, -10)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Agenda — arrange your day in blocks and bands")
@@ -518,6 +524,16 @@ struct WorkZoneView: View {
                 .overlay(
                     Capsule().stroke(Theme.textPrimary.opacity(0.15), lineWidth: 0.6)
                 )
+                // About 31 by 25pt as drawn. Reach 44pt both ways, taking
+                // the extra width mostly from the free trailing edge so
+                // it doesn't crowd the FOCUS pill; layout is unchanged.
+                .padding(.vertical, 10)
+                .padding(.leading, 4)
+                .padding(.trailing, 9)
+                .contentShape(Rectangle())
+                .padding(.vertical, -10)
+                .padding(.leading, -4)
+                .padding(.trailing, -9)
         }
         .accessibilityLabel("Plan options")
     }
@@ -607,6 +623,11 @@ struct WorkZoneView: View {
                     .foregroundStyle(Theme.textPrimary.opacity(0.4))
                     .padding(6)
                     .background(Circle().fill(Theme.textPrimary.opacity(0.05)))
+                    // Drawn at about 22pt; tappable at 44pt, with the
+                    // layout space handed back so the row keeps its size.
+                    .padding(11)
+                    .contentShape(Rectangle())
+                    .padding(-11)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss swipe hint")
@@ -647,6 +668,11 @@ struct WorkZoneView: View {
             .overlay(
                 Capsule().stroke(Theme.alertGreen.opacity(0.25), lineWidth: 0.6)
             )
+            // Same 44pt tappable height as the agenda pill beside it,
+            // with the drawn size untouched.
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+            .padding(.vertical, -10)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Start focus session")

@@ -27,9 +27,34 @@ struct ScoringSettingsView: View {
         )
     }
 
+    /// The daily goal, written through the Store so a hand-set number is
+    /// marked as such and automatic recalibration leaves it alone.
+    private var dailyGoalBinding: Binding<Int> {
+        Binding(
+            get: { store.currentSeason.dailyGoal },
+            set: { store.setDailyGoalManually($0) }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Stepper(value: dailyGoalBinding, in: Store.manualDailyGoalRange) {
+                        HStack {
+                            Text("Daily goal")
+                            Spacer()
+                            Text("\(store.currentSeason.dailyGoal) pts")
+                                .font(.serif(17, weight: .medium))
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                    }
+                } header: {
+                    Text("Daily goal")
+                } footer: {
+                    Text("What a strong day is worth — the number your sun fills toward. Not everything you could do, just a good day. Your weekly goal moves with it.")
+                }
+
                 Section {
                     Button {
                         showSeasonSetup = true
@@ -85,7 +110,7 @@ struct ScoringSettingsView: View {
                 } header: {
                     Text("Season setup")
                 } footer: {
-                    Text("A 10–15 minute conversation that builds your whole rubric — targets, tasks, negatives, boosters, and milestones. You review and edit everything before it starts.")
+                    Text("A 10–15 minute conversation that builds your whole season — targets, tasks, things to avoid, boosters, and milestones. You review and edit everything before it starts.")
                 }
 
                 Section {

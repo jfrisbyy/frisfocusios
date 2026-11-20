@@ -357,7 +357,7 @@ struct SetupNegativeEditSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Theme.warmWheat)
-            .navigationTitle(isNew ? "New negative" : "Edit negative")
+            .navigationTitle(isNew ? "New thing to avoid" : "Edit thing to avoid")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

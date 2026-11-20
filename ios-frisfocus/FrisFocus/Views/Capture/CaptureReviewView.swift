@@ -1449,7 +1449,7 @@ struct CaptureReviewView: View {
     private var audienceSubtitle: String {
         if isLiveProof { return "A private proof \u{00B7} just them" }
         if audience.isPristineEveryone { return "Disappears in a day" }
-        if audience.everyone { return "Public story + more" }
+        if audience.everyone { return "Friends' story + more" }
         let circleCount = audience.circleIds.count
         let friendCount = audience.friendIds.count
         if friendCount == 0 && circleCount > 0 {
@@ -1535,7 +1535,7 @@ struct CaptureReviewView: View {
                     audienceOptionRow(
                         icon: "person.2.fill",
                         title: "Friends · 24h",
-                        subtitle: "Your public story",
+                        subtitle: "All your friends, for a day",
                         tint: Color(hex: 0xD87D44),
                         selected: isEveryoneSelected
                     ) { toggleEveryone() }

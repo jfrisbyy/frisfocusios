@@ -136,7 +136,7 @@ struct GoldenHourSettingsSheet: View {
                         .foregroundStyle(GoldenTheme.cream.opacity(0.6))
                 }
             }
-            Text("Once a day, everyone in this circle gets pinged at the exact same instant. 5 minutes to capture what you're working on, 1 hour to see the wall — then it's deleted forever. Only streaks survive.")
+            Text("Once a day, everyone in this circle gets pinged at the exact same instant. 5 minutes to capture what you're working on, 1 hour to see the wall — then it's deleted forever.")
                 .font(.sans(13, weight: .regular))
                 .foregroundStyle(GoldenTheme.cream.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
@@ -161,7 +161,7 @@ struct GoldenHourSettingsSheet: View {
                 Text("Daily Golden Hour")
                     .font(.sans(15, weight: .semibold))
                     .foregroundStyle(GoldenTheme.cream)
-                Text(enabled ? "Fires every day — no skipping" : "Off for this circle")
+                Text(enabled ? "Fires once a day" : "Off for this circle")
                     .font(.sans(12, weight: .regular))
                     .foregroundStyle(GoldenTheme.cream.opacity(0.55))
             }

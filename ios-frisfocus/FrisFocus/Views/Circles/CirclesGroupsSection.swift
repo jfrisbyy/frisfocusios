@@ -170,7 +170,7 @@ struct CirclesGroupsSection: View {
             HStack(spacing: 8) {
                 Image(systemName: "plus")
                     .font(.sans(13, weight: .semibold))
-                Text("Start a circle or join one")
+                Text("Start a circle or a pact")
                     .font(.sans(13, weight: .regular))
             }
             .foregroundStyle(Theme.textPrimary.opacity(0.6))
@@ -186,7 +186,7 @@ struct CirclesGroupsSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Start a circle or join one")
+        .accessibilityLabel("Start a circle or a pact")
     }
 
     /// Quiet text row into the public directory — deliberately lighter

@@ -84,7 +84,6 @@ struct SignalZoneView: View {
             VStack(alignment: .leading, spacing: 20) {
                 ZoneHeaderView(
                     title: "The signal",
-                    eyebrowRight: "Zone 4 of 4",
                     subline: sublineText,
                     textColor: Theme.textCream,
                     dim: 0.65

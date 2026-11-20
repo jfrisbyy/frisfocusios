@@ -3565,10 +3565,35 @@ extension Store {
     /// unreachable target simply stood.
     func recalibrateDailyGoalIfProvisional() {
         guard currentSeason.isProvisional else { return }
+        // A goal the person set by hand in season settings stands. Without
+        // this the very next task edit would replace their number.
+        guard currentSeason.dailyGoalIsManual != true else { return }
         let goal = Store.strongDayValue(from: tasks)
         guard goal != currentSeason.dailyGoal else { return }
         currentSeason.dailyGoal = goal
         currentSeason.weeklyGoal = goal * 7
+    }
+
+    /// The range the season-settings stepper offers for the daily goal.
+    /// The floor matches the calibrate beat (which never goes below 1);
+    /// the ceiling only exists so a stepper has an end.
+    static let manualDailyGoalRange: ClosedRange<Int> = 1...500
+
+    /// Set the daily goal by hand, from season settings. The week keeps
+    /// whatever headroom it already had above seven plain days (the
+    /// end-of-week bonuses a conversation-built season budgets for), and
+    /// the season is marked so automatic recalibration no longer moves
+    /// the number.
+    func setDailyGoalManually(_ newValue: Int) {
+        let goal = min(max(newValue, Store.manualDailyGoalRange.lowerBound), Store.manualDailyGoalRange.upperBound)
+        guard goal != currentSeason.dailyGoal else { return }
+        let headroom = max(0, currentSeason.weeklyGoal - currentSeason.dailyGoal * 7)
+        var season = currentSeason
+        season.dailyGoal = goal
+        season.weeklyGoal = goal * 7 + headroom
+        season.dailyGoalIsManual = true
+        currentSeason = season
+        persistAll()
     }
 
     /// How many tasks stand in for a strong day before any rhythm exists.

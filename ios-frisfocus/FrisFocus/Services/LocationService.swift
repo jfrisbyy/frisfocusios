@@ -49,6 +49,25 @@ final class LocationService: NSObject {
             break
         }
     }
+
+    /// True while the person has never been asked. The home uses this to
+    /// decide whether its own soft prime card has anything left to offer.
+    var canAskForPermission: Bool {
+        authorizationStatus == .notDetermined
+    }
+
+    /// Refresh the coarse fix, but only when permission already exists.
+    /// Unlike `requestPermissionIfNeeded()` this can never raise the
+    /// system alert, so it is safe to call from anywhere — including the
+    /// home while the onboarding cover is still sitting on top of it.
+    func refreshIfAuthorized() {
+        switch authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.requestLocation()
+        default:
+            break
+        }
+    }
 }
 
 // MARK: - CLLocationManagerDelegate

@@ -22,6 +22,8 @@ struct QuickAddToDaySheet: View {
     /// Items just pinned this session — kept so they animate into the
     /// "added" state and drop to the bottom rather than vanishing.
     @State private var justAdded: Set<UUID> = []
+    /// The full task editor, opened from the "New task" row.
+    @State private var showNewTaskForm: Bool = false
     @FocusState private var newFieldFocused: Bool
 
     var body: some View {
@@ -29,6 +31,7 @@ struct QuickAddToDaySheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     newTodoField
+                    newTaskRow
                     candidateSection
                 }
                 .padding(.horizontal, 20)
@@ -48,10 +51,69 @@ struct QuickAddToDaySheet: View {
                 }
             }
         }
+        .sheet(isPresented: $showNewTaskForm) {
+            // Opened from "add to today", so the new task starts on today
+            // (the form's own default is unpinned). Saving closes this
+            // sheet too, so the person lands back on the plan with the
+            // task they just made sitting in it.
+            NewTaskFormView(startOnToday: true) { dismiss() }
+                .environment(store)
+        }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(28)
         .presentationContentInteraction(.scrolls)
+    }
+
+    // MARK: - New task
+
+    /// The door to a real, repeatable, point-bearing task. This sheet
+    /// used to offer only a one-off to-do or pinning something that
+    /// already existed, which left making a new task three screens away
+    /// behind the season detail.
+    @ViewBuilder
+    private var newTaskRow: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            newFieldFocused = false
+            showNewTaskForm = true
+        } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(Theme.alertGreen)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("New task")
+                        .font(.sans(14, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Repeatable and worth points — starts on today")
+                        .font(.sans(11, weight: .regular))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.55))
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.3))
+            }
+            .padding(.horizontal, 13)
+            .padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.white)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.alertGreen.opacity(0.3), lineWidth: 0.8)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("New task")
+        .accessibilityHint("Creates a repeatable task worth points. It starts on today's plan.")
     }
 
     // MARK: - New to-do
