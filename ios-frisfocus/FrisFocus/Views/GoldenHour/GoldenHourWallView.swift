@@ -8,6 +8,9 @@
 //  Rules enforced here visually (and by the sweep for real):
 //   • Post-to-see — everyone else's tiles stay blurred until you've
 //     posted yours. Missed the window? The wall stays blurred forever.
+//     The blur is the visible half; storage refuses the media itself to
+//     a member who hasn't posted (20261120000114), so there is nothing
+//     behind the blur to fetch.
 //   • Members who missed show as dim "missed it" slots; while the
 //     5-minute window is still open they show as "still has time".
 //   • A "wall closes in mm:ss" timer + draining bar sit at the top.
@@ -65,7 +68,8 @@ struct GoldenHourWallView: View {
             ReportSheet(
                 reportedUserId: target.reportedUserId,
                 messageId: target.messageId,
-                subjectName: target.subjectName
+                subjectName: target.subjectName,
+                goldenHourPostId: target.goldenHourPostId
             )
         }
         .confirmationDialog(
@@ -155,10 +159,17 @@ struct GoldenHourWallView: View {
                                 fullScreenPost = post
                             },
                             onReport: {
+                                // Name the capture, not just its author:
+                                // it deletes itself within the hour, and
+                                // a report that only says who cannot say
+                                // which. The reference is also what holds
+                                // the media back from the sweep until the
+                                // report has been reviewed.
                                 reportTarget = ReportTarget(
                                     reportedUserId: post.userId,
                                     messageId: nil,
-                                    subjectName: circle?.profile(post.userId)?.displayName ?? "this member"
+                                    subjectName: circle?.profile(post.userId)?.displayName ?? "this member",
+                                    goldenHourPostId: post.id
                                 )
                             },
                             onHide: {
@@ -341,7 +352,11 @@ private struct GoldenPostTile: View {
                 }
             }
         }
-        .task(id: post.mediaPath) {
+        // Keyed on the blur as well as the path: until you have posted,
+        // storage refuses other people's captures, so the first attempt
+        // comes back empty — and has to be made again the moment your
+        // own post unlocks the wall.
+        .task(id: "\(post.mediaPath ?? "")|\(isBlurred)") {
             guard let path = post.mediaPath, signedURL == nil, post.mediaKind == .photo else { return }
             signedURL = await service.signedURL(forMediaPath: path)
         }

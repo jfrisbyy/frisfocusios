@@ -58,23 +58,49 @@ private nonisolated struct MuteInsert: Encodable, Sendable {
 }
 
 private nonisolated struct ReportInsert: Encodable, Sendable {
+    /// Chosen on the device so the report can be named in the follow-up
+    /// "one was just filed" call without reading the row back.
+    let id: String
     let reporterId: String
     let reportedUserId: String?
     let messageId: String?
     let storyPostId: String?
     let storyCommentId: String?
+    /// Nil is omitted from the encoded row (synthesized `Encodable`
+    /// skips nil optionals), so a report that names neither of these
+    /// never mentions the columns at all.
+    let goldenHourPostId: String?
+    let circleId: String?
     let reason: String
     let details: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case reporterId = "reporter_id"
         case reportedUserId = "reported_user_id"
         case messageId = "message_id"
         case storyPostId = "story_post_id"
         case storyCommentId = "story_comment_id"
+        case goldenHourPostId = "golden_hour_post_id"
+        case circleId = "circle_id"
         case reason
         case details
     }
+}
+
+/// Body of the "a report was just filed" call to the `moderation`
+/// function — the one route there that any member may use.
+private nonisolated struct ReportNotifyPayload: Encodable, Sendable {
+    let action: String
+    let reportId: String
+}
+
+private nonisolated struct ReportNotifyResponse: Decodable, Sendable {
+    let ok: Bool?
+}
+
+private nonisolated struct SuspensionRow: Decodable, Sendable {
+    let reason: String?
 }
 
 // MARK: - Service
@@ -102,6 +128,13 @@ final class ModerationService {
     var hiddenProofIds: Set<UUID> = []
     /// Golden Hour captures this account chose to hide from its walls.
     var hiddenGoldenHourPostIds: Set<UUID> = []
+    /// True when a moderator has suspended this account. The server
+    /// already refuses a suspended account's posts, messages and
+    /// requests; this exists so the app can say so plainly instead of
+    /// letting every action fail without a reason.
+    var isSuspended = false
+    /// The reason a moderator chose to show, if any.
+    var suspensionReason: String?
     var isWorking = false
     var errorMessage: String?
     var showError = false
@@ -159,9 +192,32 @@ final class ModerationService {
         } catch {
             Log.moderation.error("loadMutes failed: \(error)")
         }
+        await loadSuspension(myUserId: myUserId)
+    }
+
+    /// Whether this account is suspended. Row-level security lets a
+    /// member read only their own row, so "no rows" is the normal
+    /// answer. A failed read leaves the last known answer in place: a
+    /// network blip must neither lock someone out nor let them back in.
+    func loadSuspension(myUserId: String) async {
+        do {
+            let rows: [SuspensionRow] = try await supabase
+                .from("suspensions")
+                .select("reason")
+                .eq("user_id", value: myUserId)
+                .limit(1)
+                .execute()
+                .value
+            isSuspended = !rows.isEmpty
+            suspensionReason = rows.first?.reason
+        } catch {
+            Log.moderation.error("loadSuspension failed: \(error)")
+        }
     }
 
     func clear() {
+        isSuspended = false
+        suspensionReason = nil
         blockedIds = []
         mutedIds = []
         mutedLocalIds = []
@@ -364,13 +420,16 @@ final class ModerationService {
     // MARK: Report
 
     /// File a report against a person and/or a specific piece of
-    /// content — a proof message, a story post, or a story comment.
+    /// content — a proof message, a story post, a story comment, a
+    /// Golden Hour capture, or a circle itself.
     @discardableResult
     func report(
         reportedUserId: String?,
         messageId: UUID?,
         storyPostId: UUID? = nil,
         storyCommentId: UUID? = nil,
+        goldenHourPostId: UUID? = nil,
+        circleId: UUID? = nil,
         reason: String,
         details: String?,
         myUserId: String
@@ -378,23 +437,85 @@ final class ModerationService {
         isWorking = true
         defer { isWorking = false }
         let trimmedDetails = details?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanDetails: String? = (trimmedDetails?.isEmpty == false) ? trimmedDetails : nil
+        let reportId = UUID()
         do {
             try await supabase
                 .from("reports")
                 .insert(ReportInsert(
+                    id: reportId.uuidString,
                     reporterId: myUserId,
                     reportedUserId: reportedUserId,
                     messageId: messageId?.uuidString,
                     storyPostId: storyPostId?.uuidString,
                     storyCommentId: storyCommentId?.uuidString,
+                    goldenHourPostId: goldenHourPostId?.uuidString,
+                    circleId: circleId?.uuidString,
                     reason: reason,
-                    details: (trimmedDetails?.isEmpty == false) ? trimmedDetails : nil
+                    details: cleanDetails
                 ))
                 .execute()
-            return true
         } catch {
-            fail("Couldn't send your report.", error)
-            return false
+            // A report must not be lost over where its target is written
+            // down. If the row was refused and it named a capture or a
+            // circle — the capture may already be gone, or the column
+            // may not exist on this database yet — file it again with
+            // the reference carried in the note instead.
+            guard goldenHourPostId != nil || circleId != nil else {
+                fail("Couldn't send your report.", error)
+                return false
+            }
+            var lines: [String] = []
+            if let goldenHourPostId {
+                lines.append("Golden Hour capture: \(goldenHourPostId.uuidString)")
+            }
+            if let circleId {
+                lines.append("Circle: \(circleId.uuidString)")
+            }
+            if let cleanDetails {
+                lines.append(cleanDetails)
+            }
+            do {
+                try await supabase
+                    .from("reports")
+                    .insert(ReportInsert(
+                        id: reportId.uuidString,
+                        reporterId: myUserId,
+                        reportedUserId: reportedUserId,
+                        messageId: messageId?.uuidString,
+                        storyPostId: storyPostId?.uuidString,
+                        storyCommentId: storyCommentId?.uuidString,
+                        goldenHourPostId: nil,
+                        circleId: nil,
+                        reason: reason,
+                        details: lines.joined(separator: "\n\n")
+                    ))
+                    .execute()
+            } catch {
+                fail("Couldn't send your report.", error)
+                return false
+            }
+        }
+        notifyModerators(reportId: reportId)
+        return true
+    }
+
+    /// Tell the moderation queue a report just landed, so it does not
+    /// wait for someone to remember to look. Fire-and-forget: the report
+    /// is already filed, and nothing here can un-file it. The function
+    /// accepts only the caller's own, just-filed report, and does
+    /// nothing when no webhook is configured.
+    private func notifyModerators(reportId: UUID) {
+        let payload = ReportNotifyPayload(action: "notify", reportId: reportId.uuidString)
+        Task {
+            do {
+                let _: ReportNotifyResponse = try await supabase.functions.invoke(
+                    "moderation",
+                    options: .init(body: payload)
+                )
+            } catch {
+                Log.moderation.error("report notify failed: \(error)")
+            }
         }
     }
 

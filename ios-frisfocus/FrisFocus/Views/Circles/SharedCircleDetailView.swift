@@ -35,6 +35,12 @@ struct SharedCircleDetailView: View {
 
     /// The member whose profile is open, if any.
     @State private var profileTarget: ProfileTarget?
+    /// A member who isn't a friend has no profile to open — but a public
+    /// circle is exactly where strangers meet, so tapping one offers the
+    /// two things that must always be within reach: report and block.
+    @State private var safetyMember: RemoteProfile?
+    /// An open report — about a member, or about the circle itself.
+    @State private var reportTarget: ReportTarget?
     @State private var scope: CircleScope = .today
     @State private var showAddTask = false
     @State private var newTaskTitle = ""
@@ -80,6 +86,7 @@ struct SharedCircleDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .edgeSwipeBack()
         .profileDestination($profileTarget, store: store)
+        .memberSafetyActions(report: $reportTarget, member: $safetyMember)
         .walkthroughLessonSheet($lesson) { walkthrough.markSeen($0); walkthrough.release($0) }
         // Held until the circle has actually resolved, so the lesson can
         // never land on the "no longer available" page.
@@ -711,8 +718,11 @@ struct SharedCircleDetailView: View {
         let target = memberTarget(for: member)
 
         return Button {
-            guard let target else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            guard let target else {
+                safetyMember = member
+                return
+            }
             profileTarget = target
         } label: {
             HStack(spacing: 12) {
@@ -737,6 +747,10 @@ struct SharedCircleDetailView: View {
                     Image(systemName: "chevron.right")
                         .font(.sans(11, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                } else {
+                    Image(systemName: "ellipsis")
+                        .font(.sans(11, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.3))
                 }
             }
             .padding(.horizontal, 14)
@@ -753,13 +767,14 @@ struct SharedCircleDetailView: View {
             .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .disabled(target == nil)
         .accessibilityLabel(isMe ? "Open your profile" : (target != nil ? "Open \(member.displayName)'s profile" : member.displayName))
+        .accessibilityHint(target == nil ? "Report or block this member" : "")
     }
 
     /// Resolve a circle member into an openable profile — yourself, a
-    /// friend, or nil for people outside your friend graph (no profile
-    /// to show, the row stays quiet).
+    /// friend, or nil for people outside your friend graph. There is no
+    /// profile to show for those, so their row opens report / block
+    /// instead of doing nothing.
     private func memberTarget(for member: RemoteProfile) -> ProfileTarget? {
         if member.id == myUserId { return .me }
         if let friend = store.friend(by: socialSync.localId(forRemote: member.id)) {
@@ -960,8 +975,11 @@ struct SharedCircleDetailView: View {
         let target = memberTarget(for: member)
 
         return Button {
-            guard let target else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            guard let target else {
+                safetyMember = member
+                return
+            }
             profileTarget = target
         } label: {
             HStack(spacing: 12) {
@@ -979,6 +997,10 @@ struct SharedCircleDetailView: View {
                             .foregroundStyle(amount > 0 ? Theme.textPrimary.opacity(0.7) : Theme.textPrimary.opacity(0.4))
                         if target != nil {
                             Image(systemName: "chevron.right")
+                                .font(.sans(11, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                        } else {
+                            Image(systemName: "ellipsis")
                                 .font(.sans(11, weight: .semibold))
                                 .foregroundStyle(Theme.textPrimary.opacity(0.3))
                         }
@@ -1000,8 +1022,8 @@ struct SharedCircleDetailView: View {
             .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .disabled(target == nil)
         .accessibilityLabel(isMe ? "Open your profile" : (target != nil ? "Open \(member.displayName)'s profile" : member.displayName))
+        .accessibilityHint(target == nil ? "Report or block this member" : "")
     }
 
     // MARK: - Witness body
@@ -1031,8 +1053,11 @@ struct SharedCircleDetailView: View {
         let target = memberTarget(for: member)
 
         return Button {
-            guard let target else { return }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            guard let target else {
+                safetyMember = member
+                return
+            }
             profileTarget = target
         } label: {
             HStack(spacing: 12) {
@@ -1044,6 +1069,10 @@ struct SharedCircleDetailView: View {
                 Spacer(minLength: 8)
                 if target != nil {
                     Image(systemName: "chevron.right")
+                        .font(.sans(11, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary.opacity(0.3))
+                } else {
+                    Image(systemName: "ellipsis")
                         .font(.sans(11, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary.opacity(0.3))
                 }
@@ -1062,8 +1091,8 @@ struct SharedCircleDetailView: View {
             .contentShape(RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
-        .disabled(target == nil)
         .accessibilityLabel(isMe ? "Open your profile" : (target != nil ? "Open \(member.displayName)'s profile" : member.displayName))
+        .accessibilityHint(target == nil ? "Report or block this member" : "")
     }
 
     /// Labelled hairline separating the two goals in a hybrid.
@@ -1488,8 +1517,55 @@ struct SharedCircleDetailView: View {
                 .foregroundStyle(Theme.textTertiary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 12)
+
+            if !isOwner {
+                reportCircleButton(circle)
+            }
         }
         .padding(.top, 8)
+    }
+
+    /// Report the circle itself — its name, description, or shared
+    /// tasks — rather than any one member. Not offered to the owner,
+    /// who can simply change them.
+    private func reportCircleButton(_ circle: SharedCircle) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            reportTarget = circleReport(for: circle)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "flag")
+                    .font(.sans(11, weight: .medium))
+                Text("Report this circle")
+                    .font(.sans(13, weight: .medium))
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The circle's words are copied into the report as they read right
+    /// now, so review sees what the reporter saw even after an edit.
+    private func circleReport(for circle: SharedCircle) -> ReportTarget {
+        var lines: [String] = ["Circle name: \(circle.name)"]
+        if let blurb = circle.descriptionText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !blurb.isEmpty {
+            lines.append("Description: \(blurb)")
+        }
+        let taskTitles = circle.tasks.prefix(20).map(\.title)
+        if !taskTitles.isEmpty {
+            lines.append("Shared tasks: " + taskTitles.joined(separator: "; "))
+        }
+        return ReportTarget(
+            reportedUserId: circle.ownerId,
+            messageId: nil,
+            subjectName: circle.name,
+            contextDetails: lines.joined(separator: "\n"),
+            circleId: circle.id
+        )
     }
 
     // MARK: - Shared chrome

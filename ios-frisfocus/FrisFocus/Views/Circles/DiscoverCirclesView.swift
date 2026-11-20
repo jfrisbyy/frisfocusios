@@ -13,6 +13,10 @@
 //   • approval  — "Ask to join" files a request; the button flips to
 //                 "Requested" while the owner decides.
 //
+//  A listing is words a stranger wrote, shown to strangers, so each one
+//  carries a "Report circle" action — reportable before joining, which
+//  is the only moment most people will ever see it.
+//
 
 import SwiftUI
 import UIKit
@@ -32,6 +36,8 @@ struct DiscoverCirclesView: View {
     /// people, not just rooms, because a name is the thing someone
     /// actually remembers from a conversation.
     @State private var people: [RemoteProfile] = []
+    /// The listing being reported, if any.
+    @State private var reportTarget: ReportTarget?
 
     private var myId: String? { auth.user?.id }
 
@@ -97,6 +103,7 @@ struct DiscoverCirclesView: View {
         } message: {
             Text(service.errorMessage ?? "Please try again.")
         }
+        .memberSafetyActions(report: $reportTarget, member: .constant(nil))
     }
 
     // MARK: - Header + search
@@ -304,6 +311,7 @@ struct DiscoverCirclesView: View {
                 }
                 Spacer(minLength: 8)
                 kindChip(circle.kind)
+                listingMenu(circle)
             }
 
             if let blurb = circle.description?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -337,6 +345,42 @@ struct DiscoverCirclesView: View {
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cardCornerRadius, style: .continuous)
                 .strokeBorder(circle.kind.tint.opacity(0.2), lineWidth: 0.6)
+        )
+    }
+
+    /// The listing's "…" — where "Report circle" lives.
+    private func listingMenu(_ circle: DiscoverableCircle) -> some View {
+        Menu {
+            Button(role: .destructive) {
+                reportTarget = circleReport(for: circle)
+            } label: {
+                Label("Report circle", systemImage: "flag")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.sans(14, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary.opacity(0.5))
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("More options for \(circle.name)")
+    }
+
+    /// A report about the circle itself. The name and blurb are copied
+    /// into the report as they read right now, so review sees what the
+    /// reporter saw even if the owner edits them afterwards.
+    private func circleReport(for circle: DiscoverableCircle) -> ReportTarget {
+        var snapshot = "Circle name: \(circle.name)"
+        if let blurb = circle.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !blurb.isEmpty {
+            snapshot += "\nDescription: \(blurb)"
+        }
+        return ReportTarget(
+            reportedUserId: nil,
+            messageId: nil,
+            subjectName: circle.name,
+            contextDetails: snapshot,
+            circleId: circle.id
         )
     }
 

@@ -6,7 +6,15 @@
 //  content can be flagged. Pick a reason, optionally add a note, and
 //  submit — the report is filed for review. Pass a `messageId` to
 //  report a proof, a `storyPostId` / `storyCommentId` to report story
-//  content, or just a `reportedUserId` to report the person.
+//  content, a `goldenHourPostId` to report a Golden Hour capture, a
+//  `circleId` to report a circle itself, or just a `reportedUserId` to
+//  report the person.
+//
+//  `.memberSafetyActions(report:member:)` at the bottom is the shared
+//  presentation for surfaces that list people who may be strangers (a
+//  circle's members, a public listing): one modifier brings the report
+//  sheet and the report-or-block choice, so each list only has to say
+//  who was picked.
 //
 
 import SwiftUI
@@ -24,6 +32,13 @@ struct ReportTarget: Identifiable {
     /// Optional content snapshot (e.g. the exact cheer text) carried
     /// into the report so review has the content in hand.
     var contextDetails: String? = nil
+    /// The Golden Hour capture being reported. The capture deletes
+    /// itself within the hour, so without this a report could not say
+    /// which one it meant.
+    var goldenHourPostId: UUID? = nil
+    /// The circle being reported — its name, description, events, or
+    /// shared tasks — rather than any one member.
+    var circleId: UUID? = nil
 }
 
 struct ReportSheet: View {
@@ -40,6 +55,8 @@ struct ReportSheet: View {
     /// writes — used by surfaces (like cheers) whose content has no
     /// dedicated column on the reports table.
     var contextDetails: String? = nil
+    var goldenHourPostId: UUID? = nil
+    var circleId: UUID? = nil
 
     @State private var reason: String?
     @State private var details: String = ""
@@ -54,6 +71,8 @@ struct ReportSheet: View {
     ]
 
     private var subtitle: String {
+        if circleId != nil { return "Report the circle \(subjectName)" }
+        if goldenHourPostId != nil { return "Report this capture from \(subjectName)" }
         if storyCommentId != nil { return "Report this comment from \(subjectName)" }
         if storyPostId != nil { return "Report this story from \(subjectName)" }
         return messageId != nil ? "Report this proof from \(subjectName)" : "Report \(subjectName)"
@@ -212,6 +231,8 @@ struct ReportSheet: View {
             messageId: messageId,
             storyPostId: storyPostId,
             storyCommentId: storyCommentId,
+            goldenHourPostId: goldenHourPostId,
+            circleId: circleId,
             reason: reason,
             details: merged,
             myUserId: myId
@@ -220,6 +241,78 @@ struct ReportSheet: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             dismiss()
         }
+    }
+}
+
+// MARK: - Report + block for people lists
+
+extension View {
+    /// The safety actions for a surface that lists people who may be
+    /// strangers — a circle's members, a public listing.
+    ///
+    /// Set `member` to offer "Report" and "Block" for that person; set
+    /// `report` to open the report sheet directly (for a circle, or any
+    /// target that isn't a person). One modifier per surface, so a
+    /// member list only has to say who was picked.
+    func memberSafetyActions(
+        report: Binding<ReportTarget?>,
+        member: Binding<RemoteProfile?>
+    ) -> some View {
+        modifier(MemberSafetyActionsModifier(reportTarget: report, member: member))
+    }
+}
+
+private struct MemberSafetyActionsModifier: ViewModifier {
+    @Binding var reportTarget: ReportTarget?
+    @Binding var member: RemoteProfile?
+    @Environment(AuthManager.self) private var auth
+    @Environment(ModerationService.self) private var moderation
+
+    private var isChoosing: Binding<Bool> {
+        Binding(
+            get: { member != nil },
+            set: { newValue in if !newValue { member = nil } }
+        )
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $reportTarget) { target in
+                ReportSheet(
+                    reportedUserId: target.reportedUserId,
+                    messageId: target.messageId,
+                    subjectName: target.subjectName,
+                    storyPostId: target.storyPostId,
+                    storyCommentId: target.storyCommentId,
+                    contextDetails: target.contextDetails,
+                    goldenHourPostId: target.goldenHourPostId,
+                    circleId: target.circleId
+                )
+            }
+            .confirmationDialog(
+                member?.displayName ?? "This member",
+                isPresented: isChoosing,
+                titleVisibility: .visible,
+                presenting: member
+            ) { picked in
+                Button("Report \(picked.displayName)") {
+                    reportTarget = ReportTarget(
+                        reportedUserId: picked.id,
+                        messageId: nil,
+                        subjectName: picked.displayName
+                    )
+                }
+                // The dialog is the confirmation: one deliberate,
+                // clearly-labelled tap, with what it does spelled out
+                // underneath.
+                Button("Block \(picked.displayName)", role: .destructive) {
+                    guard let myId = auth.user?.id else { return }
+                    Task { await moderation.block(picked.id, myUserId: myId) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("Reports are reviewed by a person. Blocking stops messages and requests between you, and hides each other's shared moments.")
+            }
     }
 }
 

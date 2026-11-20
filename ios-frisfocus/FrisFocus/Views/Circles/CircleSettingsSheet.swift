@@ -52,6 +52,10 @@ struct CircleSettingsSheet: View {
 
     /// The member whose profile is open, if any.
     @State private var profileTarget: ProfileTarget?
+    /// The member picked for "Report or block", if any.
+    @State private var safetyMember: RemoteProfile?
+    /// An open report — about a member, or about the circle itself.
+    @State private var reportTarget: ReportTarget?
 
     @State private var showGoldenSettings: Bool = false
     @State private var showGoldenHour: Bool = false
@@ -92,6 +96,7 @@ struct CircleSettingsSheet: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .profileDestination($profileTarget, store: store)
+        .memberSafetyActions(report: $reportTarget, member: $safetyMember)
         .onChange(of: headerPhotoItem) { _, newItem in
             guard let newItem else { return }
             Task { await loadPickedHeader(newItem) }
@@ -136,6 +141,10 @@ struct CircleSettingsSheet: View {
                 }
 
                 membersSection(for: circle)
+
+                if !store.isOwner(of: circle), auth.user?.id != nil {
+                    reportCircleRow(for: circle)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 14)
@@ -1096,6 +1105,12 @@ struct CircleSettingsSheet: View {
         let viewerIsOwner = store.isOwner(of: circle)
         let viewerCanManage = store.canManageTasks(in: circle)
         let target = store.profileTarget(forMemberId: memberId)
+        // Report / block is for everyone, not just whoever runs the
+        // circle — a member who isn't a friend has no profile to open,
+        // so this menu is the only place those two can live. Offered
+        // whenever the member is a real account.
+        let flaggable = safetyProfile(for: memberId, fallbackName: displayName)
+        let canGovern = viewerIsOwner || (viewerCanManage && role == .member)
 
         return HStack(spacing: 12) {
             Button {
@@ -1162,6 +1177,11 @@ struct CircleSettingsSheet: View {
                             }
                         }
                     }
+                    if let flaggable {
+                        Button("Report or block") {
+                            safetyMember = flaggable
+                        }
+                    }
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.sans(15, weight: .semibold))
@@ -1170,8 +1190,8 @@ struct CircleSettingsSheet: View {
                         .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
-                .opacity(viewerIsOwner || (viewerCanManage && role == .member) ? 1 : 0.3)
-                .disabled(!(viewerIsOwner || (viewerCanManage && role == .member)))
+                .opacity(canGovern || flaggable != nil ? 1 : 0.3)
+                .disabled(!(canGovern || flaggable != nil))
             }
         }
         .padding(.horizontal, 14)
@@ -1257,6 +1277,70 @@ struct CircleSettingsSheet: View {
             )
             await settle()
         }
+    }
+
+    /// The account behind a member row, for report / block. Nil for
+    /// sample-sandbox members, who have no account to act on. The
+    /// synced profile is preferred; when only the id mapping is known,
+    /// the name already on the row stands in.
+    private func safetyProfile(for memberId: UUID, fallbackName: String) -> RemoteProfile? {
+        guard memberId != store.currentUserId,
+              let remote = socialSync.remoteId(forLocal: memberId)
+        else { return nil }
+        if let known = socialSync.profile(forLocal: memberId) { return known }
+        return RemoteProfile(
+            id: remote,
+            email: nil,
+            name: fallbackName,
+            username: nil,
+            avatarUrl: nil,
+            headerUrl: nil,
+            areaKey: nil,
+            areaName: nil,
+            seasonCard: nil
+        )
+    }
+
+    /// Report the circle itself — its name, events, or shared tasks —
+    /// rather than any one member. Not offered to the owner, who can
+    /// simply change them.
+    private func reportCircleRow(for circle: FFCircle) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            reportTarget = circleReport(for: circle)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "flag")
+                    .font(.sans(13, weight: .medium))
+                Text("Report this circle")
+                    .font(.sans(14, weight: .medium))
+                Spacer(minLength: 8)
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(cardBackground)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The circle's words are copied into the report as they read right
+    /// now, so review sees what the reporter saw even after an edit.
+    private func circleReport(for circle: FFCircle) -> ReportTarget {
+        var lines: [String] = ["Circle name: \(circle.name)"]
+        let taskTitles = circle.tasks.prefix(20).map(\.title)
+        if !taskTitles.isEmpty {
+            lines.append("Shared tasks: " + taskTitles.joined(separator: "; "))
+        }
+        let ownerRemoteId = circle.ownerId.flatMap { socialSync.remoteId(forLocal: $0) }
+        return ReportTarget(
+            reportedUserId: ownerRemoteId,
+            messageId: nil,
+            subjectName: circle.name,
+            contextDetails: lines.joined(separator: "\n"),
+            circleId: circle.id
+        )
     }
 
     /// The `profiles.id` pair a governance write needs — mine and theirs.
