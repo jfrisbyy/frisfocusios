@@ -302,6 +302,20 @@ final class ProfileStore {
                 Log.profileStore.error("pending handle claim lost to a duplicate: \(error)")
                 clearPendingClaim()
                 loadedForUserId = nil
+                // Stop showing a handle that now belongs to someone else.
+                if let current = myProfile, current.username == claim.username {
+                    myProfile = RemoteProfile(
+                        id: current.id,
+                        email: current.email,
+                        name: current.name,
+                        username: nil,
+                        avatarUrl: current.avatarUrl,
+                        headerUrl: current.headerUrl,
+                        areaKey: current.areaKey,
+                        areaName: current.areaName,
+                        seasonCard: current.seasonCard
+                    )
+                }
             } else {
                 Log.profileStore.error("pending handle claim retry failed: \(error)")
                 showPendingClaimLocally(claim)
